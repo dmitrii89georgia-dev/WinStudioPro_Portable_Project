@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import org.json.JSONArray
 import org.json.JSONObject
 import ru.winstudiopro.app.domain.model.*
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -139,6 +140,110 @@ object AppStateStorage {
             }
         } catch (_: Exception) {
         }
+    }
+
+    // Экспорт одного заказа в форматированную строку JSON
+    fun exportOrderToJsonString(order: CustomerOrder): String {
+        return serializeOrder(order).toString(2)
+    }
+
+    // Импорт заказа из строки JSON
+    fun importOrderFromJsonString(jsonString: String): CustomerOrder {
+        val json = JSONObject(jsonString)
+        val orderObj = if (json.has("orderNumber") && json.has("windows")) {
+            json
+        } else if (json.has("order")) {
+            json.getJSONObject("order")
+        } else {
+            json
+        }
+        return parseOrder(orderObj)
+    }
+
+    // Создание временного файла .win.json для отправки через WhatsApp, Telegram, диск или почту
+    fun createOrderJsonExportFile(context: Context, order: CustomerOrder): File {
+        val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+        val safeNum = order.orderNumber.replace(Regex("[^a-zA-Z0-9А-Яа-я_\\-]"), "_")
+        val file = File(exportDir, "Заказ_${safeNum}.win.json")
+        file.writeText(exportOrderToJsonString(order), Charsets.UTF_8)
+        return file
+    }
+
+    // Полный экспорт всей базы (все системы Asas, прайсы, склад, настройки и все заказы)
+    fun exportFullBackupJsonString(context: Context): String {
+        val dbHelper = WinStudioSqliteHelper(context)
+        val db = dbHelper.readableDatabase
+        val profiles = loadProfilesFromDb(db)
+        val orders = loadOrdersFromDb(db)
+
+        val root = JSONObject().apply {
+            put("app", "WinStudioPro")
+            put("backupVersion", 1)
+            put("timestamp", System.currentTimeMillis())
+            put("exportDate", SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()).format(Date()))
+
+            val ordArr = JSONArray()
+            orders.forEach { ordArr.put(serializeOrder(it)) }
+            put("orders", ordArr)
+
+            val profArr = JSONArray()
+            profiles.forEach { profArr.put(serializeProfile(it)) }
+            put("profileSystems", profArr)
+        }
+
+        db.rawQuery("SELECT json_payload FROM app_settings WHERE id = 1", null).use { c ->
+            if (c.moveToFirst()) {
+                root.put("appSettingsPayload", JSONObject(c.getString(0)))
+            }
+        }
+        return root.toString(2)
+    }
+
+    // Создание файла полного бэкапа базы данных
+    fun createFullBackupFile(context: Context): File {
+        val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+        val timeTag = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val file = File(exportDir, "WinStudio_Бэкап_${timeTag}.winbackup.json")
+        file.writeText(exportFullBackupJsonString(context), Charsets.UTF_8)
+        return file
+    }
+
+    // Восстановление всей базы данных из файла полного бэкапа
+    fun importFullBackupJsonString(context: Context, jsonString: String): PersistedAppState {
+        val root = JSONObject(jsonString)
+        val current = loadState(context)
+
+        val ordArr = root.optJSONArray("orders") ?: JSONArray()
+        val importedOrders = mutableListOf<CustomerOrder>()
+        for (i in 0 until ordArr.length()) {
+            importedOrders.add(parseOrder(ordArr.getJSONObject(i)))
+        }
+
+        val profArr = root.optJSONArray("profileSystems") ?: JSONArray()
+        val importedProfiles = mutableListOf<ProfileSystemSpec>()
+        for (i in 0 until profArr.length()) {
+            importedProfiles.add(parseProfile(profArr.getJSONObject(i)))
+        }
+
+        val dbHelper = WinStudioSqliteHelper(context)
+        val db = dbHelper.writableDatabase
+        if (root.has("appSettingsPayload")) {
+            val cv = ContentValues().apply {
+                put("id", 1)
+                put("json_payload", root.getJSONObject("appSettingsPayload").toString())
+            }
+            db.insertWithOnConflict("app_settings", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+
+        val mergedOrders = (importedOrders + current.orders).distinctBy { it.id }
+        val mergedProfiles = (importedProfiles + current.profileSystems).distinctBy { it.id }
+
+        val newState = loadState(context).copy(
+            orders = mergedOrders.ifEmpty { current.orders },
+            profileSystems = mergedProfiles.ifEmpty { current.profileSystems }
+        )
+        saveState(context, newState)
+        return newState
     }
 
     fun createDefaultInitialState(): PersistedAppState {

@@ -34,6 +34,9 @@ class MainActivity : ComponentActivity() {
                     },
                     onSharePdfFile = { file, title ->
                         sharePdfViaApps(file, title)
+                    },
+                    onShareExportFile = { file, title ->
+                        shareExportFile(file, title)
                     }
                 )
             }
@@ -83,6 +86,31 @@ class MainActivity : ComponentActivity() {
             Toast.makeText(
                 this,
                 "PDF сохранен: ${file.absolutePath}",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    private fun shareExportFile(file: File, title: String) {
+        try {
+            val uri = FileProvider.getUriForFile(
+                this,
+                "${applicationContext.packageName}.fileprovider",
+                file
+            )
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/json"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, title)
+                clipData = ClipData.newRawUri("", uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val chooser = Intent.createChooser(sendIntent, "Экспорт: $title")
+            startActivity(chooser)
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "Файл сохранен: ${file.name}",
                 Toast.LENGTH_LONG
             ).show()
         }

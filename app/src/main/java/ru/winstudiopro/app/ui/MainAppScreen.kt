@@ -2,8 +2,12 @@ package ru.winstudiopro.app.ui
 
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
+import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -145,7 +149,8 @@ private fun UnifiedTopAppBar(
 @Composable
 fun WinStudioProMainApp(
     onOpenPdfFile: (File, String) -> Unit,
-    onSharePdfFile: (File, String) -> Unit = onOpenPdfFile
+    onSharePdfFile: (File, String) -> Unit = onOpenPdfFile,
+    onShareExportFile: (File, String) -> Unit = onSharePdfFile
 ) {
     val context = LocalContext.current
     val initialPersisted = remember { AppStateStorage.loadState(context) }
@@ -167,6 +172,72 @@ fun WinStudioProMainApp(
         mutableStateOf(orders.firstOrNull()?.id ?: "")
     }
     var activeWindowIndex by remember { mutableIntStateOf(0) }
+
+    // Лаунчер для импорта одного заказа из файла .json / .win
+    val importOrderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val jsonText = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                if (!jsonText.isNullOrBlank()) {
+                    val importedOrder = AppStateStorage.importOrderFromJsonString(jsonText)
+                    val updatedOrders = listOf(importedOrder) + orders.filter { it.id != importedOrder.id }
+                    orders = updatedOrders
+                    AppStateStorage.saveState(
+                        context = context,
+                        state = PersistedAppState(
+                            profileSystems = profileSystems,
+                            orders = updatedOrders,
+                            stockRemnants = stockRemnants,
+                            uiSettings = uiSettings,
+                            glazingCatalog = glazingCatalog,
+                            colorCatalog = colorCatalog,
+                            hardwareBrands = hardwareBrands,
+                            extraAccessories = extraAccessories,
+                            workServices = workServices
+                        )
+                    )
+                    activeOrderId = importedOrder.id
+                    activeWindowIndex = 0
+                    screenMode = AppScreenMode.CAD_WORKSPACE
+                    Toast.makeText(context, "Заказ «${importedOrder.orderNumber}» успешно импортирован!", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Ошибка импорта заказа: ${e.localizedMessage ?: "неверный формат"}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    // Лаунчер для восстановления всей базы данных из файла полного бэкапа
+    val importBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val jsonText = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                if (!jsonText.isNullOrBlank()) {
+                    val newState = AppStateStorage.importFullBackupJsonString(context, jsonText)
+                    profileSystems = newState.profileSystems
+                    orders = newState.orders
+                    stockRemnants = newState.stockRemnants
+                    uiSettings = newState.uiSettings
+                    glazingCatalog = newState.glazingCatalog
+                    colorCatalog = newState.colorCatalog
+                    hardwareBrands = newState.hardwareBrands
+                    extraAccessories = newState.extraAccessories
+                    workServices = newState.workServices
+                    if (orders.isNotEmpty()) {
+                        activeOrderId = orders.first().id
+                        activeWindowIndex = 0
+                    }
+                    Toast.makeText(context, "База данных успешно восстановлена из бэкапа!", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Ошибка восстановления бэкапа: ${e.localizedMessage ?: "неверный файл"}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     // Автосохранение в SQLite при любых изменениях состояния и прайсов
     fun persistAll(
@@ -305,7 +376,10 @@ fun WinStudioProMainApp(
                         onBackToHome = { screenMode = AppScreenMode.METRO_HOME },
                         onOpenWorkshopCutting = { screenMode = AppScreenMode.WORKSHOP_CUTTING },
                         onOpenPdfFile = onOpenPdfFile,
-                        onSharePdfFile = onSharePdfFile
+                        onSharePdfFile = onSharePdfFile,
+                        onShareExportFile = onShareExportFile,
+                        onImportOrder = { importOrderLauncher.launch("*/*") },
+                        onImportBackup = { importBackupLauncher.launch("*/*") }
                     )
                 }
             }
@@ -320,7 +394,16 @@ fun WinStudioProMainApp(
                         activeWindowIndex = 0
                         screenMode = AppScreenMode.CAD_WORKSPACE
                     },
-                    onUpdateOrders = { updated -> persistAll(newOrders = updated) }
+                    onUpdateOrders = { updated -> persistAll(newOrders = updated) },
+                    onExportOrder = { ord ->
+                        val file = AppStateStorage.createOrderJsonExportFile(context, ord)
+                        onShareExportFile(file, "Заказ ${ord.orderNumber}")
+                    },
+                    onImportOrder = { importOrderLauncher.launch("*/*") },
+                    onExportBackup = {
+                        val file = AppStateStorage.createFullBackupFile(context)
+                        onShareExportFile(file, "Полный бэкап WinStudio Pro")
+                    }
                 )
             }
 
@@ -789,7 +872,10 @@ private fun CadEditorWorkspaceScreen(
     onBackToHome: () -> Unit,
     onOpenWorkshopCutting: () -> Unit,
     onOpenPdfFile: (File, String) -> Unit,
-    onSharePdfFile: (File, String) -> Unit
+    onSharePdfFile: (File, String) -> Unit,
+    onShareExportFile: (File, String) -> Unit = onSharePdfFile,
+    onImportOrder: () -> Unit = {},
+    onImportBackup: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val windows = order.windows
@@ -1473,6 +1559,27 @@ private fun CadEditorWorkspaceScreen(
                     LeftMenuButton("🪚 Задание в цех + 1D Раскрой профиля") {
                         showLeftBlueMenu = false
                         onOpenWorkshopCutting()
+                    }
+
+                    HorizontalDivider(color = Color.White.copy(alpha = 0.3f))
+
+                    LeftMenuButton("📤 Экспорт заказа (отправить файл)") {
+                        showLeftBlueMenu = false
+                        val file = AppStateStorage.createOrderJsonExportFile(context, order)
+                        onShareExportFile(file, "Заказ ${order.orderNumber}")
+                    }
+                    LeftMenuButton("📥 Импорт заказа (из файла)") {
+                        showLeftBlueMenu = false
+                        onImportOrder()
+                    }
+                    LeftMenuButton("💾 Экспорт всей базы (полный бэкап)") {
+                        showLeftBlueMenu = false
+                        val file = AppStateStorage.createFullBackupFile(context)
+                        onShareExportFile(file, "Полный бэкап WinStudio Pro")
+                    }
+                    LeftMenuButton("♻️ Восстановить базу из бэкапа") {
+                        showLeftBlueMenu = false
+                        onImportBackup()
                     }
                 }
             }
@@ -2924,7 +3031,10 @@ private fun OrdersListScreen(
     onBack: () -> Unit,
     onNewOrder: () -> Unit,
     onOpenOrder: (String) -> Unit,
-    onUpdateOrders: (List<CustomerOrder>) -> Unit
+    onUpdateOrders: (List<CustomerOrder>) -> Unit,
+    onExportOrder: (CustomerOrder) -> Unit = {},
+    onImportOrder: () -> Unit = {},
+    onExportBackup: () -> Unit = {}
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var showIcons by remember { mutableStateOf(true) }
@@ -2946,14 +3056,23 @@ private fun OrdersListScreen(
             onBack = onBack
         ) {
             Surface(
+                color = Color(0xFF00838F),
+                shape = RoundedCornerShape(4.dp),
+                modifier = Modifier
+                    .clickable { onImportOrder() }
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+            ) {
+                Text("📥 ИМПОРТ", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+            Surface(
                 color = if (showIcons) Color.White.copy(alpha = 0.25f) else Color.Transparent,
                 shape = RoundedCornerShape(4.dp),
                 modifier = Modifier
                     .border(1.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(4.dp))
                     .clickable { showIcons = !showIcons }
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
             ) {
-                Text("ICONS", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("ICONS", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
             Surface(
                 color = MetroDarkBlue,
@@ -3013,13 +3132,24 @@ private fun OrdersListScreen(
                                     color = Color.Gray
                                 )
                             }
-                            if (orders.size > 1) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(
-                                    onClick = {
-                                        onUpdateOrders(orders.filterNot { it.id == ord.id })
-                                    }
+                                    onClick = { onExportOrder(ord) }
                                 ) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Удалить", tint = Color(0xFFD32F2F))
+                                    Icon(
+                                        Icons.Default.Share,
+                                        contentDescription = "Экспорт заказа",
+                                        tint = MetroBlue
+                                    )
+                                }
+                                if (orders.size > 1) {
+                                    IconButton(
+                                        onClick = {
+                                            onUpdateOrders(orders.filterNot { it.id == ord.id })
+                                        }
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Удалить", tint = Color(0xFFD32F2F))
+                                    }
                                 }
                             }
                         }
