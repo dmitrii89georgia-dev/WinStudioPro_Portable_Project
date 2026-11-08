@@ -845,6 +845,10 @@ private fun CadEditorWorkspaceScreen(
     var previewReportMode by remember { mutableStateOf<ClientPdfReportMode?>(null) }
     var snackMessage by remember { mutableStateOf<String?>(null) }
 
+    // Стек истории изменений для кнопок «Отмена» (Undo) и «Повтор» (Redo) в 2D-редакторе
+    var undoStack by remember(activeWindowIndex) { mutableStateOf(listOf<WindowItem>()) }
+    var redoStack by remember(activeWindowIndex) { mutableStateOf(listOf<WindowItem>()) }
+
     // Перехват жеста «Назад» (свайп с края экрана), если открыта правая шторка настроек или левое меню
     BackHandler(enabled = showRightSettingsDrawer || showLeftBlueMenu) {
         if (showRightSettingsDrawer) {
@@ -856,6 +860,10 @@ private fun CadEditorWorkspaceScreen(
 
     fun updateCurrentWindow(transform: (WindowItem) -> WindowItem) {
         val modifiedCurrent = transform(currentWindow)
+        if (modifiedCurrent != currentWindow) {
+            undoStack = (undoStack + currentWindow).takeLast(25)
+            redoStack = emptyList()
+        }
         val switchedToCustomSystem = modifiedCurrent.profileSystemId != currentWindow.profileSystemId &&
             modifiedCurrent.profileSystemId != "al_test_system" &&
             modifiedCurrent.profileSystemId != "none"
@@ -872,6 +880,32 @@ private fun CadEditorWorkspaceScreen(
             } else {
                 item
             }
+        }
+        onUpdateOrder(order.copy(windows = updatedWindows))
+    }
+
+    // Отмена последнего действия в 2D-редакторе (Undo)
+    fun undoCurrentWindow() {
+        if (undoStack.isEmpty()) return
+        val previousState = undoStack.last()
+        undoStack = undoStack.dropLast(1)
+        redoStack = redoStack + currentWindow
+
+        val updatedWindows = windows.mapIndexed { idx, item ->
+            if (idx == activeWindowIndex) previousState else item
+        }
+        onUpdateOrder(order.copy(windows = updatedWindows))
+    }
+
+    // Повтор отменённого действия в 2D-редакторе (Redo)
+    fun redoCurrentWindow() {
+        if (redoStack.isEmpty()) return
+        val nextState = redoStack.last()
+        redoStack = redoStack.dropLast(1)
+        undoStack = undoStack + currentWindow
+
+        val updatedWindows = windows.mapIndexed { idx, item ->
+            if (idx == activeWindowIndex) nextState else item
         }
         onUpdateOrder(order.copy(windows = updatedWindows))
     }
@@ -1003,20 +1037,63 @@ private fun CadEditorWorkspaceScreen(
 
                     Spacer(modifier = Modifier.width(6.dp))
 
-                    // Кнопка выравнивания импостов (справа вверху)
-                    Button(
-                        onClick = { showAlignmentDialog = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00838F)),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        shape = RoundedCornerShape(3.dp),
-                        modifier = Modifier.height(36.dp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Text(
-                            text = "|↔| Импосты (${currentAlignmentMode.titleRu.substringBefore(" ")})",
-                            color = Color.White,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        // Кнопка «Отмена» (Undo)
+                        IconButton(
+                            onClick = { undoCurrentWindow() },
+                            enabled = undoStack.isNotEmpty(),
+                            modifier = Modifier
+                                .size(36.dp)
+                                .background(
+                                    if (undoStack.isNotEmpty()) Color(0xFF37474F) else Color(0xFF263238),
+                                    RoundedCornerShape(3.dp)
+                                )
+                        ) {
+                            Icon(
+                                Icons.Default.Undo,
+                                contentDescription = "Отмена (Undo)",
+                                tint = if (undoStack.isNotEmpty()) Color.White else Color.Gray.copy(alpha = 0.4f),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+
+                        // Кнопка «Повтор» (Redo)
+                        IconButton(
+                            onClick = { redoCurrentWindow() },
+                            enabled = redoStack.isNotEmpty(),
+                            modifier = Modifier
+                                .size(36.dp)
+                                .background(
+                                    if (redoStack.isNotEmpty()) Color(0xFF37474F) else Color(0xFF263238),
+                                    RoundedCornerShape(3.dp)
+                                )
+                        ) {
+                            Icon(
+                                Icons.Default.Redo,
+                                contentDescription = "Повтор (Redo)",
+                                tint = if (redoStack.isNotEmpty()) Color.White else Color.Gray.copy(alpha = 0.4f),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+
+                        // Кнопка выравнивания импостов (справа вверху)
+                        Button(
+                            onClick = { showAlignmentDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00838F)),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            shape = RoundedCornerShape(3.dp),
+                            modifier = Modifier.height(36.dp)
+                        ) {
+                            Text(
+                                text = "|↔| Импосты (${currentAlignmentMode.titleRu.substringBefore(" ")})",
+                                color = Color.White,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
