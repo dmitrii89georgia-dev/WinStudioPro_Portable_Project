@@ -1,0 +1,15 @@
+# Gradle & Android build artifacts
+.gradle/
+build/
+app/build/
+*.hprof
+*.apk
+*.ap_
+*.dex
+
+# Local configuration
+local.properties
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
