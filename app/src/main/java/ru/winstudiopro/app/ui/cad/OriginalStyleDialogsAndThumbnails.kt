@@ -29,10 +29,12 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import ru.winstudiopro.app.domain.model.*
+import ru.winstudiopro.app.ui.i18n.LocalAppStrings
+import ru.winstudiopro.app.ui.theme.LocalWinStudioPalette
 import kotlin.math.min
 
-private val OriginalBlue = Color(0xFF0099CC)
-private val OriginalDarkBlue = Color(0xFF007799)
+private val OriginalBlue = Color(0xFF007AFF)
+private val OriginalDarkBlue = Color(0xFF0062CC)
 
 // =========================================================================
 // 1. ФИРМЕННЫЙ СИНЕ-БЕЛЫЙ ЦИФРОВОЙ КАЛЬКУЛЯТОР РАЗМЕРОВ (как на 00:17 видео)
@@ -56,40 +58,45 @@ fun OriginalNumpadModalDialog(
         }
     }
 
+    val p = LocalWinStudioPalette.current
+    val s = LocalAppStrings.current
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             modifier = Modifier
-                .width(300.dp)
-                .border(2.dp, OriginalBlue, RoundedCornerShape(4.dp)),
-            color = Color.White,
-            shape = RoundedCornerShape(4.dp),
-            shadowElevation = 12.dp
+                .width(310.dp)
+                .border(1.dp, p.floatingBorder, RoundedCornerShape(24.dp)),
+            color = p.cardSurface,
+            shape = RoundedCornerShape(24.dp),
+            shadowElevation = 16.dp
         ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Box(
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color.White)
-                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(p.background)
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = title,
-                            fontSize = 12.sp,
-                            color = Color.Gray
-                        )
-                        Text(
-                            text = displayStr.ifEmpty { "0" },
-                            fontSize = 36.sp,
-                            fontWeight = FontWeight.Light,
-                            color = Color(0xFF222222),
-                            textAlign = TextAlign.End,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
+                    Text(
+                        text = title,
+                        fontSize = 12.sp,
+                        color = p.textSecondary
+                    )
+                    Text(
+                        text = displayStr.ifEmpty { "0" },
+                        fontSize = 36.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = p.textPrimary,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
-
-                HorizontalDivider(color = OriginalBlue, thickness = 1.5.dp)
 
                 val rows = listOf(
                     listOf("7", "8", "9"),
@@ -102,15 +109,18 @@ fun OriginalNumpadModalDialog(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(60.dp)
+                            .height(54.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         row.forEach { key ->
+                            val isClear = key == "C" || key == "."
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxHeight()
-                                    .background(OriginalBlue)
-                                    .border(0.5.dp, Color.White.copy(alpha = 0.6f))
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(if (isClear) p.segmentedBg else p.elevatedSurface)
+                                    .border(0.7.dp, p.floatingBorder, RoundedCornerShape(14.dp))
                                     .clickable {
                                         when (key) {
                                             "C", "." -> {
@@ -124,43 +134,44 @@ fun OriginalNumpadModalDialog(
                             ) {
                                 Text(
                                     text = key,
-                                    color = Color.White,
-                                    fontSize = 26.sp,
-                                    fontWeight = FontWeight.Normal
+                                    color = if (isClear) p.accentRed else p.textPrimary,
+                                    fontSize = 23.sp,
+                                    fontWeight = FontWeight.Medium
                                 )
                             }
                         }
                     }
                 }
 
-                // Нижний ряд: X (Отмена) | << (Стереть) | V (Подтвердить)
+                // Нижний ряд: Отмена | Стереть | Подтвердить
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(60.dp)
+                        .height(54.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .background(OriginalBlue)
-                            .border(0.5.dp, Color.White.copy(alpha = 0.6f))
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(p.segmentedBg)
                             .clickable { onDismiss() },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             Icons.Default.Close,
-                            contentDescription = "Отмена",
-                            tint = Color.White,
-                            modifier = Modifier.size(30.dp)
+                            contentDescription = s.cancelBtn,
+                            tint = p.textSecondary,
+                            modifier = Modifier.size(26.dp)
                         )
                     }
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .background(OriginalBlue)
-                            .border(0.5.dp, Color.White.copy(alpha = 0.6f))
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(p.segmentedBg)
                             .clickable {
                                 if (displayStr.length > 1) {
                                     displayStr = displayStr.dropLast(1)
@@ -173,18 +184,18 @@ fun OriginalNumpadModalDialog(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "«",
-                            color = Color.White,
-                            fontSize = 30.sp,
-                            fontWeight = FontWeight.Bold
+                            text = "⌫",
+                            color = p.textPrimary,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Medium
                         )
                     }
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .background(OriginalBlue)
-                            .border(0.5.dp, Color.White.copy(alpha = 0.6f))
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(p.accentBlue)
                             .clickable {
                                 val parsed = displayStr.toIntOrNull() ?: initialValue
                                 if (parsed > 50) {
@@ -197,9 +208,9 @@ fun OriginalNumpadModalDialog(
                     ) {
                         Icon(
                             Icons.Default.Check,
-                            contentDescription = "ОК",
+                            contentDescription = s.okBtn,
                             tint = Color.White,
-                            modifier = Modifier.size(30.dp)
+                            modifier = Modifier.size(28.dp)
                         )
                     }
                 }
@@ -248,41 +259,46 @@ fun ImpostsAndOpeningModalDialog(
     var isReverseDoor by remember { mutableStateOf(props.isReverseDoorSash) }
     var hasSashImpost by remember { mutableStateOf(props.hasHorizontalSashImpost) }
 
+    val p = LocalWinStudioPalette.current
+    val s = LocalAppStrings.current
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth(0.95f)
+                .fillMaxWidth(0.94f)
                 .wrapContentHeight()
-                .border(2.dp, OriginalBlue, RoundedCornerShape(4.dp)),
-            shape = RoundedCornerShape(4.dp),
-            color = Color.White,
-            shadowElevation = 12.dp
+                .border(1.dp, p.floatingBorder, RoundedCornerShape(24.dp)),
+            shape = RoundedCornerShape(24.dp),
+            color = p.cardSurface,
+            shadowElevation = 16.dp
         ) {
-            Column(modifier = Modifier.padding(10.dp)) {
+            Column(modifier = Modifier.padding(14.dp)) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 6.dp),
+                        .padding(bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "импосты",
-                        color = OriginalBlue,
-                        fontSize = 18.sp,
+                        text = s.impostsHeader,
+                        color = p.accentBlue,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.weight(0.36f)
                     )
                     Text(
-                        text = "открывание",
-                        color = OriginalBlue,
-                        fontSize = 18.sp,
+                        text = s.openingHeader,
+                        color = p.accentBlue,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.weight(0.64f)
                     )
                 }
-                HorizontalDivider(color = OriginalBlue, thickness = 1.5.dp)
-                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider(color = p.divider, thickness = 1.dp)
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -444,9 +460,9 @@ fun ImpostsAndOpeningModalDialog(
                         Checkbox(
                             checked = isSandwich,
                             onCheckedChange = { isSandwich = it },
-                            colors = CheckboxDefaults.colors(checkedColor = OriginalBlue)
+                            colors = CheckboxDefaults.colors(checkedColor = p.accentBlue)
                         )
-                        Text("непрозрачное заполнение", fontSize = 12.5.sp, color = Color.DarkGray)
+                        Text(s.sandwichCheckbox, fontSize = 12.5.sp, color = p.textPrimary)
                     }
 
                     Row(
@@ -461,12 +477,12 @@ fun ImpostsAndOpeningModalDialog(
                             checked = hasMosquito && selectedOpening.hasSashProfile,
                             onCheckedChange = { hasMosquito = it },
                             enabled = selectedOpening.hasSashProfile,
-                            colors = CheckboxDefaults.colors(checkedColor = OriginalBlue)
+                            colors = CheckboxDefaults.colors(checkedColor = p.accentBlue)
                         )
                         Text(
-                            "москитная сетка",
+                            s.mosquitoCheckbox,
                             fontSize = 12.5.sp,
-                            color = if (selectedOpening.hasSashProfile) Color.DarkGray else Color.LightGray
+                            color = if (selectedOpening.hasSashProfile) p.textPrimary else p.textSecondary.copy(alpha = 0.45f)
                         )
                     }
                 }
@@ -491,12 +507,12 @@ fun ImpostsAndOpeningModalDialog(
                                 if (it) isReverseDoor = false
                             },
                             enabled = selectedOpening.hasSashProfile,
-                            colors = CheckboxDefaults.colors(checkedColor = OriginalBlue)
+                            colors = CheckboxDefaults.colors(checkedColor = p.accentBlue)
                         )
                         Text(
-                            "двери (профиль D)",
+                            s.isDoorCheckbox,
                             fontSize = 12.5.sp,
-                            color = if (selectedOpening.hasSashProfile) Color.DarkGray else Color.LightGray
+                            color = if (selectedOpening.hasSashProfile) p.textPrimary else p.textSecondary.copy(alpha = 0.45f)
                         )
                     }
 
@@ -516,32 +532,32 @@ fun ImpostsAndOpeningModalDialog(
                                 if (it) isDoor = false
                             },
                             enabled = selectedOpening.hasSashProfile,
-                            colors = CheckboxDefaults.colors(checkedColor = OriginalBlue)
+                            colors = CheckboxDefaults.colors(checkedColor = p.accentBlue)
                         )
                         Text(
-                            "обратная дверь (E)",
+                            s.reverseDoorCheckbox,
                             fontSize = 12.5.sp,
-                            color = if (selectedOpening.hasSashProfile) Color.DarkGray else Color.LightGray
+                            color = if (selectedOpening.hasSashProfile) p.textPrimary else p.textSecondary.copy(alpha = 0.45f)
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
-                // Кнопки ОТМЕНА | ОК в стиле оригинала
+                // Кнопки Отмена | Применить в стиле iOS
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Button(
                         onClick = onDismiss,
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp),
-                        shape = RoundedCornerShape(2.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = OriginalBlue)
+                            .height(46.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = p.segmentedBg)
                     ) {
-                        Text("ОТМЕНА", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text(s.cancelBtn, color = p.textPrimary, fontWeight = FontWeight.SemiBold)
                     }
                     Button(
                         onClick = {
@@ -557,11 +573,11 @@ fun ImpostsAndOpeningModalDialog(
                         },
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp),
-                        shape = RoundedCornerShape(2.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = OriginalBlue)
+                            .height(46.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = p.accentBlue)
                     ) {
-                        Text("ОК", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text(s.applyBtn, color = Color.White, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -581,6 +597,9 @@ fun ImpostAlignmentModeDialog(
     var selectedMode by remember { mutableStateOf(currentMode) }
     var targetFilter by remember { mutableStateOf<ImpostDirection?>(null) }
 
+    val p = LocalWinStudioPalette.current
+    val s = LocalAppStrings.current
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -589,85 +608,85 @@ fun ImpostAlignmentModeDialog(
             modifier = Modifier
                 .fillMaxWidth(0.94f)
                 .wrapContentHeight()
-                .border(2.dp, OriginalBlue, RoundedCornerShape(4.dp)),
-            shape = RoundedCornerShape(4.dp),
-            color = Color.White,
-            shadowElevation = 12.dp
+                .border(1.dp, p.floatingBorder, RoundedCornerShape(24.dp)),
+            shape = RoundedCornerShape(24.dp),
+            color = p.cardSurface,
+            shadowElevation = 16.dp
         ) {
             Column(
                 modifier = Modifier
                     .verticalScroll(rememberScrollState())
-                    .padding(14.dp)
+                    .padding(16.dp)
             ) {
                 Text(
-                    text = "способ разбиения импостов",
-                    color = OriginalBlue,
+                    text = s.alignmentHeader,
+                    color = p.accentBlue,
                     fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.SemiBold
                 )
                 HorizontalDivider(
-                    color = OriginalBlue,
-                    thickness = 1.5.dp,
-                    modifier = Modifier.padding(vertical = 6.dp)
+                    color = p.divider,
+                    thickness = 1.dp,
+                    modifier = Modifier.padding(vertical = 8.dp)
                 )
 
                 Text(
-                    text = "Применить к:",
+                    text = s.applyToLabel,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color.DarkGray
+                    color = p.textSecondary
                 )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp),
+                        .padding(vertical = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     FilterChip(
                         selected = targetFilter == ImpostDirection.VERTICAL,
                         onClick = { targetFilter = ImpostDirection.VERTICAL },
-                        label = { Text("Вертикальные", fontSize = 11.sp) },
+                        label = { Text(s.verticalBtn, fontSize = 11.sp) },
                         modifier = Modifier.weight(1f)
                     )
                     FilterChip(
                         selected = targetFilter == null,
                         onClick = { targetFilter = null },
-                        label = { Text("Все", fontSize = 11.sp) },
+                        label = { Text(s.allBtn, fontSize = 11.sp) },
                         modifier = Modifier.weight(0.75f)
                     )
                     FilterChip(
                         selected = targetFilter == ImpostDirection.HORIZONTAL,
                         onClick = { targetFilter = ImpostDirection.HORIZONTAL },
-                        label = { Text("Горизонтальные", fontSize = 11.sp) },
+                        label = { Text(s.horizontalBtn, fontSize = 11.sp) },
                         modifier = Modifier.weight(1.1f)
                     )
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Нажмите на нужный способ выравнивания (применится сразу):",
-                    fontSize = 11.sp,
-                    color = Color.Gray
+                    text = s.alignHint,
+                    fontSize = 11.5.sp,
+                    color = p.textSecondary
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 ImpostAlignmentMode.entries.forEach { mode ->
                     val isSelected = selectedMode == mode
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 3.dp)
-                            .clip(RoundedCornerShape(4.dp))
+                            .padding(vertical = 4.dp)
+                            .clip(RoundedCornerShape(14.dp))
                             .border(
-                                width = if (isSelected) 2.dp else 1.dp,
-                                color = if (isSelected) OriginalBlue else Color.LightGray,
-                                shape = RoundedCornerShape(4.dp)
+                                width = if (isSelected) 1.5.dp else 0.8.dp,
+                                color = if (isSelected) p.accentBlue else p.divider,
+                                shape = RoundedCornerShape(14.dp)
                             )
                             .clickable {
                                 selectedMode = mode
                                 onSelectMode(mode, targetFilter)
                             },
-                        color = if (isSelected) OriginalBlue.copy(alpha = 0.12f) else Color(0xFFF9F9F9)
+                        color = if (isSelected) p.accentBlue.copy(alpha = 0.12f) else p.background
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
@@ -679,51 +698,51 @@ fun ImpostAlignmentModeDialog(
                                     selectedMode = mode
                                     onSelectMode(mode, targetFilter)
                                 },
-                                colors = RadioButtonDefaults.colors(selectedColor = OriginalBlue)
+                                colors = RadioButtonDefaults.colors(selectedColor = p.accentBlue)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = mode.titleRu,
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.SemiBold,
                                     fontSize = 14.sp,
-                                    color = Color(0xFF222222)
+                                    color = p.textPrimary
                                 )
                                 Text(
                                     text = mode.descriptionRu,
                                     fontSize = 11.sp,
                                     lineHeight = 14.sp,
-                                    color = Color(0xFF555555)
+                                    color = p.textSecondary
                                 )
                             }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Button(
                         onClick = onDismiss,
                         modifier = Modifier
                             .weight(1f)
-                            .height(42.dp),
-                        shape = RoundedCornerShape(2.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.Gray)
+                            .height(44.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = p.segmentedBg)
                     ) {
-                        Text("ОТМЕНА", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text(s.cancelBtn, color = p.textPrimary, fontWeight = FontWeight.SemiBold)
                     }
                     Button(
                         onClick = { onSelectMode(selectedMode, targetFilter) },
                         modifier = Modifier
                             .weight(1f)
-                            .height(42.dp),
-                        shape = RoundedCornerShape(2.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = OriginalBlue)
+                            .height(44.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = p.accentBlue)
                     ) {
-                        Text("ВЫРОВНЯТЬ", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text(s.alignBtn, color = Color.White, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -766,40 +785,45 @@ fun OriginalDecimalNumpadModalDialog(
         }
     }
 
+    val p = LocalWinStudioPalette.current
+    val s = LocalAppStrings.current
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             modifier = Modifier
-                .width(300.dp)
-                .border(2.dp, OriginalBlue, RoundedCornerShape(4.dp)),
-            color = Color.White,
-            shape = RoundedCornerShape(4.dp),
-            shadowElevation = 12.dp
+                .width(310.dp)
+                .border(1.dp, p.floatingBorder, RoundedCornerShape(24.dp)),
+            color = p.cardSurface,
+            shape = RoundedCornerShape(24.dp),
+            shadowElevation = 16.dp
         ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Box(
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color.White)
-                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(p.background)
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "$title (0 = авторасчёт по прайсу)",
-                            fontSize = 11.sp,
-                            color = Color.Gray
-                        )
-                        Text(
-                            text = displayStr.ifEmpty { "0" },
-                            fontSize = 34.sp,
-                            fontWeight = FontWeight.Light,
-                            color = Color(0xFF222222),
-                            textAlign = TextAlign.End,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
+                    Text(
+                        text = "$title ${s.customPriceHintSuffix}",
+                        fontSize = 11.sp,
+                        color = p.textSecondary
+                    )
+                    Text(
+                        text = displayStr.ifEmpty { "0" },
+                        fontSize = 34.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = p.textPrimary,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
-
-                HorizontalDivider(color = OriginalBlue, thickness = 1.5.dp)
 
                 val rows = listOf(
                     listOf("7", "8", "9"),
@@ -812,15 +836,18 @@ fun OriginalDecimalNumpadModalDialog(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(58.dp)
+                            .height(54.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         row.forEach { key ->
+                            val isClear = key == "C"
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxHeight()
-                                    .background(OriginalBlue)
-                                    .border(0.5.dp, Color.White.copy(alpha = 0.6f))
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(if (isClear) p.segmentedBg else p.elevatedSurface)
+                                    .border(0.7.dp, p.floatingBorder, RoundedCornerShape(14.dp))
                                     .clickable {
                                         when (key) {
                                             "C" -> {
@@ -834,9 +861,9 @@ fun OriginalDecimalNumpadModalDialog(
                             ) {
                                 Text(
                                     text = key,
-                                    color = Color.White,
-                                    fontSize = 26.sp,
-                                    fontWeight = FontWeight.Normal
+                                    color = if (isClear) p.accentRed else p.textPrimary,
+                                    fontSize = 23.sp,
+                                    fontWeight = FontWeight.Medium
                                 )
                             }
                         }
@@ -846,30 +873,31 @@ fun OriginalDecimalNumpadModalDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(58.dp)
+                        .height(54.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .background(OriginalBlue)
-                            .border(0.5.dp, Color.White.copy(alpha = 0.6f))
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(p.segmentedBg)
                             .clickable { onDismiss() },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             Icons.Default.Close,
-                            contentDescription = "Отмена",
-                            tint = Color.White,
-                            modifier = Modifier.size(28.dp)
+                            contentDescription = s.cancelBtn,
+                            tint = p.textSecondary,
+                            modifier = Modifier.size(26.dp)
                         )
                     }
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .background(OriginalBlue)
-                            .border(0.5.dp, Color.White.copy(alpha = 0.6f))
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(p.segmentedBg)
                             .clickable {
                                 if (displayStr.length > 1) {
                                     displayStr = displayStr.dropLast(1)
@@ -882,18 +910,18 @@ fun OriginalDecimalNumpadModalDialog(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "«",
-                            color = Color.White,
-                            fontSize = 28.sp,
-                            fontWeight = FontWeight.Bold
+                            text = "⌫",
+                            color = p.textPrimary,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Medium
                         )
                     }
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .background(OriginalBlue)
-                            .border(0.5.dp, Color.White.copy(alpha = 0.6f))
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(p.accentBlue)
                             .clickable {
                                 val parsed = displayStr.replace(',', '.').toDoubleOrNull() ?: 0.0
                                 onConfirm(if (parsed <= 0.0) null else parsed)
@@ -902,7 +930,7 @@ fun OriginalDecimalNumpadModalDialog(
                     ) {
                         Icon(
                             Icons.Default.Check,
-                            contentDescription = "ОК",
+                            contentDescription = s.okBtn,
                             tint = Color.White,
                             modifier = Modifier.size(28.dp)
                         )
@@ -920,15 +948,16 @@ private fun IconCellButton(
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit
 ) {
+    val p = LocalWinStudioPalette.current
     Box(
         modifier = modifier
             .aspectRatio(1f)
-            .clip(RoundedCornerShape(4.dp))
-            .background(if (selected) Color(0xFFB3E5FC) else Color(0xFFEEEEEE))
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) p.accentBlue.copy(alpha = 0.2f) else p.background)
             .border(
-                width = if (selected) 2.5.dp else 1.dp,
-                color = if (selected) OriginalBlue else Color(0xFFCCCCCC),
-                shape = RoundedCornerShape(4.dp)
+                width = if (selected) 2.dp else 0.8.dp,
+                color = if (selected) p.accentBlue else p.divider,
+                shape = RoundedCornerShape(12.dp)
             )
             .clickable { onClick() }
             .padding(6.dp),

@@ -8,6 +8,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -17,21 +18,31 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import ru.winstudiopro.app.R
 import androidx.compose.ui.text.input.KeyboardType
@@ -48,6 +59,14 @@ import ru.winstudiopro.app.domain.model.*
 import ru.winstudiopro.app.pdf.ClientPdfReportMode
 import ru.winstudiopro.app.pdf.PdfReportGenerator
 import ru.winstudiopro.app.ui.cad.*
+import ru.winstudiopro.app.ui.components.IosHomeDashboard
+import ru.winstudiopro.app.ui.components.IosSettingsScreen
+import ru.winstudiopro.app.ui.components.IosTopAppBar
+import ru.winstudiopro.app.ui.i18n.LocalAppStrings
+import ru.winstudiopro.app.ui.i18n.normalizeCurrencyDisplay
+import ru.winstudiopro.app.ui.i18n.stringsFor
+import ru.winstudiopro.app.ui.theme.LocalWinStudioPalette
+import ru.winstudiopro.app.ui.theme.WinStudioTheme
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -85,12 +104,12 @@ sealed class NumpadRequestState(val title: String, val initialValue: Int) {
     ) : NumpadRequestState("Высота импоста створки/двери от низа (мм)", currentMm)
 }
 
-private val MetroBlue = Color(0xFF0099CC)
-private val MetroDarkBlue = Color(0xFF007799)
-private val CanvasBgGray = Color(0xFFCCCCCC)
+private val MetroBlue = Color(0xFF007AFF)
+private val MetroDarkBlue = Color(0xFF005BBF)
+private val CanvasBgGray = Color(0xFFECEFF4)
 
 /**
- * Единая аккуратная верхняя синяя панель (52.dp) для всех экранов приложения.
+ * Единая верхняя панель навигации в стиле iOS для всех экранов приложения.
  */
 @Composable
 private fun UnifiedTopAppBar(
@@ -99,51 +118,12 @@ private fun UnifiedTopAppBar(
     backgroundColor: Color = MetroBlue,
     actions: @Composable RowScope.() -> Unit = {}
 ) {
-    Surface(
-        color = backgroundColor,
-        shadowElevation = 4.dp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(52.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
-            ) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier.size(38.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowBack,
-                        contentDescription = "Назад",
-                        tint = Color.White
-                    )
-                }
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = title,
-                    color = Color.White,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                content = actions
-            )
-        }
-    }
+    IosTopAppBar(
+        title = title,
+        onBack = onBack,
+        accentColor = LocalWinStudioPalette.current.accentBlue,
+        actions = actions
+    )
 }
 
 @Composable
@@ -304,7 +284,7 @@ fun WinStudioProMainApp(
             customerPhone = "",
             address = "",
             createdDate = todayStr,
-            currencySymbol = uiSettings.currencySymbol,
+            currencySymbol = normalizeCurrencyDisplay(uiSettings.currencySymbol),
             status = OrderStatus.DRAFT,
             windows = listOf(firstWindow)
         )
@@ -327,530 +307,186 @@ fun WinStudioProMainApp(
     }
 
     val currentOrder = orders.find { it.id == activeOrderId } ?: orders.firstOrNull()
-    val isDark = uiSettings.themeMode == AppThemeMode.DARK
+    val appStrings = remember(uiSettings.language) { stringsFor(uiSettings.language) }
 
-    Surface(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding(),
-        color = if (isDark) Color(0xFF1E2228) else Color(0xFFF2F5F8)
-    ) {
-        when (screenMode) {
-            AppScreenMode.METRO_HOME -> {
-                MetroStartDashboard(
-                    orders = orders,
-                    profileSystems = profileSystems,
-                    stockRemnants = stockRemnants,
-                    uiSettings = uiSettings,
-                    onNewOrderClick = { createNewOrderAndOpenEditor() },
-                    onOpenOrder = { orderId ->
-                        activeOrderId = orderId
-                        activeWindowIndex = 0
-                        screenMode = AppScreenMode.CAD_WORKSPACE
-                    },
-                    onNavigate = { target -> screenMode = target }
-                )
-            }
-
-            AppScreenMode.CAD_WORKSPACE -> {
-                if (currentOrder == null) {
-                    LaunchedEffect(Unit) { createNewOrderAndOpenEditor() }
-                } else {
-                    CadEditorWorkspaceScreen(
-                        order = currentOrder,
-                        activeWindowIndex = activeWindowIndex.coerceIn(0, (currentOrder.windows.size - 1).coerceAtLeast(0)),
-                        profileSystems = profileSystems,
-                        glazingCatalog = glazingCatalog,
-                        colorCatalog = colorCatalog,
-                        sillsCatalog = sillsCatalog,
-                        hardwareBrandsCatalog = hardwareBrands,
-                        extraAccessoriesCatalog = extraAccessories,
-                        workServicesCatalog = workServices,
-                        uiSettings = uiSettings,
-                        onSelectWindowIndex = { idx -> activeWindowIndex = idx },
-                        onUpdateOrder = { updatedOrder ->
-                            val newList = orders.map { if (it.id == updatedOrder.id) updatedOrder else it }
-                            persistAll(newOrders = newList)
-                        },
-                        onBackToHome = { screenMode = AppScreenMode.METRO_HOME },
-                        onOpenWorkshopCutting = { screenMode = AppScreenMode.WORKSHOP_CUTTING },
-                        onOpenPdfFile = onOpenPdfFile,
-                        onSharePdfFile = onSharePdfFile,
-                        onShareExportFile = onShareExportFile,
-                        onImportOrder = { importOrderLauncher.launch("*/*") },
-                        onImportBackup = { importBackupLauncher.launch("*/*") }
-                    )
-                }
-            }
-
-            AppScreenMode.ORDERS_LIST -> {
-                OrdersListScreen(
-                    orders = orders,
-                    onBack = { screenMode = AppScreenMode.METRO_HOME },
-                    onNewOrder = { createNewOrderAndOpenEditor() },
-                    onOpenOrder = { orderId ->
-                        activeOrderId = orderId
-                        activeWindowIndex = 0
-                        screenMode = AppScreenMode.CAD_WORKSPACE
-                    },
-                    onUpdateOrders = { updated -> persistAll(newOrders = updated) },
-                    onExportOrder = { ord ->
-                        val file = AppStateStorage.createOrderJsonExportFile(context, ord)
-                        onShareExportFile(file, "Заказ ${ord.orderNumber}")
-                    },
-                    onImportOrder = { importOrderLauncher.launch("*/*") },
-                    onExportBackup = {
-                        val file = AppStateStorage.createFullBackupFile(context)
-                        onShareExportFile(file, "Полный бэкап WinStudio Pro")
+    WinStudioTheme(themeMode = uiSettings.themeMode) {
+        CompositionLocalProvider(LocalAppStrings provides appStrings) {
+            val palette = LocalWinStudioPalette.current
+            Surface(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(palette.background)
+                    .statusBarsPadding()
+                    .navigationBarsPadding(),
+                color = palette.background
+            ) {
+                when (screenMode) {
+                    AppScreenMode.METRO_HOME -> {
+                        IosHomeDashboard(
+                            orders = orders,
+                            profileSystems = profileSystems,
+                            stockRemnants = stockRemnants,
+                            uiSettings = uiSettings,
+                            onNewOrderClick = { createNewOrderAndOpenEditor() },
+                            onOpenOrder = { orderId ->
+                                activeOrderId = orderId
+                                activeWindowIndex = 0
+                                screenMode = AppScreenMode.CAD_WORKSPACE
+                            },
+                            onOpenOrdersList = { screenMode = AppScreenMode.ORDERS_LIST },
+                            onOpenProfileConstructor = { screenMode = AppScreenMode.PROFILE_CONSTRUCTOR },
+                            onOpenPrices = { screenMode = AppScreenMode.PRICES_SCREEN },
+                            onOpenWarehouse = { screenMode = AppScreenMode.WAREHOUSE_STOCK },
+                            onOpenOrderStatuses = { screenMode = AppScreenMode.ORDER_STATUS_BOARD },
+                            onOpenSettings = { screenMode = AppScreenMode.UI_SETTINGS }
+                        )
                     }
-                )
-            }
 
-            AppScreenMode.PROFILE_CONSTRUCTOR -> {
-                ProfileConstructorScreen(
-                    profileSystems = profileSystems,
-                    currencySymbol = uiSettings.currencySymbol,
-                    onBack = { screenMode = AppScreenMode.METRO_HOME },
-                    onSaveProfiles = { updated -> persistAll(newProfiles = updated) }
-                )
-            }
-
-            AppScreenMode.PRICES_SCREEN -> {
-                PricesEditorScreen(
-                    profileSystems = profileSystems,
-                    glazingCatalog = glazingCatalog,
-                    colorCatalog = colorCatalog,
-                    hardwareBrands = hardwareBrands,
-                    extraAccessories = extraAccessories,
-                    workServices = workServices,
-                    currencySymbol = uiSettings.currencySymbol,
-                    onBack = { screenMode = AppScreenMode.METRO_HOME },
-                    onSaveProfiles = { updated -> persistAll(newProfiles = updated) },
-                    onSaveGlazing = { updated -> persistAll(newGlazing = updated) },
-                    onSaveColors = { updated -> persistAll(newColors = updated) },
-                    onSaveHardware = { updated -> persistAll(newHardwareBrands = updated) },
-                    onSaveExtras = { updated -> persistAll(newExtras = updated) },
-                    onSaveWorks = { updated -> persistAll(newWorks = updated) }
-                )
-            }
-
-            AppScreenMode.WAREHOUSE_STOCK -> {
-                WarehouseBySystemScreen(
-                    profileSystems = profileSystems,
-                    stockBars = stockRemnants,
-                    onBack = { screenMode = AppScreenMode.METRO_HOME },
-                    onSaveStock = { updated -> persistAll(newStock = updated) }
-                )
-            }
-
-            AppScreenMode.ORDER_STATUS_BOARD -> {
-                OrderStatusManagerScreen(
-                    orders = orders,
-                    onBack = { screenMode = AppScreenMode.METRO_HOME },
-                    onOpenOrder = { orderId ->
-                        activeOrderId = orderId
-                        activeWindowIndex = 0
-                        screenMode = AppScreenMode.CAD_WORKSPACE
-                    },
-                    onUpdateOrders = { updated -> persistAll(newOrders = updated) }
-                )
-            }
-
-            AppScreenMode.UI_SETTINGS -> {
-                UiSettingsScreen(
-                    settings = uiSettings,
-                    onBack = { screenMode = AppScreenMode.METRO_HOME },
-                    onSaveSettings = { newSettings ->
-                        persistAll(newSettings = newSettings)
-                    }
-                )
-            }
-
-            AppScreenMode.WORKSHOP_CUTTING -> {
-                if (currentOrder != null) {
-                    WorkshopAndCuttingScreen(
-                        order = currentOrder,
-                        profileSystems = profileSystems,
-                        glazingCatalog = glazingCatalog,
-                        colorCatalog = colorCatalog,
-                        sillsCatalog = sillsCatalog,
-                        extraAccessoriesCatalog = extraAccessories,
-                        workServicesCatalog = workServices,
-                        hardwareBrandsCatalog = hardwareBrands,
-                        stockRemnants = stockRemnants,
-                        onBackToCad = { screenMode = AppScreenMode.CAD_WORKSPACE },
-                        onSaveStockRemnants = { updatedStock -> persistAll(newStock = updatedStock) },
-                        onOpenPdfFile = onOpenPdfFile
-                    )
-                } else {
-                    screenMode = AppScreenMode.METRO_HOME
-                }
-            }
-        }
-    }
-}
-
-// =========================================================================================
-// 1. СТАРТОВЫЙ ПЛИТОЧНЫЙ ЭКРАН (В СТИЛЕ ОРИГИНАЛА + РАСШИРЕННЫЕ ПЛИТКИ)
-// =========================================================================================
-@Composable
-private fun MetroStartDashboard(
-    orders: List<CustomerOrder>,
-    profileSystems: List<ProfileSystemSpec>,
-    stockRemnants: List<StockRemnantBar>,
-    uiSettings: AppUiSettings,
-    onNewOrderClick: () -> Unit,
-    onOpenOrder: (String) -> Unit,
-    onNavigate: (AppScreenMode) -> Unit
-) {
-    val lastOrder = orders.getOrNull(0)
-    val prevOrder = orders.getOrNull(1)
-    val scrollState = rememberScrollState()
-    val isDark = uiSettings.themeMode == AppThemeMode.DARK
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(if (isDark) Color(0xFF1A1D21) else Color(0xFFE6EAEE))
-            .verticalScroll(scrollState)
-            .padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "WinStudio Pro",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (isDark) Color.White else Color(0xFF263238)
-            )
-            Text(
-                text = "SQLite • ${profileSystems.size} пром. систем • ${orders.size} заказов",
-                fontSize = 12.sp,
-                color = Color.Gray
-            )
-        }
-
-        // РЯД 1: "новый заказ (+)" и "заказы"
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(145.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            MetroTile(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                backgroundColor = MetroBlue,
-                title = "новый заказ",
-                subtitle = "1500×1500 (сразу в чертёж)",
-                onClick = onNewOrderClick
-            ) {
-                Text(
-                    text = "+",
-                    fontSize = 68.sp,
-                    fontWeight = FontWeight.Light,
-                    color = Color.White
-                )
-            }
-
-            MetroTile(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                backgroundColor = MetroBlue,
-                title = "заказы",
-                subtitle = "всего: ${orders.size}",
-                onClick = { onNavigate(AppScreenMode.ORDERS_LIST) }
-            ) {
-                Icon(
-                    imageVector = Icons.Default.List,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(56.dp)
-                )
-            }
-        }
-
-        // РЯД 2: "последний заказ" и "предпоследний заказ" с живыми миниатюрами
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(170.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OrderPreviewMetroTile(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                headerLabel = "последний заказ",
-                order = lastOrder,
-                onClick = {
-                    if (lastOrder != null) onOpenOrder(lastOrder.id) else onNewOrderClick()
-                }
-            )
-            OrderPreviewMetroTile(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                headerLabel = "предпоследний заказ",
-                order = prevOrder,
-                onClick = {
-                    if (prevOrder != null) onOpenOrder(prevOrder.id)
-                }
-            )
-        }
-
-        // РЯД 3: "профильные системы (конструктор)" и "прайсы ($)"
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(140.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            MetroTile(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                backgroundColor = MetroBlue,
-                title = "профильные системы",
-                subtitle = "конструктор геометрии (${profileSystems.size})",
-                onClick = { onNavigate(AppScreenMode.PROFILE_CONSTRUCTOR) }
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Build,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(48.dp)
-                )
-            }
-
-            MetroTile(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                backgroundColor = MetroBlue,
-                title = "прайсы",
-                subtitle = "профили, сухари, стёкла, работы",
-                onClick = { onNavigate(AppScreenMode.PRICES_SCREEN) }
-            ) {
-                Text(
-                    text = "$",
-                    fontSize = 58.sp,
-                    fontWeight = FontWeight.Light,
-                    color = Color.White
-                )
-            }
-        }
-
-        // РЯД 4: "склад (материал и остатки по папкам систем)" и "статусы заказов"
-        val fullBarsCount = stockRemnants.filter { it.isFullStockBar }.sumOf { it.quantity }
-        val remnantsCount = stockRemnants.filter { !it.isFullStockBar }.sumOf { it.quantity }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(140.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            MetroTile(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                backgroundColor = Color(0xFF00838F),
-                title = "склад материала",
-                subtitle = "хлыстов: $fullBarsCount | остатков: $remnantsCount",
-                onClick = { onNavigate(AppScreenMode.WAREHOUSE_STOCK) }
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Home,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(48.dp)
-                )
-            }
-
-            val inWorkCount = orders.count { it.status == OrderStatus.IN_WORKSHOP || it.status == OrderStatus.CONFIRMED }
-            MetroTile(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                backgroundColor = Color(0xFF00838F),
-                title = "статусы заказов",
-                subtitle = "в работе / в цеху: $inWorkCount",
-                onClick = { onNavigate(AppScreenMode.ORDER_STATUS_BOARD) }
-            ) {
-                Icon(
-                    imageVector = Icons.Default.CheckCircle,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(48.dp)
-                )
-            }
-        }
-
-        // РЯД 5: "настройки интерфейса"
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(115.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            MetroTile(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight(),
-                backgroundColor = MetroDarkBlue,
-                title = "настройки интерфейса и реквизитов PDF",
-                subtitle = "валюта: ${uiSettings.currencySymbol} • тема: ${uiSettings.themeMode.titleRu} • компания: ${uiSettings.companyName}",
-                onClick = { onNavigate(AppScreenMode.UI_SETTINGS) }
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(42.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun MetroTile(
-    modifier: Modifier = Modifier,
-    backgroundColor: Color,
-    title: String,
-    subtitle: String? = null,
-    onClick: () -> Unit,
-    centerContent: @Composable BoxScope.() -> Unit
-) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(2.dp))
-            .background(backgroundColor)
-            .clickable { onClick() }
-            .padding(12.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(bottom = 26.dp),
-            contentAlignment = Alignment.Center,
-            content = centerContent
-        )
-        Column(
-            modifier = Modifier.align(Alignment.BottomStart)
-        ) {
-            if (!subtitle.isNullOrBlank()) {
-                Text(
-                    text = subtitle,
-                    color = Color.White.copy(alpha = 0.85f),
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Text(
-                text = title,
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-@Composable
-private fun OrderPreviewMetroTile(
-    modifier: Modifier = Modifier,
-    headerLabel: String,
-    order: CustomerOrder?,
-    onClick: () -> Unit
-) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(2.dp))
-            .background(MetroBlue)
-            .clickable(enabled = order != null) { onClick() }
-            .padding(10.dp)
-    ) {
-        if (order == null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("нет заказа", color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp)
-            }
-        } else {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val firstWin = order.windows.firstOrNull()
-                    if (firstWin != null) {
-                        Box(
-                            modifier = Modifier
-                                .size(76.dp)
-                                .background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
-                                .padding(4.dp)
-                        ) {
-                            WindowMiniThumbnail(
-                                topology = firstWin.topology,
-                                modifier = Modifier.fillMaxSize()
+                    AppScreenMode.CAD_WORKSPACE -> {
+                        if (currentOrder == null) {
+                            LaunchedEffect(Unit) { createNewOrderAndOpenEditor() }
+                        } else {
+                            CadEditorWorkspaceScreen(
+                                order = currentOrder,
+                                activeWindowIndex = activeWindowIndex.coerceIn(0, (currentOrder.windows.size - 1).coerceAtLeast(0)),
+                                profileSystems = profileSystems,
+                                glazingCatalog = glazingCatalog,
+                                colorCatalog = colorCatalog,
+                                sillsCatalog = sillsCatalog,
+                                hardwareBrandsCatalog = hardwareBrands,
+                                extraAccessoriesCatalog = extraAccessories,
+                                workServicesCatalog = workServices,
+                                uiSettings = uiSettings,
+                                onSelectWindowIndex = { idx -> activeWindowIndex = idx },
+                                onUpdateOrder = { updatedOrder ->
+                                    val newList = orders.map { if (it.id == updatedOrder.id) updatedOrder else it }
+                                    persistAll(newOrders = newList)
+                                },
+                                onBackToHome = { screenMode = AppScreenMode.METRO_HOME },
+                                onOpenWorkshopCutting = { screenMode = AppScreenMode.WORKSHOP_CUTTING },
+                                onOpenPdfFile = onOpenPdfFile,
+                                onSharePdfFile = onSharePdfFile,
+                                onShareExportFile = onShareExportFile,
+                                onImportOrder = { importOrderLauncher.launch("*/*") },
+                                onImportBackup = { importBackupLauncher.launch("*/*") }
                             )
                         }
                     }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = order.orderNumber,
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (order.customerName.isNotBlank()) {
-                            Text(
-                                text = order.customerName,
-                                color = Color.White.copy(alpha = 0.9f),
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        Text(
-                            text = "Окон: ${order.windows.sumOf { it.quantity }} шт.",
-                            color = Color.White.copy(alpha = 0.85f),
-                            fontSize = 11.sp
-                        )
-                        Text(
-                            text = order.status.titleRu,
-                            color = Color(0xFFFFF59D),
-                            fontSize = 10.sp
+
+                    AppScreenMode.ORDERS_LIST -> {
+                        OrdersListScreen(
+                            orders = orders,
+                            onBack = { screenMode = AppScreenMode.METRO_HOME },
+                            onNewOrder = { createNewOrderAndOpenEditor() },
+                            onOpenOrder = { orderId ->
+                                activeOrderId = orderId
+                                activeWindowIndex = 0
+                                screenMode = AppScreenMode.CAD_WORKSPACE
+                            },
+                            onUpdateOrders = { updated -> persistAll(newOrders = updated) },
+                            onExportOrder = { ord ->
+                                val file = AppStateStorage.createOrderJsonExportFile(context, ord)
+                                onShareExportFile(file, "Заказ ${ord.orderNumber}")
+                            },
+                            onImportOrder = { importOrderLauncher.launch("*/*") },
+                            onExportBackup = {
+                                val file = AppStateStorage.createFullBackupFile(context)
+                                onShareExportFile(file, "Полный бэкап WinStudio Pro")
+                            }
                         )
                     }
+
+                    AppScreenMode.PROFILE_CONSTRUCTOR -> {
+                        ProfileConstructorScreen(
+                            profileSystems = profileSystems,
+                            currencySymbol = normalizeCurrencyDisplay(uiSettings.currencySymbol),
+                            onBack = { screenMode = AppScreenMode.METRO_HOME },
+                            onSaveProfiles = { updated -> persistAll(newProfiles = updated) }
+                        )
+                    }
+
+                    AppScreenMode.PRICES_SCREEN -> {
+                        PricesEditorScreen(
+                            profileSystems = profileSystems,
+                            glazingCatalog = glazingCatalog,
+                            colorCatalog = colorCatalog,
+                            hardwareBrands = hardwareBrands,
+                            extraAccessories = extraAccessories,
+                            workServices = workServices,
+                            currencySymbol = normalizeCurrencyDisplay(uiSettings.currencySymbol),
+                            onBack = { screenMode = AppScreenMode.METRO_HOME },
+                            onSaveProfiles = { updated -> persistAll(newProfiles = updated) },
+                            onSaveGlazing = { updated -> persistAll(newGlazing = updated) },
+                            onSaveColors = { updated -> persistAll(newColors = updated) },
+                            onSaveHardware = { updated -> persistAll(newHardwareBrands = updated) },
+                            onSaveExtras = { updated -> persistAll(newExtras = updated) },
+                            onSaveWorks = { updated -> persistAll(newWorks = updated) }
+                        )
+                    }
+
+                    AppScreenMode.WAREHOUSE_STOCK -> {
+                        WarehouseBySystemScreen(
+                            profileSystems = profileSystems,
+                            stockBars = stockRemnants,
+                            onBack = { screenMode = AppScreenMode.METRO_HOME },
+                            onSaveStock = { updated -> persistAll(newStock = updated) }
+                        )
+                    }
+
+                    AppScreenMode.ORDER_STATUS_BOARD -> {
+                        OrderStatusManagerScreen(
+                            orders = orders,
+                            onBack = { screenMode = AppScreenMode.METRO_HOME },
+                            onOpenOrder = { orderId ->
+                                activeOrderId = orderId
+                                activeWindowIndex = 0
+                                screenMode = AppScreenMode.CAD_WORKSPACE
+                            },
+                            onUpdateOrders = { updated -> persistAll(newOrders = updated) }
+                        )
+                    }
+
+                    AppScreenMode.UI_SETTINGS -> {
+                        IosSettingsScreen(
+                            settings = uiSettings,
+                            onBack = { screenMode = AppScreenMode.METRO_HOME },
+                            onUpdateSettingsLive = { newSettings ->
+                                persistAll(newSettings = newSettings)
+                            },
+                            onApplyCurrencyToAllOrders = { cur ->
+                                val updatedOrders = orders.map { it.copy(currencySymbol = cur) }
+                                persistAll(newOrders = updatedOrders)
+                            }
+                        )
+                    }
+
+                    AppScreenMode.WORKSHOP_CUTTING -> {
+                        if (currentOrder != null) {
+                            WorkshopAndCuttingScreen(
+                                order = currentOrder,
+                                profileSystems = profileSystems,
+                                glazingCatalog = glazingCatalog,
+                                colorCatalog = colorCatalog,
+                                sillsCatalog = sillsCatalog,
+                                extraAccessoriesCatalog = extraAccessories,
+                                workServicesCatalog = workServices,
+                                hardwareBrandsCatalog = hardwareBrands,
+                                stockRemnants = stockRemnants,
+                                onBackToCad = { screenMode = AppScreenMode.CAD_WORKSPACE },
+                                onSaveStockRemnants = { updatedStock -> persistAll(newStock = updatedStock) },
+                                onOpenPdfFile = onOpenPdfFile
+                            )
+                        } else {
+                            screenMode = AppScreenMode.METRO_HOME
+                        }
+                    }
                 }
-                Text(
-                    text = headerLabel,
-                    color = Color.White,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium
-                )
             }
         }
     }
 }
+
+
 
 // =========================================================================================
 // 2. РАБОЧИЙ 2D-РЕДАКТОР КОНСТРУКЦИЙ (С ДИНАМИЧЕСКИМ СКРОЛЛОМ МЕТРОВ/СУХАРЕЙ/СУММ И ШТОРКОЙ НАСТРОЕК)
@@ -878,8 +514,14 @@ private fun CadEditorWorkspaceScreen(
     onImportBackup: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
     val windows = order.windows
     val currentWindow = windows.getOrNull(activeWindowIndex) ?: return
+
+    // Фактическая нижняя граница верхней плавающей панели для точного старта чертежа
+    var topBarBottomPx by remember { mutableFloatStateOf(0f) }
 
     val activeProfile = profileSystems.find { it.id == currentWindow.profileSystemId }
         ?: profileSystems.firstOrNull()
@@ -1050,146 +692,18 @@ private fun CadEditorWorkspaceScreen(
         onSelectWindowIndex(updated.lastIndex)
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.canvasBg)
+    ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // --- ВЕРХНЯЯ ПАНЕЛЬ ИНСТРУМЕНТОВ РЕДАКТОРА (50.dp, аккуратная, без наползания кнопок) ---
-            Surface(
-                color = Color(0xFF263238),
-                shadowElevation = 4.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Button(
-                            onClick = { showLeftBlueMenu = !showLeftBlueMenu },
-                            colors = ButtonDefaults.buttonColors(containerColor = MetroBlue),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            shape = RoundedCornerShape(3.dp),
-                            modifier = Modifier.height(36.dp)
-                        ) {
-                            Text("≡ МЕНЮ", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-
-                        Surface(
-                            color = Color(0xFF37474F),
-                            shape = RoundedCornerShape(4.dp),
-                            modifier = Modifier
-                                .weight(1f, fill = false)
-                                .clickable { showCustomerEditDialog = true }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Column(modifier = Modifier.weight(1f, fill = false)) {
-                                    Text(
-                                        text = order.orderNumber,
-                                        color = Color.White,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = if (order.customerName.isBlank()) "Клиент (нажмите для ввода)" else "${order.customerName} ${order.customerPhone}",
-                                        color = Color(0xFFB0BEC5),
-                                        fontSize = 9.5.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                Icon(
-                                    Icons.Default.Edit,
-                                    contentDescription = "Данные клиента",
-                                    tint = Color(0xFF80DEEA),
-                                    modifier = Modifier.size(14.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(6.dp))
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        // Кнопка «Отмена» (Undo)
-                        IconButton(
-                            onClick = { undoCurrentWindow() },
-                            enabled = undoStack.isNotEmpty(),
-                            modifier = Modifier
-                                .size(36.dp)
-                                .background(
-                                    if (undoStack.isNotEmpty()) Color(0xFF37474F) else Color(0xFF263238),
-                                    RoundedCornerShape(3.dp)
-                                )
-                        ) {
-                            Icon(
-                                Icons.Default.Undo,
-                                contentDescription = "Отмена (Undo)",
-                                tint = if (undoStack.isNotEmpty()) Color.White else Color.Gray.copy(alpha = 0.4f),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-
-                        // Кнопка «Повтор» (Redo)
-                        IconButton(
-                            onClick = { redoCurrentWindow() },
-                            enabled = redoStack.isNotEmpty(),
-                            modifier = Modifier
-                                .size(36.dp)
-                                .background(
-                                    if (redoStack.isNotEmpty()) Color(0xFF37474F) else Color(0xFF263238),
-                                    RoundedCornerShape(3.dp)
-                                )
-                        ) {
-                            Icon(
-                                Icons.Default.Redo,
-                                contentDescription = "Повтор (Redo)",
-                                tint = if (redoStack.isNotEmpty()) Color.White else Color.Gray.copy(alpha = 0.4f),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-
-                        // Кнопка выравнивания импостов (справа вверху)
-                        Button(
-                            onClick = { showAlignmentDialog = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00838F)),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            shape = RoundedCornerShape(3.dp),
-                            modifier = Modifier.height(36.dp)
-                        ) {
-                            Text(
-                                text = "|↔| Импосты (${currentAlignmentMode.titleRu.substringBefore(" ")})",
-                                color = Color.White,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
-            }
-
-            // --- ЦЕНТРАЛЬНАЯ ОБЛАСТЬ: СЕРЫЙ ХОЛСТ ЧЕРТЕЖА + СПРАВА ИНФОРМАЦИОННЫЕ ПЛАШКИ + ВНИЗУ СПРАВА КНОПКА НАСТРОЕК ⚙ ---
+            // --- ЦЕНТРАЛЬНАЯ ОБЛАСТЬ: ЧИСТЫЙ ЧЕРТЁЖ НА ВСЮ ШИРИНУ И ВЫСОТУ МЕЖДУ ПАНЕЛЯМИ ---
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .background(CanvasBgGray)
+                    .background(palette.canvasBg)
             ) {
                 InteractiveWindowCadCanvas(
                     topology = currentWindow.topology,
@@ -1235,28 +749,245 @@ private fun CadEditorWorkspaceScreen(
                             win.copy(topology = WindowCadOperations.toggleDoorBottomSandwich(win.topology, openingId))
                         }
                     },
+                    topSafeInsetPx = topBarBottomPx,
+                    rightSafeInsetPx = 0f,
+                    bottomSafeInsetPx = 0f,
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // ПРАВЫЕ КОМПАКТНЫЕ ИНФОРМАЦИОННЫЕ ПЛАШКИ (НЕ ПЕРЕХВАТЫВАЮТ КЛИКИ ЧЕРТЕЖА, КАК В ОРИГИНАЛЕ НА 00:54 ВИДЕО!)
+                // ПЛАВАЮЩАЯ ВЕРХНЯЯ ПАНЕЛЬ ИНСТРУМЕНТОВ В СТИЛЕ iOS
+                Surface(
+                    color = palette.floatingGlass,
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(0.8.dp, palette.floatingBorder),
+                    shadowElevation = if (palette.isDark) 4.dp else 8.dp,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                        .onGloballyPositioned { coords ->
+                            val bottom = coords.positionInParent().y + coords.size.height
+                            if (kotlin.math.abs(topBarBottomPx - bottom) > 1f) {
+                                topBarBottomPx = bottom
+                            }
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 6.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Surface(
+                                color = palette.accentBlue,
+                                shape = RoundedCornerShape(11.dp),
+                                modifier = Modifier
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(11.dp))
+                                    .clickable { showLeftBlueMenu = !showLeftBlueMenu }
+                                    .testTag("cad_menu_button")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Menu,
+                                        contentDescription = strings.menuBtn,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                    Text(
+                                        text = strings.menuBtn,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 11.5.sp,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                color = palette.secondaryBackground.copy(alpha = 0.72f),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                                    .heightIn(min = 38.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { showCustomerEditDialog = true }
+                                    .testTag("cad_order_client_pill")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Column(modifier = Modifier.weight(1f, fill = false)) {
+                                        Text(
+                                            text = order.orderNumber,
+                                            color = palette.textPrimary,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = if (order.customerName.isBlank()) strings.clientTapHint else "${order.customerName} ${order.customerPhone}",
+                                            color = palette.textSecondary,
+                                            fontSize = 9.5.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = Icons.Rounded.Edit,
+                                        contentDescription = strings.customerDetailsItem,
+                                        tint = palette.accentBlue,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(6.dp))
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            // Кнопка «Отмена» (Undo)
+                            Surface(
+                                color = if (undoStack.isNotEmpty()) palette.secondaryBackground else palette.secondaryBackground.copy(alpha = 0.4f),
+                                shape = RoundedCornerShape(11.dp),
+                                modifier = Modifier
+                                    .size(36.dp, 38.dp)
+                                    .clip(RoundedCornerShape(11.dp))
+                                    .clickable(enabled = undoStack.isNotEmpty()) { undoCurrentWindow() }
+                                    .testTag("cad_undo_button")
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Undo,
+                                        contentDescription = strings.undoDesc,
+                                        tint = if (undoStack.isNotEmpty()) palette.textPrimary else palette.textSecondary.copy(alpha = 0.35f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+
+                            // Кнопка «Повтор» (Redo)
+                            Surface(
+                                color = if (redoStack.isNotEmpty()) palette.secondaryBackground else palette.secondaryBackground.copy(alpha = 0.4f),
+                                shape = RoundedCornerShape(11.dp),
+                                modifier = Modifier
+                                    .size(36.dp, 38.dp)
+                                    .clip(RoundedCornerShape(11.dp))
+                                    .clickable(enabled = redoStack.isNotEmpty()) { redoCurrentWindow() }
+                                    .testTag("cad_redo_button")
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Redo,
+                                        contentDescription = strings.redoDesc,
+                                        tint = if (redoStack.isNotEmpty()) palette.textPrimary else palette.textSecondary.copy(alpha = 0.35f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+
+                            // Компактная кнопка удаления конструкции в верхнем баре (если конструкций > 1)
+                            if (windows.size > 1) {
+                                Surface(
+                                    color = palette.accentRed.copy(alpha = 0.14f),
+                                    shape = RoundedCornerShape(11.dp),
+                                    border = BorderStroke(0.6.dp, palette.accentRed.copy(alpha = 0.35f)),
+                                    modifier = Modifier
+                                        .size(36.dp, 38.dp)
+                                        .clip(RoundedCornerShape(11.dp))
+                                        .clickable {
+                                            val updated = windows.filterIndexed { index, _ -> index != activeWindowIndex }
+                                            onUpdateOrder(order.copy(windows = updated))
+                                            onSelectWindowIndex((activeWindowIndex - 1).coerceAtLeast(0))
+                                        }
+                                        .testTag("cad_delete_window_button")
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.DeleteOutline,
+                                            contentDescription = strings.deleteWindowDesc,
+                                            tint = palette.accentRed,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Компактная кнопка настроек конструкции в верхнем баре
+                            Surface(
+                                color = palette.accentBlue,
+                                shape = RoundedCornerShape(11.dp),
+                                modifier = Modifier
+                                    .height(38.dp)
+                                    .widthIn(min = 38.dp)
+                                    .clip(RoundedCornerShape(11.dp))
+                                    .clickable { showRightSettingsDrawer = true }
+                                    .testTag("cad_window_settings_button")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = if (currentWindow.quantity > 1) 8.dp else 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Tune,
+                                        contentDescription = strings.windowSettingsDesc,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    if (currentWindow.quantity > 1) {
+                                        Text(
+                                            text = "×${currentWindow.quantity}",
+                                            color = Color(0xFFFFF59D),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ПРАВЫЕ КОМПАКТНЫЕ ИНФОРМАЦИОННЫЕ ПЛАШКИ (СМЕЩЕНЫ НИЖЕ ПЛАВАЮЩЕЙ ВЕРХНЕЙ ПАНЕЛИ)
                 val hwName = hardwareBrandsCatalog
-                    .find { it.id == currentWindow.hardwareBrandId }?.name ?: "не учитывать"
+                    .find { it.id == currentWindow.hardwareBrandId }?.name ?: strings.notAccounted
                 val finName = DefaultCatalogs.defaultFinancialSchemes()
                     .find { it.id == currentWindow.financialSchemeId }?.name
+                val badgesTopPadDp = with(density) { topBarBottomPx.toDp() }.let {
+                    if (it > 0.dp) it + 6.dp else 64.dp
+                }
 
                 Column(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(top = 6.dp, end = 6.dp)
-                        .widthIn(max = 136.dp),
+                        .padding(top = badgesTopPadDp, end = 8.dp)
+                        .widthIn(max = 132.dp),
                     horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     if (finName != null && currentWindow.financialSchemeId != "fin_none") {
-                        CanvasReadOnlyInfoBadge(label = finName, bgColor = Color(0xFFD32F2F))
+                        CanvasReadOnlyInfoBadge(label = finName, bgColor = palette.accentRed)
                     }
                     if (currentWindow.profileSystemId != "none") {
-                        CanvasReadOnlyInfoBadge(label = activeProfile.name, bgColor = Color(0xFFE65100))
+                        CanvasReadOnlyInfoBadge(label = activeProfile.name, bgColor = palette.accentOrange)
                         val chosenSht = activeProfile.shtapikVariants.find { it.id == currentWindow.selectedShtapikId }
                             ?: activeProfile.shtapikVariants.minByOrNull { kotlin.math.abs(it.glazingThicknessSpMm - activeGlazing.thicknessMm) }
                             ?: activeProfile.shtapikVariants.firstOrNull()
@@ -1265,13 +996,13 @@ private fun CadEditorWorkspaceScreen(
                         }
                     }
                     if (currentWindow.glazingId != "none") {
-                        CanvasReadOnlyInfoBadge(label = activeGlazing.name, bgColor = Color(0xFF0099CC))
+                        CanvasReadOnlyInfoBadge(label = activeGlazing.name, bgColor = palette.accentTeal)
                     }
                     if (currentWindow.colorId != "none") {
-                        CanvasReadOnlyInfoBadge(label = activeColor.name, bgColor = Color(0xFF455A64))
+                        CanvasReadOnlyInfoBadge(label = activeColor.name, bgColor = Color(0xFF475569))
                     }
                     if (currentWindow.hardwareBrandId != "hw_none") {
-                        CanvasReadOnlyInfoBadge(label = hwName, bgColor = Color(0xFF6A1B9A))
+                        CanvasReadOnlyInfoBadge(label = hwName, bgColor = palette.accentIndigo)
                     }
                     currentWindow.selectedExtraIds.forEach { eid ->
                         val extName = extraAccessoriesCatalog.find { it.id == eid }?.name
@@ -1282,104 +1013,73 @@ private fun CadEditorWorkspaceScreen(
                     currentWindow.selectedWorkIds.forEach { wid ->
                         val wrkName = workServicesCatalog.find { it.id == wid }?.name
                         if (wrkName != null) {
-                            CanvasReadOnlyInfoBadge(label = wrkName, bgColor = Color(0xFF558B2F))
-                        }
-                    }
-                }
-
-                // ЗАМЕТКА К ОКНУ ВНИЗУ СЛЕВА НАД ДИНАМИЧЕСКИМ СКРОЛЛОМ (КАК НА 00:54 В ВИДЕО!)
-                if (currentWindow.note.isNotBlank()) {
-                    Text(
-                        text = currentWindow.note,
-                        color = Color(0xFF333333),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(start = 10.dp, bottom = 6.dp)
-                    )
-                }
-
-                // КНОПКИ В ПРАВОМ НИЖНЕМ УГЛУ ХОЛСТА (КОРЗИНА 🗑 + КНОПКА НАСТРОЕК ⚙ ВМЕСТО ЦИРКУЛЯ ОРИГИНАЛА!)
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 8.dp, bottom = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (windows.size > 1) {
-                        Surface(
-                            color = Color(0xFF455A64).copy(alpha = 0.85f),
-                            shape = RoundedCornerShape(6.dp),
-                            shadowElevation = 4.dp,
-                            modifier = Modifier
-                                .size(42.dp)
-                                .clickable {
-                                    val updated = windows.filterIndexed { index, _ -> index != activeWindowIndex }
-                                    onUpdateOrder(order.copy(windows = updated))
-                                    onSelectWindowIndex((activeWindowIndex - 1).coerceAtLeast(0))
-                                }
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    Icons.Default.Delete,
-                                    contentDescription = "Удалить окно",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    Surface(
-                        color = MetroBlue,
-                        shape = RoundedCornerShape(6.dp),
-                        shadowElevation = 6.dp,
-                        modifier = Modifier
-                            .height(42.dp)
-                            .clickable { showRightSettingsDrawer = true }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.Settings,
-                                contentDescription = "Настройки окна",
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
-                            if (currentWindow.quantity > 1) {
-                                Text(
-                                    text = "${currentWindow.quantity} шт",
-                                    color = Color(0xFFFFF59D),
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                            CanvasReadOnlyInfoBadge(label = wrkName, bgColor = palette.accentGreen)
                         }
                     }
                 }
 
                 if (snackMessage != null) {
                     Surface(
-                        color = Color(0xFF263238),
-                        shape = RoundedCornerShape(6.dp),
-                        shadowElevation = 6.dp,
+                        color = palette.elevatedSurface,
+                        shape = RoundedCornerShape(18.dp),
+                        border = BorderStroke(0.8.dp, palette.floatingBorder),
+                        shadowElevation = 8.dp,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
-                            .padding(bottom = 10.dp)
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .clip(RoundedCornerShape(18.dp))
                             .clickable { snackMessage = null }
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(snackMessage!!, color = Color.White, fontSize = 12.sp)
-                            Text("✕", color = Color(0xFF80DEEA), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(snackMessage!!, color = palette.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = strings.closeDesc,
+                                tint = palette.accentBlue,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // --- УЗКАЯ ПОЛОСКА КОММЕНТАРИЯ К ОКНУ НАД НИЖНИМ СКРОЛЛОМ (ТОЛЬКО ЕСЛИ ЕСТЬ ТЕКСТ) ---
+            if (currentWindow.note.isNotBlank()) {
+                Surface(
+                    color = palette.secondaryBackground,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showRightSettingsDrawer = true }
+                        .testTag("cad_window_note_strip")
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        HorizontalDivider(color = palette.divider, thickness = 0.6.dp)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.EditNote,
+                                contentDescription = strings.noteLabel,
+                                tint = palette.accentBlue,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = currentWindow.note,
+                                color = palette.textPrimary,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
                         }
                     }
                 }
@@ -1395,99 +1095,126 @@ private fun CadEditorWorkspaceScreen(
                 )
             }
 
-            // --- НИЖНЯЯ ЛЕНТА КОНСТРУКЦИЙ ЗАКАЗА (КНОПКА "+" СЛЕВА СРАЗУ ДОБАВЛЯЕТ 1500х1500 С ТЕКУЩИМИ НАСТРОЙКАМИ!) ---
+            // --- НИЖНЯЯ ЛЕНТА КОНСТРУКЦИЙ ЗАКАЗА В СТИЛЕ iOS (КНОПКА "+" + КОПИЯ + МИНИАТЮРЫ ОКОН) ---
             Surface(
-                color = Color(0xFF37474F),
+                color = palette.dockBg,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(78.dp)
+                    .height(82.dp)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 8.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(66.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(MetroBlue)
-                            .clickable { addNewWindowInheritingSettings() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("+", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-                            Text("1500×1500", color = Color.White, fontSize = 8.5.sp)
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .width(60.dp)
-                            .fillMaxHeight()
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0xFF00838F))
-                            .clickable { duplicateCurrentWindow() }
-                            .padding(4.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                            Text(
-                                "Копия\nокна",
-                                color = Color.White,
-                                fontSize = 9.5.sp,
-                                textAlign = TextAlign.Center,
-                                lineHeight = 10.5.sp
-                            )
-                        }
-                    }
-
-                    val bottomScrollState = rememberScrollState()
-                    LaunchedEffect(windows.size) {
-                        bottomScrollState.scrollTo(0)
-                    }
-
+                Column(modifier = Modifier.fillMaxSize()) {
+                    HorizontalDivider(color = palette.divider, thickness = 0.7.dp)
                     Row(
                         modifier = Modifier
-                            .weight(1f)
-                            .horizontalScroll(bottomScrollState),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .fillMaxSize()
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        windows.mapIndexed { idx, winItem -> idx to winItem }.reversed().forEach { (idx, winItem) ->
-                            val isSelected = idx == activeWindowIndex
-                            val winColorHex = colorCatalog.find { it.id == winItem.colorId }?.hexColor ?: 0xFFE6E9ED
-                            Box(
-                                modifier = Modifier
-                                    .width(88.dp)
-                                    .fillMaxHeight()
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(if (isSelected) Color.White else Color(0xFFECEFF1))
-                                    .border(
-                                        width = if (isSelected) 3.dp else 1.dp,
-                                        color = if (isSelected) MetroBlue else Color.Gray,
-                                        shape = RoundedCornerShape(4.dp)
+                        Surface(
+                            color = palette.accentBlue,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .size(68.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable { addNewWindowInheritingSettings() }
+                                .testTag("cad_add_window_button")
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Add,
+                                        contentDescription = "+ 1500×1500",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(24.dp)
                                     )
-                                    .clickable { onSelectWindowIndex(idx) }
-                                    .padding(3.dp)
+                                    Text("1500×1500", color = Color.White.copy(alpha = 0.92f), fontSize = 8.5.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
+                        }
+
+                        Surface(
+                            color = palette.accentTeal.copy(alpha = 0.14f),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(0.8.dp, palette.accentTeal.copy(alpha = 0.35f)),
+                            modifier = Modifier
+                                .width(58.dp)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable { duplicateCurrentWindow() }
+                                .testTag("cad_copy_window_button")
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.padding(4.dp)
                             ) {
-                                WindowMiniThumbnail(
-                                    topology = winItem.topology,
-                                    frameColorHex = winColorHex,
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.ContentCopy,
+                                        contentDescription = strings.copyWindowBtn,
+                                        tint = palette.accentTeal,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = strings.copyWindowBtn,
+                                        color = palette.accentTeal,
+                                        fontSize = 9.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+
+                        val bottomScrollState = rememberScrollState()
+                        LaunchedEffect(windows.size) {
+                            bottomScrollState.scrollTo(0)
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .horizontalScroll(bottomScrollState),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            windows.mapIndexed { idx, winItem -> idx to winItem }.reversed().forEach { (idx, winItem) ->
+                                val isSelected = idx == activeWindowIndex
+                                val winColorHex = colorCatalog.find { it.id == winItem.colorId }?.hexColor ?: 0xFFE6E9ED
+                                Box(
                                     modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(bottom = 13.dp)
-                                )
-                                Text(
-                                    text = "№${idx + 1} (${winItem.quantity}шт)",
-                                    fontSize = 9.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) MetroDarkBlue else Color.DarkGray,
-                                    modifier = Modifier.align(Alignment.BottomCenter)
-                                )
+                                        .width(88.dp)
+                                        .fillMaxHeight()
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(
+                                            if (isSelected) palette.cardSurface else palette.secondaryBackground.copy(alpha = 0.7f)
+                                        )
+                                        .border(
+                                            width = if (isSelected) 2.2.dp else 0.8.dp,
+                                            color = if (isSelected) palette.accentBlue else palette.floatingBorder,
+                                            shape = RoundedCornerShape(14.dp)
+                                        )
+                                        .clickable { onSelectWindowIndex(idx) }
+                                        .padding(4.dp)
+                                        .testTag("cad_window_thumb_$idx")
+                                ) {
+                                    WindowMiniThumbnail(
+                                        topology = winItem.topology,
+                                        frameColorHex = winColorHex,
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(bottom = 14.dp)
+                                    )
+                                    Text(
+                                        text = "№${idx + 1} (${winItem.quantity}${strings.pcsShort})",
+                                        fontSize = 9.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) palette.accentBlue else palette.textSecondary,
+                                        modifier = Modifier.align(Alignment.BottomCenter)
+                                    )
+                                }
                             }
                         }
                     }
@@ -1495,112 +1222,198 @@ private fun CadEditorWorkspaceScreen(
             }
         }
 
-        // --- ЛЕВОЕ ВЫПАДАЮЩЕЕ СИНЕЕ МЕНЮ "≡" (КАК В ОРИГИНАЛЕ НА 01:14 ВИДЕО) ---
+        // --- ЛЕВОЕ БОКОВОЕ МЕНЮ ЗАКАЗА И ОТЧЁТОВ В СТИЛЕ iOS ---
         if (showLeftBlueMenu) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.35f))
+                    .background(Color.Black.copy(alpha = 0.42f))
                     .clickable { showLeftBlueMenu = false }
             ) {
-                Column(
+                Surface(
+                    shape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
+                    color = palette.cardSurface,
+                    shadowElevation = 18.dp,
                     modifier = Modifier
-                        .width(280.dp)
+                        .width(292.dp)
                         .fillMaxHeight()
-                        .background(MetroBlue)
                         .clickable(enabled = false) {}
-                        .verticalScroll(rememberScrollState())
-                        .padding(vertical = 8.dp)
                 ) {
-                    Text(
-                        text = "меню заказа и отчёты",
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Light,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
-                    )
-                    HorizontalDivider(color = Color.White.copy(alpha = 0.4f))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(vertical = 10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 18.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = strings.orderMenuHeader,
+                                color = palette.textPrimary,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = { showLeftBlueMenu = false },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = strings.closeDesc,
+                                    tint = palette.textSecondary
+                                )
+                            }
+                        }
+                        HorizontalDivider(color = palette.divider, thickness = 0.7.dp)
 
-                    LeftMenuButton("На главный экран (Плитки)") {
-                        showLeftBlueMenu = false
-                        onBackToHome()
-                    }
-                    LeftMenuButton("Данные клиента и № заказа") {
-                        showLeftBlueMenu = false
-                        showCustomerEditDialog = true
-                    }
-                    HorizontalDivider(color = Color.White.copy(alpha = 0.3f))
+                        LeftMenuButton(
+                            title = strings.backToHomeItem,
+                            icon = Icons.Rounded.Home,
+                            accentTint = palette.accentBlue
+                        ) {
+                            showLeftBlueMenu = false
+                            onBackToHome()
+                        }
+                        LeftMenuButton(
+                            title = strings.customerDetailsItem,
+                            icon = Icons.Rounded.PersonOutline,
+                            accentTint = palette.accentTeal
+                        ) {
+                            showLeftBlueMenu = false
+                            showCustomerEditDialog = true
+                        }
+                        HorizontalDivider(
+                            color = palette.divider,
+                            thickness = 0.6.dp,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                        )
 
-                    LeftMenuButton("📄 Чертежи (предпросмотр и PDF)") {
-                        showLeftBlueMenu = false
-                        previewReportMode = ClientPdfReportMode.DRAWINGS_ONLY
-                    }
-                    LeftMenuButton("📋 Чертежи с подробностями (PDF)") {
-                        showLeftBlueMenu = false
-                        previewReportMode = ClientPdfReportMode.DRAWINGS_WITH_DETAILS
-                    }
-                    LeftMenuButton("💼 Коммерческое предложение (PDF)") {
-                        showLeftBlueMenu = false
-                        previewReportMode = ClientPdfReportMode.COMMERCIAL_PROPOSAL
-                    }
+                        LeftMenuButton(
+                            title = strings.pdfDrawingsItem,
+                            icon = Icons.Rounded.Description,
+                            accentTint = palette.accentBlue
+                        ) {
+                            showLeftBlueMenu = false
+                            previewReportMode = ClientPdfReportMode.DRAWINGS_ONLY
+                        }
+                        LeftMenuButton(
+                            title = strings.pdfDrawingsDetailsItem,
+                            icon = Icons.Rounded.FactCheck,
+                            accentTint = palette.accentBlue
+                        ) {
+                            showLeftBlueMenu = false
+                            previewReportMode = ClientPdfReportMode.DRAWINGS_WITH_DETAILS
+                        }
+                        LeftMenuButton(
+                            title = strings.pdfCommercialItem,
+                            icon = Icons.Rounded.ReceiptLong,
+                            accentTint = palette.accentIndigo
+                        ) {
+                            showLeftBlueMenu = false
+                            previewReportMode = ClientPdfReportMode.COMMERCIAL_PROPOSAL
+                        }
 
-                    HorizontalDivider(color = Color.White.copy(alpha = 0.3f))
+                        HorizontalDivider(
+                            color = palette.divider,
+                            thickness = 0.6.dp,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                        )
 
-                    LeftMenuButton("🪟 Заказ стеклопакетов (PDF)") {
-                        showLeftBlueMenu = false
-                        val file = PdfReportGenerator.generateGlazingSpecPdf(context, order, allWindowResults)
-                        onOpenPdfFile(file, "Заказ стеклопакетов")
-                    }
-                    LeftMenuButton("🔩 Заказ фурнитуры (PDF)") {
-                        showLeftBlueMenu = false
-                        val file = PdfReportGenerator.generateHardwareSpecPdf(context, order, allWindowResults)
-                        onOpenPdfFile(file, "Заказ фурнитуры")
-                    }
-                    LeftMenuButton("🪚 Задание в цех + 1D Раскрой профиля") {
-                        showLeftBlueMenu = false
-                        onOpenWorkshopCutting()
-                    }
+                        LeftMenuButton(
+                            title = strings.pdfGlazingItem,
+                            icon = Icons.Rounded.GridView,
+                            accentTint = palette.accentTeal
+                        ) {
+                            showLeftBlueMenu = false
+                            val file = PdfReportGenerator.generateGlazingSpecPdf(context, order, allWindowResults)
+                            onOpenPdfFile(file, strings.pdfGlazingItem)
+                        }
+                        LeftMenuButton(
+                            title = strings.pdfHardwareItem,
+                            icon = Icons.Rounded.Build,
+                            accentTint = palette.accentOrange
+                        ) {
+                            showLeftBlueMenu = false
+                            val file = PdfReportGenerator.generateHardwareSpecPdf(context, order, allWindowResults)
+                            onOpenPdfFile(file, strings.pdfHardwareItem)
+                        }
+                        LeftMenuButton(
+                            title = strings.workshopCuttingItem,
+                            icon = Icons.Rounded.ContentCut,
+                            accentTint = palette.accentGreen
+                        ) {
+                            showLeftBlueMenu = false
+                            onOpenWorkshopCutting()
+                        }
 
-                    HorizontalDivider(color = Color.White.copy(alpha = 0.3f))
+                        HorizontalDivider(
+                            color = palette.divider,
+                            thickness = 0.6.dp,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                        )
 
-                    LeftMenuButton("📤 Экспорт заказа (отправить файл)") {
-                        showLeftBlueMenu = false
-                        val file = AppStateStorage.createOrderJsonExportFile(context, order)
-                        onShareExportFile(file, "Заказ ${order.orderNumber}")
-                    }
-                    LeftMenuButton("📥 Импорт заказа (из файла)") {
-                        showLeftBlueMenu = false
-                        onImportOrder()
-                    }
-                    LeftMenuButton("💾 Экспорт всей базы (полный бэкап)") {
-                        showLeftBlueMenu = false
-                        val file = AppStateStorage.createFullBackupFile(context)
-                        onShareExportFile(file, "Полный бэкап WinStudio Pro")
-                    }
-                    LeftMenuButton("♻️ Восстановить базу из бэкапа") {
-                        showLeftBlueMenu = false
-                        onImportBackup()
+                        LeftMenuButton(
+                            title = strings.exportOrderItem,
+                            icon = Icons.Rounded.IosShare,
+                            accentTint = palette.accentBlue
+                        ) {
+                            showLeftBlueMenu = false
+                            val file = AppStateStorage.createOrderJsonExportFile(context, order)
+                            onShareExportFile(file, "${order.orderNumber}")
+                        }
+                        LeftMenuButton(
+                            title = strings.importOrderItem,
+                            icon = Icons.Rounded.Download,
+                            accentTint = palette.accentTeal
+                        ) {
+                            showLeftBlueMenu = false
+                            onImportOrder()
+                        }
+                        LeftMenuButton(
+                            title = strings.exportBackupItem,
+                            icon = Icons.Rounded.Backup,
+                            accentTint = palette.accentIndigo
+                        ) {
+                            showLeftBlueMenu = false
+                            val file = AppStateStorage.createFullBackupFile(context)
+                            onShareExportFile(file, "WinStudio Pro Backup")
+                        }
+                        LeftMenuButton(
+                            title = strings.restoreBackupItem,
+                            icon = Icons.Rounded.Restore,
+                            accentTint = palette.accentOrange
+                        ) {
+                            showLeftBlueMenu = false
+                            onImportBackup()
+                        }
                     }
                 }
             }
         }
 
-        // --- ПРАВАЯ БОКОВАЯ ШТОРКА "НАСТРОЙКИ ОКНА" (В СТИЛЕ ОРИГИНАЛА 00:31 - 01:12 + ПАКЕТНОЕ ПРИМЕНЕНИЕ) ---
+        // --- ПРАВАЯ БОКОВАЯ ШТОРКА "НАСТРОЙКИ ОКНА" В СТИЛЕ iOS ---
         if (showRightSettingsDrawer) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.35f))
+                    .background(Color.Black.copy(alpha = 0.42f))
                     .clickable { showRightSettingsDrawer = false }
             ) {
                 Surface(
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
-                        .width(340.dp)
+                        .width(344.dp)
                         .fillMaxHeight()
                         .clickable(enabled = false) {},
-                    color = Color.White,
-                    shadowElevation = 16.dp
+                    color = palette.cardSurface,
+                    shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp),
+                    shadowElevation = 18.dp
                 ) {
                     RightWindowSettingsDrawerContent(
                         order = order,
@@ -1635,10 +1448,11 @@ private fun CadEditorWorkspaceScreen(
         }
     }
 
-    // --- КАЛЬКУЛЯТОР "СВОЯ ЦЕНА" (ПРИ КЛИКЕ НА ЖЁЛТУЮ ПЛАШКУ "СВОЯ ЦЕНА" В ШТОРКЕ НАСТРОЕК, КАК НА 00:50 В ВИДЕО!) ---
+    // --- КАЛЬКУЛЯТОР "СВОЯ ЦЕНА" ---
     if (showManualPriceNumpad) {
+        val displayCurrency = normalizeCurrencyDisplay(order.currencySymbol)
         OriginalDecimalNumpadModalDialog(
-            title = "Своя цена за 1 окно (${order.currencySymbol})",
+            title = "${strings.customPriceLabel.replaceFirstChar { it.uppercase() }} ($displayCurrency)",
             initialValue = currentWindow.manualUnitPriceOverride,
             onDismiss = { showManualPriceNumpad = false },
             onConfirm = { newCustomPrice ->
@@ -1690,7 +1504,7 @@ private fun CadEditorWorkspaceScreen(
         )
     }
 
-    // --- МОДАЛЬНОЕ ОКНО: ФИРМЕННЫЙ СИНЕ-БЕЛЫЙ ЦИФРОВОЙ КАЛЬКУЛЯТОР РАЗМЕРОВ ---
+    // --- МОДАЛЬНОЕ ОКНО: ЦИФРОВОЙ КАЛЬКУЛЯТОР РАЗМЕРОВ ---
     val activeNumpad = numpadRequest
     if (activeNumpad != null) {
         OriginalNumpadModalDialog(
@@ -1780,7 +1594,7 @@ private fun CadEditorWorkspaceScreen(
                     win.copy(topology = topo)
                 }
                 showAlignmentDialog = false
-                snackMessage = "Импосты выровнены: ${chosenMode.titleRu}"
+                snackMessage = "${strings.impostsShortBtn}: ${chosenMode.titleRu}"
             }
         )
     }
@@ -1831,24 +1645,34 @@ private fun CanvasReadOnlyInfoBadge(
     bgColor: Color
 ) {
     Surface(
-        color = bgColor.copy(alpha = 0.86f),
-        shape = RoundedCornerShape(2.dp)
+        color = bgColor.copy(alpha = 0.55f),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(0.7.dp, Color.White.copy(alpha = 0.48f)),
+        shadowElevation = 0.dp
     ) {
         Text(
             text = label,
             color = Color.White,
-            fontSize = 9.5.sp,
-            lineHeight = 11.sp,
+            style = TextStyle(
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 11.sp,
+                shadow = Shadow(
+                    color = Color.Black.copy(alpha = 0.55f),
+                    offset = Offset(0f, 1f),
+                    blurRadius = 3f
+                )
+            ),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp)
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
         )
     }
 }
 
 /**
- * Нижняя динамическая 2-строчная панель с горизонтальным скроллом метров, штук (включая угловые сухари) и сумм,
- * и закреплённой колонкой «всего» справа (как на 00:00–00:22 эталонного видео!).
+ * Нижняя динамическая 2-строчная панель с горизонтальным скроллом метров, штук и сумм,
+ * и закреплённой колонкой «всего» справа в стиле iOS.
  */
 @Composable
 private fun DynamicBottomCostScrollBar(
@@ -1857,8 +1681,10 @@ private fun DynamicBottomCostScrollBar(
     order: CustomerOrder,
     onClickTotal: () -> Unit
 ) {
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
     val curQty = currentResult.windowItem.quantity.coerceAtLeast(1)
-    val cur = order.currencySymbol
+    val cur = normalizeCurrencyDisplay(order.currencySymbol)
 
     fun fmt2(v: Double): String = String.format(Locale.US, "%.2f", v)
 
@@ -1870,7 +1696,7 @@ private fun DynamicBottomCostScrollBar(
         val allBottom: String
     )
 
-    val columns = remember(currentResult, allResults, cur) {
+    val columns = remember(currentResult, allResults, cur, strings) {
         val winArea = currentResult.totalAreaM2 * curQty
         val allArea = allResults.sumOf { it.totalAreaM2 * it.windowItem.quantity }
 
@@ -1929,19 +1755,19 @@ private fun DynamicBottomCostScrollBar(
         val allWrkCost = allResults.sumOf { it.costWorksOnly * it.windowItem.quantity }
 
         listOf(
-            CostColumnData("площадь", "${fmt2(winArea)} m2", "", "${fmt2(allArea)} m2", ""),
-            CostColumnData("рамы", "${fmt2(winFrameM)} m", "${fmt2(winFrameCost)} $cur", "${fmt2(allFrameM)} m", "${fmt2(allFrameCost)} $cur"),
-            CostColumnData("импосты", "${fmt2(winImpM)} m", "${fmt2(winImpCost)} $cur", "${fmt2(allImpM)} m", "${fmt2(allImpCost)} $cur"),
-            CostColumnData("створки", "${fmt2(winSashM)} m", "${fmt2(winSashCost)} $cur", "${fmt2(allSashM)} m", "${fmt2(allSashCost)} $cur"),
-            CostColumnData("двер.створки", "${fmt2(winDoorM)} m", "${fmt2(winDoorCost)} $cur", "${fmt2(allDoorM)} m", "${fmt2(allDoorCost)} $cur"),
-            CostColumnData("сухари/соед.", "$winCornersCnt компл.", "${fmt2(winCornersCost)} $cur", "$allCornersCnt компл.", "${fmt2(allCornersCost)} $cur"),
-            CostColumnData("штапики", "${fmt2(winShtM)} m", "${fmt2(winShtCost)} $cur", "${fmt2(allShtM)} m", "${fmt2(allShtCost)} $cur"),
-            CostColumnData("уплотнит.", "${fmt2(winRubM)} m", "${fmt2(winRubCost)} $cur", "${fmt2(allRubM)} m", "${fmt2(allRubCost)} $cur"),
-            CostColumnData("стекла", "${fmt2(winGlzM2)} m2", "${fmt2(winGlzCost)} $cur", "${fmt2(allGlzM2)} m2", "${fmt2(allGlzCost)} $cur"),
-            CostColumnData("сэндв.п.", "${fmt2(winSandM2)} m2", "${fmt2(winSandCost)} $cur", "${fmt2(allSandM2)} m2", "${fmt2(allSandCost)} $cur"),
-            CostColumnData("фурнитура", "${fmt2(winHwCost)} $cur", "", "${fmt2(allHwCost)} $cur", ""),
-            CostColumnData("разное", "${fmt2(winExtCost)} $cur", "", "${fmt2(allExtCost)} $cur", ""),
-            CostColumnData("работы", "${fmt2(winWrkCost)} $cur", "", "${fmt2(allWrkCost)} $cur", "")
+            CostColumnData(strings.colArea, "${fmt2(winArea)} m2", "", "${fmt2(allArea)} m2", ""),
+            CostColumnData(strings.colFrames, "${fmt2(winFrameM)} m", "${fmt2(winFrameCost)} $cur", "${fmt2(allFrameM)} m", "${fmt2(allFrameCost)} $cur"),
+            CostColumnData(strings.colImposts, "${fmt2(winImpM)} m", "${fmt2(winImpCost)} $cur", "${fmt2(allImpM)} m", "${fmt2(allImpCost)} $cur"),
+            CostColumnData(strings.colSashes, "${fmt2(winSashM)} m", "${fmt2(winSashCost)} $cur", "${fmt2(allSashM)} m", "${fmt2(allSashCost)} $cur"),
+            CostColumnData(strings.colDoorSashes, "${fmt2(winDoorM)} m", "${fmt2(winDoorCost)} $cur", "${fmt2(allDoorM)} m", "${fmt2(allDoorCost)} $cur"),
+            CostColumnData(strings.colCleats, "$winCornersCnt ${strings.setsShort}", "${fmt2(winCornersCost)} $cur", "$allCornersCnt ${strings.setsShort}", "${fmt2(allCornersCost)} $cur"),
+            CostColumnData(strings.colShtapik, "${fmt2(winShtM)} m", "${fmt2(winShtCost)} $cur", "${fmt2(allShtM)} m", "${fmt2(allShtCost)} $cur"),
+            CostColumnData(strings.colRubber, "${fmt2(winRubM)} m", "${fmt2(winRubCost)} $cur", "${fmt2(allRubM)} m", "${fmt2(allRubCost)} $cur"),
+            CostColumnData(strings.colGlass, "${fmt2(winGlzM2)} m2", "${fmt2(winGlzCost)} $cur", "${fmt2(allGlzM2)} m2", "${fmt2(allGlzCost)} $cur"),
+            CostColumnData(strings.colSandwich, "${fmt2(winSandM2)} m2", "${fmt2(winSandCost)} $cur", "${fmt2(allSandM2)} m2", "${fmt2(allSandCost)} $cur"),
+            CostColumnData(strings.colHardware, "${fmt2(winHwCost)} $cur", "", "${fmt2(allHwCost)} $cur", ""),
+            CostColumnData(strings.colExtras, "${fmt2(winExtCost)} $cur", "", "${fmt2(allExtCost)} $cur", ""),
+            CostColumnData(strings.colWorks, "${fmt2(winWrkCost)} $cur", "", "${fmt2(allWrkCost)} $cur", "")
         )
     }
 
@@ -1961,119 +1787,124 @@ private fun DynamicBottomCostScrollBar(
     }
 
     Surface(
-        color = Color(0xFF4A4A4A),
+        color = palette.costBarBg,
         modifier = Modifier
             .fillMaxWidth()
-            .height(58.dp)
+            .height(60.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxSize(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Левая фиксированная колонка меток строк ("окно" / "все окна")
-            Column(
-                modifier = Modifier
-                    .width(58.dp)
-                    .fillMaxHeight()
-                    .background(Color(0xFF3E3E3E))
-                    .padding(horizontal = 4.dp),
-                verticalArrangement = Arrangement.SpaceEvenly
-            ) {
-                Spacer(modifier = Modifier.height(11.dp))
-                Text("окно", color = Color(0xFFCCCCCC), fontSize = 9.5.sp, maxLines = 1)
-                Text("все окна", color = Color(0xFFCCCCCC), fontSize = 9.5.sp, maxLines = 1)
-            }
-
-            // Центральный горизонтальный скролл по всем статьям затрат
+        Column(modifier = Modifier.fillMaxSize()) {
+            HorizontalDivider(color = palette.divider, thickness = 0.7.dp)
             Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 4.dp),
+                modifier = Modifier.fillMaxSize(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                columns.forEach { col ->
-                    Column(
-                        modifier = Modifier
-                            .width(78.dp)
-                            .fillMaxHeight()
-                            .padding(horizontal = 3.dp, vertical = 2.dp),
-                        horizontalAlignment = Alignment.End,
-                        verticalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = col.header,
-                            color = Color(0xFFBDBDBD),
-                            fontSize = 9.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text(col.winTop, color = Color.White, fontSize = 8.5.sp, lineHeight = 9.5.sp, maxLines = 1)
-                            if (col.winBottom.isNotEmpty()) {
-                                Text(col.winBottom, color = Color(0xFFE0E0E0), fontSize = 8.sp, lineHeight = 9.sp, maxLines = 1)
-                            }
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text(col.allTop, color = Color(0xFFB0BEC5), fontSize = 8.5.sp, lineHeight = 9.5.sp, maxLines = 1)
-                            if (col.allBottom.isNotEmpty()) {
-                                Text(col.allBottom, color = Color(0xFF90A4AE), fontSize = 8.sp, lineHeight = 9.sp, maxLines = 1)
-                            }
-                        }
-                    }
-                    VerticalDivider(color = Color.White.copy(alpha = 0.12f), modifier = Modifier.fillMaxHeight())
+                // Левая фиксированная колонка меток строк ("окно" / "все окна")
+                Column(
+                    modifier = Modifier
+                        .width(60.dp)
+                        .fillMaxHeight()
+                        .background(palette.costBarSideBg)
+                        .padding(horizontal = 5.dp),
+                    verticalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(strings.rowWindow, color = palette.textSecondary, fontSize = 9.5.sp, maxLines = 1, fontWeight = FontWeight.Medium)
+                    Text(strings.rowAllWindows, color = palette.textSecondary, fontSize = 9.5.sp, maxLines = 1, fontWeight = FontWeight.Medium)
                 }
-            }
 
-            // Правая закреплённая колонка "всего" (как на 00:00–00:54 в видео!)
-            Column(
-                modifier = Modifier
-                    .width(96.dp)
-                    .fillMaxHeight()
-                    .background(Color(0xFF333333))
-                    .clickable { onClickTotal() }
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("всего", color = Color(0xFFE0E0E0), fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "${fmt2(winBaseTotal)} $cur",
-                        color = if (isManualPrice) Color(0xFFFFEB3B) else Color.White,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        lineHeight = 10.sp,
-                        maxLines = 1
-                    )
-                    if (discPct > 0.0) {
-                        Text(
-                            text = "${fmt2(winFinalTotal)} $cur",
-                            color = Color(0xFF80CBC4),
-                            fontSize = 8.5.sp,
-                            lineHeight = 9.5.sp,
-                            maxLines = 1
-                        )
+                // Центральный горизонтальный скролл по всем статьям затрат
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    columns.forEach { col ->
+                        Column(
+                            modifier = Modifier
+                                .width(80.dp)
+                                .fillMaxHeight()
+                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                            horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = col.header,
+                                color = palette.textSecondary,
+                                fontSize = 9.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(col.winTop, color = palette.textPrimary, fontSize = 8.5.sp, fontWeight = FontWeight.Medium, lineHeight = 9.5.sp, maxLines = 1)
+                                if (col.winBottom.isNotEmpty()) {
+                                    Text(col.winBottom, color = palette.textSecondary, fontSize = 8.sp, lineHeight = 9.sp, maxLines = 1)
+                                }
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(col.allTop, color = palette.textSecondary, fontSize = 8.5.sp, lineHeight = 9.5.sp, maxLines = 1)
+                                if (col.allBottom.isNotEmpty()) {
+                                    Text(col.allBottom, color = palette.textSecondary.copy(alpha = 0.8f), fontSize = 8.sp, lineHeight = 9.sp, maxLines = 1)
+                                }
+                            }
+                        }
+                        VerticalDivider(color = palette.divider, modifier = Modifier.fillMaxHeight())
                     }
                 }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "${fmt2(orderBaseTotal)} $cur",
-                        color = Color.White,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        lineHeight = 10.sp,
-                        maxLines = 1
-                    )
-                    if (orderDiscountedTotal < orderBaseTotal - 0.01) {
+
+                // Правая закреплённая колонка "всего"
+                Column(
+                    modifier = Modifier
+                        .width(98.dp)
+                        .fillMaxHeight()
+                        .background(palette.costBarSideBg)
+                        .clickable { onClickTotal() }
+                        .padding(horizontal = 7.dp, vertical = 3.dp)
+                        .testTag("cad_cost_total_box"),
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(strings.colTotal, color = palette.accentBlue, fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
+                    Column(horizontalAlignment = Alignment.End) {
                         Text(
-                            text = "${fmt2(orderDiscountedTotal)} $cur",
-                            color = Color(0xFF80CBC4),
-                            fontSize = 8.5.sp,
-                            lineHeight = 9.5.sp,
+                            text = "${fmt2(winBaseTotal)} $cur",
+                            color = if (isManualPrice) palette.accentOrange else palette.textPrimary,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            lineHeight = 10.sp,
                             maxLines = 1
                         )
+                        if (discPct > 0.0) {
+                            Text(
+                                text = "${fmt2(winFinalTotal)} $cur",
+                                color = palette.accentGreen,
+                                fontSize = 8.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                lineHeight = 9.5.sp,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            text = "${fmt2(orderBaseTotal)} $cur",
+                            color = palette.textSecondary,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            lineHeight = 10.sp,
+                            maxLines = 1
+                        )
+                        if (orderDiscountedTotal < orderBaseTotal - 0.01) {
+                            Text(
+                                text = "${fmt2(orderDiscountedTotal)} $cur",
+                                color = palette.accentGreen,
+                                fontSize = 8.5.sp,
+                                lineHeight = 9.5.sp,
+                                maxLines = 1
+                            )
+                        }
                     }
                 }
             }
@@ -2084,15 +1915,42 @@ private fun DynamicBottomCostScrollBar(
 @Composable
 private fun LeftMenuButton(
     title: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    accentTint: Color = LocalWinStudioPalette.current.accentBlue,
     onClick: () -> Unit
 ) {
-    Box(
+    val palette = LocalWinStudioPalette.current
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 13.dp)
+            .padding(horizontal = 16.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(text = title, color = Color.White, fontSize = 14.sp)
+        if (icon != null) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(accentTint.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = accentTint,
+                    modifier = Modifier.size(17.dp)
+                )
+            }
+        }
+        Text(
+            text = title,
+            color = palette.textPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 
@@ -2124,29 +1982,47 @@ private fun RightWindowSettingsDrawerContent(
     ) -> Unit,
     onClose: () -> Unit
 ) {
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
+    val displayCurrency = normalizeCurrencyDisplay(order.currencySymbol)
     val scroll = rememberScrollState()
     val financialSchemes = remember { DefaultCatalogs.defaultFinancialSchemes() }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        // Верхний заголовок шторки
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.cardSurface)
+    ) {
+        // Верхний заголовок шторки в стиле iOS
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(MetroBlue)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "настройки окна №${windowIndex + 1}",
-                color = Color.White,
+                text = String.format(strings.windowSettingsHeaderFormat, windowIndex + 1),
+                color = palette.textPrimary,
                 fontSize = 18.sp,
-                fontWeight = FontWeight.Normal
+                fontWeight = FontWeight.Bold
             )
-            IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Default.Close, contentDescription = "Закрыть", tint = Color.White)
+            IconButton(
+                onClick = onClose,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(palette.segmentedBg)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = strings.closeDesc,
+                    tint = palette.textSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
             }
         }
+        HorizontalDivider(color = palette.divider, thickness = 0.7.dp)
 
         // Прокручиваемое содержимое шторки
         Column(
@@ -2154,89 +2030,116 @@ private fun RightWindowSettingsDrawerContent(
                 .weight(1f)
                 .fillMaxWidth()
                 .verticalScroll(scroll)
-                .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // 1. КОЛИЧЕСТВО (- | 1 | +) как на 00:31 видео
-            DrawerGrayHeader("количество")
+            // 1. КОЛИЧЕСТВО (- | 1 | +)
+            DrawerGrayHeader(strings.quantityLabel)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(42.dp),
+                    .height(44.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
+                Surface(
+                    color = palette.accentBlue,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .background(MetroBlue, RoundedCornerShape(2.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .clickable {
                             if (windowItem.quantity > 1) {
                                 onUpdateWindow(windowItem.copy(quantity = windowItem.quantity - 1))
                             }
-                        },
-                    contentAlignment = Alignment.Center
+                        }
+                        .testTag("drawer_qty_minus")
                 ) {
-                    Text("−", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("−", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
-                Box(
+                Surface(
+                    color = palette.secondaryBackground,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .weight(1.2f)
                         .fillMaxHeight()
-                        .border(1.dp, Color.LightGray, RoundedCornerShape(2.dp)),
-                    contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "${windowItem.quantity}",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.Black
-                    )
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "${windowItem.quantity}",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = palette.textPrimary
+                        )
+                    }
                 }
-                Box(
+                Surface(
+                    color = palette.accentBlue,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .background(MetroBlue, RoundedCornerShape(2.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .clickable {
                             onUpdateWindow(windowItem.copy(quantity = windowItem.quantity + 1))
-                        },
-                    contentAlignment = Alignment.Center
+                        }
+                        .testTag("drawer_qty_plus")
                 ) {
-                    Text("+", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("+", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
 
-            // 2. ЗАМЕТКА (например "белое. открывание наружу") как на 00:35 видео
-            DrawerGrayHeader("заметка")
+            // 2. ЗАМЕТКА
+            DrawerGrayHeader(strings.noteLabel)
             OutlinedTextField(
                 value = windowItem.note,
                 onValueChange = { onUpdateWindow(windowItem.copy(note = it)) },
-                placeholder = { Text("Например: белое. открывание наружу", fontSize = 12.sp) },
+                placeholder = { Text(strings.notePlaceholder, fontSize = 12.sp) },
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
 
-            // 3. СВОЯ ЦЕНА (жёлтая полоса, открывающая калькулятор — как на 00:50 видео!)
-            DrawerGrayHeader("своя цена")
-            Box(
+            // 3. СВОЯ ЦЕНА
+            DrawerGrayHeader(strings.customPriceLabel)
+            Surface(
+                color = palette.accentOrange.copy(alpha = 0.14f),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, palette.accentOrange.copy(alpha = 0.55f)),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(40.dp)
-                    .background(Color(0xFFFFEB3B), RoundedCornerShape(2.dp))
-                    .border(1.dp, Color(0xFFFBC02D), RoundedCornerShape(2.dp))
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
                     .clickable { onOpenManualPriceNumpad() }
-                    .padding(horizontal = 12.dp),
-                contentAlignment = Alignment.Center
+                    .testTag("drawer_custom_price_button")
             ) {
-                val manualVal = windowItem.manualUnitPriceOverride ?: 0.0
-                Text(
-                    text = "${String.format(Locale.US, "%.2f", manualVal)} ${order.currencySymbol}",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF222222)
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val manualVal = windowItem.manualUnitPriceOverride ?: 0.0
+                    Text(
+                        text = "${String.format(Locale.US, "%.2f", manualVal)} $displayCurrency",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = palette.textPrimary
+                    )
+                    Text(
+                        text = strings.customPriceHintSuffix,
+                        fontSize = 10.sp,
+                        color = palette.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
 
             // Кнопка пакетного применения настроек ко всем окнам заказа
@@ -2245,23 +2148,25 @@ private fun RightWindowSettingsDrawerContent(
                     onClick = {
                         onApplyToAllWindows(true, true, true, true, true, true)
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = MetroBlue),
-                    shape = RoundedCornerShape(3.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
                 ) {
                     Text(
-                        "ПРИМЕНИТЬ НАСТРОЙКИ КО ВСЕМ ОКНАМ ($totalWindowsCount ШТ.)",
+                        text = String.format(strings.applyAllWindowsBtnFormat, totalWindowsCount),
                         color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }
 
-            // 4. ФИНАНСОВАЯ СХЕМА (скидки / дилерская цена)
+            // 4. ФИНАНСОВАЯ СХЕМА
             DrawerGrayHeader(
-                title = "финансовая схема",
-                actionText = if (totalWindowsCount > 1) "Ко всем" else null,
+                title = strings.finSchemeLabel,
+                actionText = if (totalWindowsCount > 1) strings.applyShort else null,
                 onAction = { onApplyToAllWindows(false, false, false, false, true, false) }
             )
             financialSchemes.forEach { fin ->
@@ -2275,12 +2180,12 @@ private fun RightWindowSettingsDrawerContent(
 
             // 5. ОКОННАЯ СИСТЕМА
             DrawerGrayHeader(
-                title = "оконная система",
-                actionText = if (totalWindowsCount > 1) "Ко всем" else null,
+                title = strings.windowSystemLabel,
+                actionText = if (totalWindowsCount > 1) strings.applyShort else null,
                 onAction = { onApplyToAllWindows(true, false, false, false, false, false) }
             )
             DrawerRadioOptionRow(
-                label = "не учитывать",
+                label = strings.notAccounted,
                 selected = windowItem.profileSystemId == "none",
                 onClick = { onUpdateWindow(windowItem.copy(profileSystemId = "none")) }
             )
@@ -2288,7 +2193,7 @@ private fun RightWindowSettingsDrawerContent(
                 val selected = sys.id == windowItem.profileSystemId
                 DrawerRadioOptionRow(
                     label = sys.name,
-                    subtitle = "рама ${sys.priceFramePerM} • створка ${sys.priceSashPerM} • дверь ${sys.priceDoorSashPerM} ${order.currencySymbol}/м",
+                    subtitle = "${sys.priceFramePerM} / ${sys.priceSashPerM} / ${sys.priceDoorSashPerM} $displayCurrency/м",
                     selected = selected,
                     onClick = {
                         val defaultShtId = sys.shtapikVariants.firstOrNull()?.id ?: ""
@@ -2297,12 +2202,12 @@ private fun RightWindowSettingsDrawerContent(
                 )
             }
 
-            // 5.1. ВЫБОР ШТАПИКА ВЫБРАННОЙ ПРОФИЛЬНОЙ СИСТЕМЫ (например, 18 мм или 22 мм)
+            // 5.1. ВЫБОР ШТАПИКА ВЫБРАННОЙ ПРОФИЛЬНОЙ СИСТЕМЫ
             val currentSysForShtapik = profileSystems.find { it.id == windowItem.profileSystemId }
             if (currentSysForShtapik != null && currentSysForShtapik.shtapikVariants.isNotEmpty()) {
                 DrawerGrayHeader(
-                    title = "штапик системы (${currentSysForShtapik.name})",
-                    actionText = if (totalWindowsCount > 1) "Ко всем" else null,
+                    title = String.format(strings.shtapikLabelFormat, currentSysForShtapik.name),
+                    actionText = if (totalWindowsCount > 1) strings.applyShort else null,
                     onAction = { onApplyToAllWindows(true, false, false, false, false, false) }
                 )
                 val activeGlzThickness = glazingCatalog.find { it.id == windowItem.glazingId }?.thicknessMm ?: 24
@@ -2317,8 +2222,8 @@ private fun RightWindowSettingsDrawerContent(
                 currentSysForShtapik.shtapikVariants.forEach { sht ->
                     val isShtSelected = sht.id == effectiveShtId
                     DrawerRadioOptionRow(
-                        label = "${sht.name} (под пакет ${sht.glazingThicknessSpMm} мм)",
-                        subtitle = "ширина H1=${fmtMm(sht.heightH1Mm)} мм • толщина H2=${fmtMm(sht.widthH2Mm)} мм • ${sht.pricePerM} ${order.currencySymbol}/м",
+                        label = "${sht.name} (${sht.glazingThicknessSpMm} мм)",
+                        subtitle = "H1=${fmtMm(sht.heightH1Mm)} мм • H2=${fmtMm(sht.widthH2Mm)} мм • ${sht.pricePerM} $displayCurrency/м",
                         selected = isShtSelected,
                         onClick = {
                             onUpdateWindow(windowItem.copy(selectedShtapikId = sht.id))
@@ -2328,65 +2233,70 @@ private fun RightWindowSettingsDrawerContent(
             }
 
             // 6. СТЕКЛОПАКЕТЫ + ПЕРЕКЛЮЧАТЕЛЬ ОКРУГЛЕНИЯ ДО 0 / 5 ММ
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFF8C8C8C))
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            Surface(
+                color = palette.secondaryBackground,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "стеклопакеты",
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    if (totalWindowsCount > 1) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         Text(
-                            text = "[Ко всем]",
-                            color = Color(0xFFFFEB3B),
+                            text = strings.glazingLabel,
+                            color = palette.textSecondary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (totalWindowsCount > 1) {
+                            Text(
+                                text = strings.applyShort,
+                                color = palette.accentBlue,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clickable {
+                                    onApplyToAllWindows(false, true, false, false, false, false)
+                                }
+                            )
+                        }
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = strings.round05MmLabel,
+                            color = palette.textPrimary,
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.clickable {
-                                onApplyToAllWindows(false, true, false, false, false, false)
-                            }
+                            fontWeight = FontWeight.Medium
+                        )
+                        Switch(
+                            checked = windowItem.roundGlassTo5Mm,
+                            onCheckedChange = { round5 ->
+                                onUpdateWindow(windowItem.copy(roundGlassTo5Mm = round5))
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = palette.accentGreen,
+                                uncheckedThumbColor = Color.White,
+                                uncheckedTrackColor = palette.divider
+                            )
                         )
                     }
-                }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = "Округл. 0/5 мм",
-                        color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Switch(
-                        checked = windowItem.roundGlassTo5Mm,
-                        onCheckedChange = { round5 ->
-                            onUpdateWindow(windowItem.copy(roundGlassTo5Mm = round5))
-                        },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = MetroBlue,
-                            uncheckedThumbColor = Color.White,
-                            uncheckedTrackColor = Color(0xFF555555)
-                        )
-                    )
                 }
             }
             glazingCatalog.forEach { glz ->
                 val selected = glz.id == windowItem.glazingId
                 DrawerRadioOptionRow(
                     label = glz.name,
-                    subtitle = if (glz.id == "none") null else "${glz.pricePerM2} ${order.currencySymbol}/m2",
+                    subtitle = if (glz.id == "none") null else "${glz.pricePerM2} $displayCurrency/m2",
                     selected = selected,
                     onClick = { onUpdateWindow(windowItem.copy(glazingId = glz.id)) }
                 )
@@ -2394,8 +2304,8 @@ private fun RightWindowSettingsDrawerContent(
 
             // 7. ЦВЕТ
             DrawerGrayHeader(
-                title = "цвет",
-                actionText = if (totalWindowsCount > 1) "Ко всем" else null,
+                title = strings.colorLabel,
+                actionText = if (totalWindowsCount > 1) strings.applyShort else null,
                 onAction = { onApplyToAllWindows(false, false, true, false, false, false) }
             )
             colorCatalog.forEach { clr ->
@@ -2403,29 +2313,35 @@ private fun RightWindowSettingsDrawerContent(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
                         .clickable { onUpdateWindow(windowItem.copy(colorId = clr.id)) }
-                        .padding(vertical = 2.dp),
+                        .padding(horizontal = 4.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     RadioButton(
                         selected = selected,
                         onClick = { onUpdateWindow(windowItem.copy(colorId = clr.id)) },
-                        colors = RadioButtonDefaults.colors(selectedColor = MetroBlue)
+                        colors = RadioButtonDefaults.colors(selectedColor = palette.accentBlue)
                     )
                     Box(
                         modifier = Modifier
-                            .size(18.dp)
-                            .background(Color(clr.hexColor), RoundedCornerShape(3.dp))
-                            .border(1.dp, Color.Gray, RoundedCornerShape(3.dp))
+                            .size(20.dp)
+                            .background(Color(clr.hexColor), RoundedCornerShape(6.dp))
+                            .border(0.8.dp, palette.floatingBorder, RoundedCornerShape(6.dp))
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(text = clr.name, fontSize = 13.5.sp, color = Color(0xFF212121))
+                        Text(
+                            text = clr.name,
+                            fontSize = 13.5.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            color = palette.textPrimary
+                        )
                         if (clr.priceMarkupPercent > 0.0) {
                             Text(
                                 text = "+${clr.priceMarkupPercent.roundToInt()}%",
                                 fontSize = 11.sp,
-                                color = Color.Gray
+                                color = palette.textSecondary
                             )
                         }
                     }
@@ -2434,31 +2350,31 @@ private fun RightWindowSettingsDrawerContent(
 
             // 8. ФУРНИТУРА
             DrawerGrayHeader(
-                title = "фурнитура",
-                actionText = if (totalWindowsCount > 1) "Ко всем" else null,
+                title = strings.hardwareLabel,
+                actionText = if (totalWindowsCount > 1) strings.applyShort else null,
                 onAction = { onApplyToAllWindows(false, false, false, true, false, false) }
             )
             hardwareBrands.forEach { hw ->
                 val selected = windowItem.hardwareBrandId == hw.id
                 DrawerRadioOptionRow(
                     label = hw.name,
-                    subtitle = if (hw.id == "hw_none") null else "+${hw.priceMultiplierOrAddon.roundToInt()} ${order.currencySymbol}",
+                    subtitle = if (hw.id == "hw_none") null else "+${hw.priceMultiplierOrAddon.roundToInt()} $displayCurrency",
                     selected = selected,
                     onClick = { onUpdateWindow(windowItem.copy(hardwareBrandId = hw.id)) }
                 )
             }
 
-            // 9. РАЗНОЕ (чекбоксы из Прайса)
+            // 9. РАЗНОЕ
             DrawerGrayHeader(
-                title = "разное",
-                actionText = if (totalWindowsCount > 1) "Ко всем" else null,
+                title = strings.extrasLabel,
+                actionText = if (totalWindowsCount > 1) strings.applyShort else null,
                 onAction = { onApplyToAllWindows(false, false, false, false, false, true) }
             )
             extraAccessories.forEach { item ->
                 val checked = windowItem.selectedExtraIds.contains(item.id)
                 DrawerCheckboxOptionRow(
                     label = item.name,
-                    subtitle = "${item.price} ${order.currencySymbol}/${item.rateType.labelRu}",
+                    subtitle = "${item.price} $displayCurrency/${item.rateType.labelRu}",
                     checked = checked,
                     onToggle = {
                         val next = if (checked) windowItem.selectedExtraIds - item.id else windowItem.selectedExtraIds + item.id
@@ -2467,17 +2383,17 @@ private fun RightWindowSettingsDrawerContent(
                 )
             }
 
-            // 10. РАБОТЫ (чекбоксы из Прайса)
+            // 10. РАБОТЫ
             DrawerGrayHeader(
-                title = "работы",
-                actionText = if (totalWindowsCount > 1) "Ко всем" else null,
+                title = strings.worksLabel,
+                actionText = if (totalWindowsCount > 1) strings.applyShort else null,
                 onAction = { onApplyToAllWindows(false, false, false, false, false, true) }
             )
             workServices.forEach { item ->
                 val checked = windowItem.selectedWorkIds.contains(item.id)
                 DrawerCheckboxOptionRow(
                     label = item.name,
-                    subtitle = "${item.price} ${order.currencySymbol}/${item.rateType.labelRu}",
+                    subtitle = "${item.price} $displayCurrency/${item.rateType.labelRu}",
                     checked = checked,
                     onToggle = {
                         val next = if (checked) windowItem.selectedWorkIds - item.id else windowItem.selectedWorkIds + item.id
@@ -2486,8 +2402,8 @@ private fun RightWindowSettingsDrawerContent(
                 )
             }
 
-            // Общий НДС заказа
-            DrawerGrayHeader("налог НДС и скидка заказа")
+            // Общий НДС и скидка заказа
+            DrawerGrayHeader(strings.vatAndDiscountLabel)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2498,7 +2414,8 @@ private fun RightWindowSettingsDrawerContent(
                         val d = (v.toDoubleOrNull() ?: 0.0).coerceIn(0.0, 90.0)
                         onUpdateOrderDiscount(d, order.taxVatPercent)
                     },
-                    label = { Text("Общая скидка (%)", fontSize = 10.sp) },
+                    label = { Text(strings.orderDiscountPct, fontSize = 10.sp) },
+                    shape = RoundedCornerShape(12.dp),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f),
                     singleLine = true
@@ -2509,7 +2426,8 @@ private fun RightWindowSettingsDrawerContent(
                         val vat = (v.toDoubleOrNull() ?: 0.0).coerceIn(0.0, 50.0)
                         onUpdateOrderDiscount(order.discountPercent, vat)
                     },
-                    label = { Text("НДС (%)", fontSize = 10.sp) },
+                    label = { Text(strings.vatPct, fontSize = 10.sp) },
+                    shape = RoundedCornerShape(12.dp),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.weight(1f),
                     singleLine = true
@@ -2517,21 +2435,32 @@ private fun RightWindowSettingsDrawerContent(
             }
         }
 
-        // Нижняя зелёная кнопка "ОК" во всю ширину шторки (как на 00:31 - 01:12 в видео!)
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .background(Color(0xFF8BC34A))
-                .clickable { onClose() },
-            contentAlignment = Alignment.Center
+        // Нижняя зелёная iOS-кнопка "Готово"
+        Surface(
+            color = palette.cardSurface,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Text(
-                text = "ОК",
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold
-            )
+            Column {
+                HorizontalDivider(color = palette.divider, thickness = 0.7.dp)
+                Box(modifier = Modifier.padding(12.dp)) {
+                    Button(
+                        onClick = onClose,
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentGreen),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("drawer_done_button")
+                    ) {
+                        Text(
+                            text = strings.okBtn,
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -2542,28 +2471,38 @@ private fun DrawerGrayHeader(
     actionText: String? = null,
     onAction: (() -> Unit)? = null
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color(0xFFE0E0E0))
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+    val palette = LocalWinStudioPalette.current
+    Surface(
+        color = palette.secondaryBackground,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Text(
-            text = title,
-            fontSize = 12.sp,
-            color = Color(0xFF424242),
-            fontWeight = FontWeight.Medium
-        )
-        if (actionText != null && onAction != null) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
-                text = actionText,
+                text = title.uppercase(),
                 fontSize = 11.sp,
-                color = MetroDarkBlue,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.clickable { onAction() }
+                color = palette.textSecondary,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.4.sp
             )
+            if (actionText != null && onAction != null) {
+                Text(
+                    text = actionText,
+                    fontSize = 11.5.sp,
+                    color = palette.accentBlue,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { onAction() }
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                )
+            }
         }
     }
 }
@@ -2575,11 +2514,13 @@ private fun DrawerRadioOptionRow(
     selected: Boolean,
     onClick: () -> Unit
 ) {
+    val palette = LocalWinStudioPalette.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
             .clickable { onClick() }
-            .padding(horizontal = 4.dp, vertical = 2.dp),
+            .padding(horizontal = 6.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -2587,21 +2528,21 @@ private fun DrawerRadioOptionRow(
             Text(
                 text = label,
                 fontSize = 13.5.sp,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                color = Color(0xFF212121)
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                color = palette.textPrimary
             )
             if (!subtitle.isNullOrBlank()) {
                 Text(
                     text = subtitle,
                     fontSize = 10.5.sp,
-                    color = Color.Gray
+                    color = palette.textSecondary
                 )
             }
         }
         RadioButton(
             selected = selected,
             onClick = onClick,
-            colors = RadioButtonDefaults.colors(selectedColor = MetroBlue)
+            colors = RadioButtonDefaults.colors(selectedColor = palette.accentBlue)
         )
     }
 }
@@ -2613,11 +2554,13 @@ private fun DrawerCheckboxOptionRow(
     checked: Boolean,
     onToggle: () -> Unit
 ) {
+    val palette = LocalWinStudioPalette.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
             .clickable { onToggle() }
-            .padding(horizontal = 4.dp, vertical = 2.dp),
+            .padding(horizontal = 6.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -2625,21 +2568,21 @@ private fun DrawerCheckboxOptionRow(
             Text(
                 text = label,
                 fontSize = 13.5.sp,
-                fontWeight = if (checked) FontWeight.Bold else FontWeight.Normal,
-                color = Color(0xFF212121)
+                fontWeight = if (checked) FontWeight.SemiBold else FontWeight.Normal,
+                color = palette.textPrimary
             )
             if (!subtitle.isNullOrBlank()) {
                 Text(
                     text = subtitle,
                     fontSize = 10.5.sp,
-                    color = Color.Gray
+                    color = palette.textSecondary
                 )
             }
         }
         Checkbox(
             checked = checked,
             onCheckedChange = { onToggle() },
-            colors = CheckboxDefaults.colors(checkedColor = MetroBlue)
+            colors = CheckboxDefaults.colors(checkedColor = palette.accentBlue)
         )
     }
 }
@@ -2653,6 +2596,8 @@ private fun CustomerOrderDetailsDialog(
     onDismiss: () -> Unit,
     onSave: (CustomerOrder) -> Unit
 ) {
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
     var orderNumber by remember { mutableStateOf(order.orderNumber) }
     var customerName by remember { mutableStateOf(order.customerName) }
     var customerPhone by remember { mutableStateOf(order.customerPhone) }
@@ -2662,61 +2607,76 @@ private fun CustomerOrderDetailsDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            modifier = Modifier
-                .fillMaxWidth(0.95f)
-                .border(2.dp, MetroBlue, RoundedCornerShape(4.dp)),
-            shape = RoundedCornerShape(4.dp),
-            color = Color.White
+            modifier = Modifier.fillMaxWidth(0.96f),
+            shape = RoundedCornerShape(24.dp),
+            border = BorderStroke(0.8.dp, palette.floatingBorder),
+            color = palette.cardSurface,
+            shadowElevation = 16.dp
         ) {
             Column(
                 modifier = Modifier
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Реквизиты заказа и клиента", fontSize = 18.sp, color = MetroBlue, fontWeight = FontWeight.Bold)
                 Text(
-                    "Шаблонный номер назначается автоматически. Вы можете заполнить данные клиента в любой момент:",
-                    fontSize = 11.5.sp,
-                    color = Color.Gray
+                    text = strings.customerDialogTitle,
+                    fontSize = 18.sp,
+                    color = palette.textPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = strings.customerDialogHint,
+                    fontSize = 12.sp,
+                    color = palette.textSecondary
                 )
                 OutlinedTextField(
                     value = orderNumber,
                     onValueChange = { orderNumber = it },
-                    label = { Text("Номер / название заказа") },
+                    label = { Text(strings.orderNumberField) },
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
                 OutlinedTextField(
                     value = customerName,
                     onValueChange = { customerName = it },
-                    label = { Text("ФИО клиента / Организация") },
+                    label = { Text(strings.customerNameField) },
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
                 OutlinedTextField(
                     value = customerPhone,
                     onValueChange = { customerPhone = it },
-                    label = { Text("Телефон") },
+                    label = { Text(strings.phoneField) },
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
                 OutlinedTextField(
                     value = address,
                     onValueChange = { address = it },
-                    label = { Text("Адрес доставки / монтажа") },
+                    label = { Text(strings.addressField) },
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
                 OutlinedTextField(
                     value = comment,
                     onValueChange = { comment = it },
-                    label = { Text("Примечание к заказу") },
+                    label = { Text(strings.orderNoteField) },
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
 
-                Text("Статус заказа:", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = strings.orderStatusField,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = palette.textSecondary
+                )
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2727,21 +2687,26 @@ private fun CustomerOrderDetailsDialog(
                         FilterChip(
                             selected = status == st,
                             onClick = { status = st },
-                            label = { Text(st.titleRu, fontSize = 11.sp) }
+                            label = { Text(st.titleRu, fontSize = 11.5.sp) }
                         )
                     }
                 }
 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Button(
                         onClick = onDismiss,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.Gray),
-                        modifier = Modifier.weight(1f)
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.secondaryBackground),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(46.dp)
                     ) {
-                        Text("ОТМЕНА", color = Color.White)
+                        Text(strings.cancelBtn, color = palette.textPrimary, fontWeight = FontWeight.SemiBold)
                     }
                     Button(
                         onClick = {
@@ -2756,10 +2721,13 @@ private fun CustomerOrderDetailsDialog(
                                 )
                             )
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = MetroBlue),
-                        modifier = Modifier.weight(1f)
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(46.dp)
                     ) {
-                        Text("СОХРАНИТЬ", color = Color.White)
+                        Text(strings.saveBtn, color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -2768,7 +2736,7 @@ private fun CustomerOrderDetailsDialog(
 }
 
 // =========================================================================================
-// ПРЕДПРОСМОТР РЕАЛЬНОГО PDF-ДОКУМЕНТА ЧЕРЕЗ PdfRenderer + МОДАЛЬНОЕ ОКНО "ОТПРАВИТЬ / ОТКРЫТЬ / ЗАКРЫТЬ" (01:19 В ВИДЕО!)
+// ПРЕДПРОСМОТР РЕАЛЬНОГО PDF-ДОКУМЕНТА ЧЕРЕЗ PdfRenderer
 // =========================================================================================
 @Composable
 private fun InAppReportPreviewDialog(
@@ -2785,6 +2753,8 @@ private fun InAppReportPreviewDialog(
     onSharePdfFile: (File, String) -> Unit
 ) {
     val context = LocalContext.current
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
 
     // Генерируем реальный PDF-файл выбранного режима и рендерим его страницы через Android PdfRenderer
     val generatedPdfFile = remember(order, windowResults, mode, uiSettings, extraAccessoriesCatalog, workServicesCatalog, hardwareBrandsCatalog) {
@@ -2829,39 +2799,47 @@ private fun InAppReportPreviewDialog(
     ) {
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = Color(0xFFCCCCCC)
+            color = palette.background
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Верхний переключатель 3 режимов PDF-отчётов
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFF263238))
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                // Верхний переключатель 3 режимов PDF-отчётов в стиле iOS
+                Surface(
+                    color = palette.cardSurface,
+                    shadowElevation = 2.dp
                 ) {
-                    ClientPdfReportMode.entries.forEach { m ->
-                        val selected = m == mode
-                        Button(
-                            onClick = { onSwitchMode(m) },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (selected) MetroBlue else Color(0xFF455A64)
-                            ),
-                            shape = RoundedCornerShape(3.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    Column {
+                        Row(
                             modifier = Modifier
-                                .weight(1f)
-                                .height(34.dp)
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = m.titleRu,
-                                color = Color.White,
-                                fontSize = 10.5.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            ClientPdfReportMode.entries.forEach { m ->
+                                val selected = m == mode
+                                Button(
+                                    onClick = { onSwitchMode(m) },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (selected) palette.accentBlue else palette.secondaryBackground
+                                    ),
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(36.dp)
+                                ) {
+                                    Text(
+                                        text = m.titleRu,
+                                        color = if (selected) Color.White else palette.textPrimary,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
+                        HorizontalDivider(color = palette.divider, thickness = 0.7.dp)
                     }
                 }
 
@@ -2870,7 +2848,7 @@ private fun InAppReportPreviewDialog(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -2878,60 +2856,65 @@ private fun InAppReportPreviewDialog(
                         Surface(
                             color = Color.White,
                             shadowElevation = 6.dp,
-                            shape = RoundedCornerShape(2.dp),
+                            shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Image(
                                 bitmap = bmp.asImageBitmap(),
-                                contentDescription = "Страница PDF",
+                                contentDescription = "PDF Page",
                                 contentScale = ContentScale.FillWidth,
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
                             )
                         }
                     }
                 }
 
-                // Нижние кнопки ЗАКРЫТЬ | СОХРАНИТЬ PDF (как на 01:18 в видео!)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFFECEFF1))
-                        .padding(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = onDismiss,
-                        colors = ButtonDefaults.buttonColors(containerColor = MetroBlue),
-                        shape = RoundedCornerShape(2.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(46.dp)
-                    ) {
-                        Text("ЗАКРЫТЬ", color = Color.White, fontWeight = FontWeight.Bold)
-                    }
-                    Button(
-                        onClick = { showSavedPdfActionModal = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = MetroBlue),
-                        shape = RoundedCornerShape(2.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(46.dp)
-                    ) {
-                        Text("СОХРАНИТЬ PDF", color = Color.White, fontWeight = FontWeight.Bold)
+                // Нижние кнопки ЗАКРЫТЬ | СОХРАНИТЬ PDF
+                Surface(color = palette.cardSurface) {
+                    Column {
+                        HorizontalDivider(color = palette.divider, thickness = 0.7.dp)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Button(
+                                onClick = onDismiss,
+                                colors = ButtonDefaults.buttonColors(containerColor = palette.secondaryBackground),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                            ) {
+                                Text(strings.closeDesc, color = palette.textPrimary, fontWeight = FontWeight.SemiBold)
+                            }
+                            Button(
+                                onClick = { showSavedPdfActionModal = true },
+                                colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                            ) {
+                                Text("PDF", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
             }
 
-            // Модальное окно после нажатия "СОХРАНИТЬ PDF": ОТПРАВИТЬ PDF | ОТКРЫТЬ PDF | ЗАКРЫТЬ (как на 01:19 в видео!)
+            // Модальное окно после нажатия "PDF"
             if (showSavedPdfActionModal) {
                 Dialog(onDismissRequest = { showSavedPdfActionModal = false }) {
                     Surface(
-                        modifier = Modifier
-                            .fillMaxWidth(0.95f)
-                            .border(2.dp, MetroBlue, RoundedCornerShape(4.dp)),
-                        shape = RoundedCornerShape(4.dp),
-                        color = Color.White,
-                        shadowElevation = 12.dp
+                        modifier = Modifier.fillMaxWidth(0.96f),
+                        shape = RoundedCornerShape(24.dp),
+                        border = BorderStroke(0.8.dp, palette.floatingBorder),
+                        color = palette.cardSurface,
+                        shadowElevation = 16.dp
                     ) {
                         Column(
                             modifier = Modifier.padding(18.dp),
@@ -2939,19 +2922,12 @@ private fun InAppReportPreviewDialog(
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Text(
-                                text = "Документ сохранён в файл:",
-                                fontSize = 14.sp,
-                                color = Color.DarkGray,
-                                textAlign = TextAlign.Center
-                            )
-                            Text(
                                 text = generatedPdfFile.name,
-                                fontSize = 13.sp,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.Black,
+                                color = palette.textPrimary,
                                 textAlign = TextAlign.Center
                             )
-                            Spacer(modifier = Modifier.height(4.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2961,18 +2937,18 @@ private fun InAppReportPreviewDialog(
                                         showSavedPdfActionModal = false
                                         onSharePdfFile(generatedPdfFile, mode.titleRu)
                                     },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
-                                    shape = RoundedCornerShape(2.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = palette.accentRed),
+                                    shape = RoundedCornerShape(12.dp),
                                     contentPadding = PaddingValues(horizontal = 6.dp),
                                     modifier = Modifier
                                         .weight(1f)
-                                        .height(44.dp)
+                                        .height(46.dp)
                                 ) {
                                     Text(
-                                        "ОТПРАВИТЬ PDF",
+                                        "Share",
                                         color = Color.White,
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 11.sp,
+                                        fontSize = 12.sp,
                                         textAlign = TextAlign.Center
                                     )
                                 }
@@ -2981,35 +2957,35 @@ private fun InAppReportPreviewDialog(
                                         showSavedPdfActionModal = false
                                         onOpenPdfFile(generatedPdfFile, mode.titleRu)
                                     },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7CB342)),
-                                    shape = RoundedCornerShape(2.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = palette.accentGreen),
+                                    shape = RoundedCornerShape(12.dp),
                                     contentPadding = PaddingValues(horizontal = 6.dp),
                                     modifier = Modifier
                                         .weight(1f)
-                                        .height(44.dp)
+                                        .height(46.dp)
                                 ) {
                                     Text(
-                                        "ОТКРЫТЬ PDF",
+                                        "Open",
                                         color = Color.White,
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 11.sp,
+                                        fontSize = 12.sp,
                                         textAlign = TextAlign.Center
                                     )
                                 }
                                 Button(
                                     onClick = { showSavedPdfActionModal = false },
-                                    colors = ButtonDefaults.buttonColors(containerColor = MetroBlue),
-                                    shape = RoundedCornerShape(2.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = palette.secondaryBackground),
+                                    shape = RoundedCornerShape(12.dp),
                                     contentPadding = PaddingValues(horizontal = 6.dp),
                                     modifier = Modifier
-                                        .weight(0.85f)
-                                        .height(44.dp)
+                                        .weight(0.9f)
+                                        .height(46.dp)
                                 ) {
                                     Text(
-                                        "ЗАКРЫТЬ",
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 11.sp,
+                                        strings.closeDesc,
+                                        color = palette.textPrimary,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp,
                                         textAlign = TextAlign.Center
                                     )
                                 }
@@ -3036,6 +3012,8 @@ private fun OrdersListScreen(
     onImportOrder: () -> Unit = {},
     onExportBackup: () -> Unit = {}
 ) {
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
     var searchQuery by remember { mutableStateOf("") }
     var showIcons by remember { mutableStateOf(true) }
 
@@ -3050,40 +3028,51 @@ private fun OrdersListScreen(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.background)
+    ) {
         UnifiedTopAppBar(
-            title = "заказы (${orders.size})",
+            title = "${strings.ordersTitle} (${orders.size})",
             onBack = onBack
         ) {
             Surface(
-                color = Color(0xFF00838F),
-                shape = RoundedCornerShape(4.dp),
+                color = palette.accentTeal.copy(alpha = 0.14f),
+                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
                     .clickable { onImportOrder() }
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .padding(horizontal = 9.dp, vertical = 6.dp)
             ) {
-                Text("📥 ИМПОРТ", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text(strings.importBtn, color = palette.accentTeal, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
             }
             Surface(
-                color = if (showIcons) Color.White.copy(alpha = 0.25f) else Color.Transparent,
-                shape = RoundedCornerShape(4.dp),
+                color = if (showIcons) palette.accentBlue.copy(alpha = 0.14f) else palette.segmentedBg,
+                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
-                    .border(1.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(4.dp))
+                    .clip(RoundedCornerShape(10.dp))
                     .clickable { showIcons = !showIcons }
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .padding(horizontal = 9.dp, vertical = 6.dp)
             ) {
-                Text("ICONS", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    text = strings.iconsToggle,
+                    color = if (showIcons) palette.accentBlue else palette.textSecondary,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
             Surface(
-                color = MetroDarkBlue,
-                shape = RoundedCornerShape(4.dp),
+                color = palette.accentBlue,
+                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
-                    .size(36.dp)
-                    .border(1.dp, Color.White.copy(alpha = 0.8f), RoundedCornerShape(4.dp))
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .clickable { onNewOrder() }
+                    .testTag("orders_list_add_button")
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Text("+", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Icon(Icons.Rounded.Add, contentDescription = strings.newOrderTitle, tint = Color.White, modifier = Modifier.size(20.dp))
                 }
             }
         }
@@ -3091,45 +3080,59 @@ private fun OrdersListScreen(
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            label = { Text("Поиск по № заказа, клиенту, телефону или адресу...") },
+            label = { Text(strings.searchOrdersHint, fontSize = 12.sp) },
+            shape = RoundedCornerShape(14.dp),
+            leadingIcon = {
+                Icon(Icons.Rounded.Search, contentDescription = null, tint = palette.textSecondary)
+            },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(10.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             singleLine = true
         )
 
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(horizontal = 12.dp),
+            contentPadding = PaddingValues(bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(filtered, key = { it.id }) { ord ->
+                val curSym = normalizeCurrencyDisplay(ord.currencySymbol)
                 Surface(
-                    color = Color.White,
-                    shape = RoundedCornerShape(4.dp),
-                    shadowElevation = 2.dp,
+                    color = palette.cardSurface,
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(0.8.dp, palette.floatingBorder),
+                    shadowElevation = if (palette.isDark) 0.dp else 2.dp,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
                         .clickable { onOpenOrder(ord.id) }
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
+                    Column(modifier = Modifier.padding(14.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(ord.orderNumber, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = MetroDarkBlue)
                                 Text(
-                                    text = "Клиент: ${ord.customerName.ifBlank { "не указан" }} • Тел.: ${ord.customerPhone.ifBlank { "—" }} • Адрес: ${ord.address.ifBlank { "—" }}",
+                                    text = ord.orderNumber,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.5.sp,
+                                    color = palette.accentBlue
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "${ord.customerName.ifBlank { "—" }} • ${ord.customerPhone.ifBlank { "—" }} • ${ord.address.ifBlank { "—" }}",
                                     fontSize = 12.sp,
-                                    color = Color.DarkGray
+                                    color = palette.textPrimary
                                 )
                                 Text(
-                                    text = "Дата: ${ord.createdDate} • Конструкций: ${ord.windows.sumOf { it.quantity }} шт. • Статус: ${ord.status.titleRu}",
+                                    text = "${ord.createdDate} • ${String.format(strings.windowsShortFormat, ord.windows.sumOf { it.quantity })} • $curSym • ${ord.status.titleRu}",
                                     fontSize = 11.sp,
-                                    color = Color.Gray
+                                    color = palette.textSecondary
                                 )
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -3137,9 +3140,9 @@ private fun OrdersListScreen(
                                     onClick = { onExportOrder(ord) }
                                 ) {
                                     Icon(
-                                        Icons.Default.Share,
-                                        contentDescription = "Экспорт заказа",
-                                        tint = MetroBlue
+                                        imageVector = Icons.Rounded.IosShare,
+                                        contentDescription = strings.exportOrderItem,
+                                        tint = palette.accentBlue
                                     )
                                 }
                                 if (orders.size > 1) {
@@ -3148,14 +3151,18 @@ private fun OrdersListScreen(
                                             onUpdateOrders(orders.filterNot { it.id == ord.id })
                                         }
                                     ) {
-                                        Icon(Icons.Default.Delete, contentDescription = "Удалить", tint = Color(0xFFD32F2F))
+                                        Icon(
+                                            imageVector = Icons.Rounded.DeleteOutline,
+                                            contentDescription = strings.deleteWindowDesc,
+                                            tint = palette.accentRed
+                                        )
                                     }
                                 }
                             }
                         }
 
                         if (showIcons && ord.windows.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -3166,17 +3173,19 @@ private fun OrdersListScreen(
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         modifier = Modifier
-                                            .border(1.dp, Color(0xFFE0E0E0), RoundedCornerShape(4.dp))
-                                            .padding(4.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(palette.secondaryBackground.copy(alpha = 0.65f))
+                                            .border(0.7.dp, palette.floatingBorder, RoundedCornerShape(12.dp))
+                                            .padding(5.dp)
                                     ) {
                                         WindowMiniThumbnail(
                                             topology = w.topology,
                                             modifier = Modifier.size(64.dp)
                                         )
                                         Text(
-                                            "#${idx + 1} (${w.topology.totalWidthMm.roundToInt()}×${w.topology.totalHeightMm.roundToInt()})",
+                                            text = "#${idx + 1} (${w.topology.totalWidthMm.roundToInt()}×${w.topology.totalHeightMm.roundToInt()})",
                                             fontSize = 9.sp,
-                                            color = Color.DarkGray
+                                            color = palette.textSecondary
                                         )
                                     }
                                 }
@@ -3222,6 +3231,8 @@ private fun ProfileConstructorScreen(
     onBack: () -> Unit,
     onSaveProfiles: (List<ProfileSystemSpec>) -> Unit
 ) {
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
     var selectedId by remember { mutableStateOf(profileSystems.firstOrNull()?.id ?: "") }
     val activeSys = profileSystems.find { it.id == selectedId } ?: profileSystems.firstOrNull()
     var expandedSection by remember { mutableStateOf<ProfileAccordionSection?>(ProfileAccordionSection.RAMA_A) }
@@ -3240,26 +3251,30 @@ private fun ProfileConstructorScreen(
         savedBannerText = "Создана профильная система «${newSys.name}»"
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.background)
+    ) {
         UnifiedTopAppBar(
-            title = "профильные системы",
+            title = strings.profilesScreenTitle,
             onBack = onBack
         ) {
             Surface(
-                color = MetroDarkBlue,
-                shape = RoundedCornerShape(4.dp),
+                color = palette.accentBlue,
+                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
-                    .border(1.dp, Color.White.copy(alpha = 0.85f), RoundedCornerShape(4.dp))
+                    .clip(RoundedCornerShape(10.dp))
                     .clickable { createNewProfileSystem() }
                     .padding(horizontal = 10.dp, vertical = 6.dp)
             ) {
-                Text("+ Добавить систему", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(strings.addSystemBtn, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             }
         }
 
         if (savedBannerText != null) {
             Surface(
-                color = Color(0xFF2E7D32),
+                color = palette.accentGreen,
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { savedBannerText = null }
@@ -3268,8 +3283,8 @@ private fun ProfileConstructorScreen(
                     text = savedBannerText!!,
                     color = Color.White,
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                 )
             }
         }
@@ -3404,8 +3419,13 @@ private fun ProfileConstructorScreen(
                 // =========================================================================
                 // БЛОК 1: КНОПКА "+" И СПИСОК СОЗДАННЫХ ПРОФИЛЬНЫХ СИСТЕМ
                 // =========================================================================
-                Surface(color = Color.White, shape = RoundedCornerShape(6.dp), shadowElevation = 2.dp) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(
+                    color = palette.cardSurface,
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(0.8.dp, palette.floatingBorder),
+                    shadowElevation = if (palette.isDark) 0.dp else 2.dp
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -3415,65 +3435,67 @@ private fun ProfileConstructorScreen(
                                 "Список профильных систем (${profileSystems.size})",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp,
-                                color = MetroDarkBlue
+                                color = palette.textPrimary
                             )
                             Button(
                                 onClick = { createNewProfileSystem() },
-                                colors = ButtonDefaults.buttonColors(containerColor = MetroBlue),
+                                colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                shape = RoundedCornerShape(4.dp),
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.height(34.dp)
                             ) {
-                                Text("+ Добавить профильную систему", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text(strings.addSystemBtn, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
 
                         profileSystems.forEach { sys ->
                             val isSelected = sys.id == activeSys.id
                             Surface(
-                                color = if (isSelected) Color(0xFFE1F5FE) else Color(0xFFF8FAFC),
-                                shape = RoundedCornerShape(6.dp),
+                                color = if (isSelected) palette.accentBlue.copy(alpha = 0.12f) else palette.secondaryBackground.copy(alpha = 0.6f),
+                                shape = RoundedCornerShape(14.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .border(
-                                        width = if (isSelected) 1.5.dp else 1.dp,
-                                        color = if (isSelected) MetroBlue else Color(0xFFCFD8DC),
-                                        shape = RoundedCornerShape(6.dp)
+                                        width = if (isSelected) 1.5.dp else 0.8.dp,
+                                        color = if (isSelected) palette.accentBlue else palette.floatingBorder,
+                                        shape = RoundedCornerShape(14.dp)
                                     )
+                                    .clip(RoundedCornerShape(14.dp))
                                     .clickable { selectedId = sys.id }
                             ) {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                             Surface(
-                                                color = if (sys.materialType == ProfileMaterialType.ALUMINUM) Color(0xFF455A64) else Color(0xFF00838F),
-                                                shape = RoundedCornerShape(3.dp)
+                                                color = if (sys.materialType == ProfileMaterialType.ALUMINUM) Color(0xFF455A64) else palette.accentTeal,
+                                                shape = RoundedCornerShape(6.dp)
                                             ) {
                                                 Text(
                                                     text = sys.materialType.shortBadge,
                                                     color = Color.White,
                                                     fontSize = 10.sp,
                                                     fontWeight = FontWeight.Bold,
-                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                                 )
                                             }
                                             Text(
                                                 text = sys.name,
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 13.5.sp,
-                                                color = Color(0xFF1E293B)
+                                                color = palette.textPrimary
                                             )
                                         }
+                                        Spacer(modifier = Modifier.height(2.dp))
                                         Text(
                                             text = "Рама A1=${fmtMm(sys.frameWidthMm)} мм (${sys.priceFramePerM} $currencySymbol/м) • Импост B1=${fmtMm(sys.impostWidthMm)} мм • Створка C1=${fmtMm(sys.sashWidthMm)} мм • Зазор СП=${fmtMm(sys.glazingClearanceTotalMm)} мм",
                                             fontSize = 11.sp,
-                                            color = Color(0xFF546E7A)
+                                            color = palette.textSecondary
                                         )
                                     }
 
@@ -3483,10 +3505,10 @@ private fun ProfileConstructorScreen(
                                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                                         ) {
                                             Text(
-                                                if (isSelected) "✎ Выбрана" else "✎ Редакт.",
-                                                color = MetroDarkBlue,
+                                                if (isSelected) "✓ Выбрана" else "Редакт.",
+                                                color = palette.accentBlue,
                                                 fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold
+                                                fontWeight = FontWeight.SemiBold
                                             )
                                         }
                                         if (profileSystems.size > 1) {
@@ -3501,9 +3523,9 @@ private fun ProfileConstructorScreen(
                                                 modifier = Modifier.size(32.dp)
                                             ) {
                                                 Icon(
-                                                    imageVector = Icons.Default.Delete,
+                                                    imageVector = Icons.Rounded.DeleteOutline,
                                                     contentDescription = "Удалить систему",
-                                                    tint = Color(0xFFD32F2F),
+                                                    tint = palette.accentRed,
                                                     modifier = Modifier.size(18.dp)
                                                 )
                                             }
@@ -3518,18 +3540,24 @@ private fun ProfileConstructorScreen(
                 // =========================================================================
                 // БЛОК 2: ОБЩИЕ ДАННЫЕ ВЫБРАННОЙ ПРОФИЛЬНОЙ СИСТЕМЫ + ЗАЗОР НА СТЕКЛОПАКЕТ
                 // =========================================================================
-                Surface(color = Color.White, shape = RoundedCornerShape(6.dp), shadowElevation = 2.dp) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(
+                    color = palette.cardSurface,
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(0.8.dp, palette.floatingBorder),
+                    shadowElevation = if (palette.isDark) 0.dp else 2.dp
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
                             "Редактирование системы: «$name»",
                             fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            color = MetroDarkBlue
+                            fontSize = 14.5.sp,
+                            color = palette.accentBlue
                         )
                         OutlinedTextField(
                             value = name,
                             onValueChange = { name = it },
                             label = { Text("Название профильной системы") },
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true
                         )
@@ -3554,6 +3582,7 @@ private fun ProfileConstructorScreen(
                                 value = stockBarLen,
                                 onValueChange = { stockBarLen = it },
                                 label = { Text("Длина хлыста профиля (мм)") },
+                                shape = RoundedCornerShape(12.dp),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 modifier = Modifier.weight(1f),
                                 singleLine = true
@@ -3562,6 +3591,7 @@ private fun ProfileConstructorScreen(
                                 value = weldAllow,
                                 onValueChange = { weldAllow = it },
                                 label = { Text("Припуск на сварку угла (мм)") },
+                                shape = RoundedCornerShape(12.dp),
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.weight(1f),
                                 singleLine = true
@@ -3582,17 +3612,17 @@ private fun ProfileConstructorScreen(
                         val revDoorDeduct = 2f * e2Val - 2f * eOvVal + clrMm
 
                         Surface(
-                            color = Color(0xFFE0F7FA),
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(1.dp, Color(0xFF80DEEA), RoundedCornerShape(6.dp))
+                            color = palette.accentTeal.copy(alpha = 0.11f),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(0.8.dp, palette.accentTeal.copy(alpha = 0.35f)),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 OutlinedTextField(
                                     value = glzClearanceTotal,
                                     onValueChange = { glzClearanceTotal = it },
                                     label = { Text("Зазор на стеклопакет (отнимается от проёма, напр. 10 мм или 14 мм)") },
+                                    shape = RoundedCornerShape(12.dp),
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                     modifier = Modifier.fillMaxWidth(),
                                     singleLine = true
@@ -3604,7 +3634,7 @@ private fun ProfileConstructorScreen(
                                         "• В двери (D): Проём + 2×${fmtMm(dOvVal)} − 2×${fmtMm(d1Val)} − ${fmtMm(clrMm)} = Проём − ${fmtMm(doorDeduct)} мм\n" +
                                         "• В обратной двери (E): Проём + 2×${fmtMm(eOvVal)} − 2×${fmtMm(e2Val)} − ${fmtMm(clrMm)} = Проём − ${fmtMm(revDoorDeduct)} мм",
                                     fontSize = 11.sp,
-                                    color = Color(0xFF006064),
+                                    color = palette.textPrimary,
                                     fontWeight = FontWeight.Medium
                                 )
                             }
@@ -3618,7 +3648,7 @@ private fun ProfileConstructorScreen(
                 Text(
                     "Нажмите на элемент профиля, чтобы раскрыть эскиз сечения, таблицу размеров и цену:",
                     fontSize = 12.sp,
-                    color = Color(0xFF455A64),
+                    color = palette.textSecondary,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.padding(horizontal = 4.dp)
                 )
@@ -3626,21 +3656,24 @@ private fun ProfileConstructorScreen(
                 ProfileAccordionSection.entries.forEach { section ->
                     val isExp = expandedSection == section
                     Surface(
-                        color = Color.White,
-                        shape = RoundedCornerShape(6.dp),
-                        shadowElevation = 2.dp,
-                        modifier = Modifier.fillMaxWidth()
+                        color = palette.cardSurface,
+                        shape = RoundedCornerShape(18.dp),
+                        border = BorderStroke(0.8.dp, if (isExp) palette.accentBlue.copy(alpha = 0.5f) else palette.floatingBorder),
+                        shadowElevation = if (palette.isDark) 0.dp else 2.dp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
                     ) {
                         Column(modifier = Modifier.fillMaxWidth()) {
                             // Заголовок элемента аккордеона
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(if (isExp) Color(0xFFE1F5FE) else Color.White)
+                                    .background(if (isExp) palette.accentBlue.copy(alpha = 0.1f) else palette.cardSurface)
                                     .clickable {
                                         expandedSection = if (isExp) null else section
                                     }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -3650,9 +3683,9 @@ private fun ProfileConstructorScreen(
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Surface(
-                                        color = if (section == ProfileAccordionSection.CLEATS_SETS) Color(0xFF00695C) else MetroBlue,
-                                        shape = RoundedCornerShape(6.dp),
-                                        modifier = Modifier.size(32.dp)
+                                        color = if (section == ProfileAccordionSection.CLEATS_SETS) palette.accentGreen else palette.accentBlue,
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier.size(34.dp)
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
                                             Text(
@@ -3667,26 +3700,26 @@ private fun ProfileConstructorScreen(
                                         Text(
                                             text = section.titleRu,
                                             fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp,
-                                            color = Color(0xFF1E293B)
+                                            fontSize = 14.5.sp,
+                                            color = palette.textPrimary
                                         )
                                         Text(
                                             text = section.subtitleRu,
                                             fontSize = 11.sp,
-                                            color = Color(0xFF607D8B)
+                                            color = palette.textSecondary
                                         )
                                     }
                                 }
                                 Text(
-                                    text = if (isExp) "▲ Свернуть" else "▼ Раскрыть",
-                                    color = MetroDarkBlue,
-                                    fontSize = 11.5.sp,
+                                    text = if (isExp) "▲" else "▼",
+                                    color = palette.accentBlue,
+                                    fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
 
                             if (isExp) {
-                                HorizontalDivider(color = Color(0xFFCFD8DC))
+                                HorizontalDivider(color = palette.divider, thickness = 0.7.dp)
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -3905,14 +3938,14 @@ private fun ProfileConstructorScreen(
                                                 caption = "Эскиз углового соединителя (Угловик)"
                                             )
                                             Surface(
-                                                color = Color(0xFFF1F5F9),
-                                                shape = RoundedCornerShape(6.dp),
+                                                color = palette.secondaryBackground,
+                                                shape = RoundedCornerShape(12.dp),
                                                 modifier = Modifier.fillMaxWidth()
                                             ) {
                                                 Text(
                                                     text = "Габариты двух конструкций при угловом соединении задаются по готовым размерам замерного листа. Для угловика в расчётах сметы используется стоимость за 1 погонный метр:",
                                                     fontSize = 11.5.sp,
-                                                    color = Color(0xFF475569),
+                                                    color = palette.textSecondary,
                                                     modifier = Modifier.padding(10.dp)
                                                 )
                                             }
@@ -3955,18 +3988,17 @@ private fun ProfileConstructorScreen(
                                             val seatMm = parseMmOrNull(a4SeatW) ?: 50f
                                             val rubMm = parseMmOrNull(rubberAllowMm) ?: 8f
                                             Surface(
-                                                color = Color(0xFFF0F9FF),
-                                                shape = RoundedCornerShape(6.dp),
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .border(1.dp, Color(0xFFBAE6FD), RoundedCornerShape(6.dp))
+                                                color = palette.accentBlue.copy(alpha = 0.09f),
+                                                shape = RoundedCornerShape(14.dp),
+                                                border = BorderStroke(0.8.dp, palette.accentBlue.copy(alpha = 0.3f)),
+                                                modifier = Modifier.fillMaxWidth()
                                             ) {
-                                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                                     Text(
                                                         text = "Формула подбора штапика: СП = Посадочное место (A4=${fmtMm(seatMm)} мм) − Ширина штапика (H2) − Резина (${fmtMm(rubMm)} мм)",
                                                         fontSize = 11.5.sp,
                                                         fontWeight = FontWeight.Bold,
-                                                        color = Color(0xFF0369A1)
+                                                        color = palette.accentBlue
                                                     )
                                                     Text(
                                                         text = if (matType == ProfileMaterialType.ALUMINUM) {
@@ -3975,13 +4007,14 @@ private fun ProfileConstructorScreen(
                                                             "Правило распила штапиков для ПВХ (45°/45°):\n• Горизонтальные = Ширина проёма | Вертикальные = Высота проёма"
                                                         },
                                                         fontSize = 11.sp,
-                                                        color = Color(0xFF0284C7),
+                                                        color = palette.textPrimary,
                                                         fontWeight = FontWeight.Medium
                                                     )
                                                     OutlinedTextField(
                                                         value = rubberAllowMm,
                                                         onValueChange = { rubberAllowMm = it },
                                                         label = { Text("Суммарная толщина резины (упорная + клиновая, обычно 4+4 = 8 мм)") },
+                                                        shape = RoundedCornerShape(12.dp),
                                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                                         modifier = Modifier.fillMaxWidth(),
                                                         singleLine = true
@@ -3998,7 +4031,7 @@ private fun ProfileConstructorScreen(
                                                     text = "Варианты штапиков в этой системе (${shtapikList.size}):",
                                                     fontWeight = FontWeight.Bold,
                                                     fontSize = 13.sp,
-                                                    color = MetroDarkBlue
+                                                    color = palette.textPrimary
                                                 )
                                                 Button(
                                                     onClick = {
@@ -4014,22 +4047,21 @@ private fun ProfileConstructorScreen(
                                                         )
                                                         shtapikList = shtapikList + newVar
                                                     },
-                                                    colors = ButtonDefaults.buttonColors(containerColor = MetroBlue),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
                                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                                    shape = RoundedCornerShape(4.dp),
-                                                    modifier = Modifier.height(32.dp)
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    modifier = Modifier.height(34.dp)
                                                 ) {
-                                                    Text("+ Добавить штапик", color = Color.White, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                                    Text("+ Штапик", color = Color.White, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                                                 }
                                             }
 
                                             shtapikList.forEachIndexed { idx, item ->
                                                 Surface(
-                                                    color = Color(0xFFF8FAFC),
-                                                    shape = RoundedCornerShape(6.dp),
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .border(1.dp, Color(0xFFCFD8DC), RoundedCornerShape(6.dp))
+                                                    color = palette.secondaryBackground.copy(alpha = 0.6f),
+                                                    shape = RoundedCornerShape(14.dp),
+                                                    border = BorderStroke(0.8.dp, palette.floatingBorder),
+                                                    modifier = Modifier.fillMaxWidth()
                                                 ) {
                                                     Column(
                                                         modifier = Modifier.padding(10.dp),
@@ -4044,7 +4076,7 @@ private fun ProfileConstructorScreen(
                                                                 text = "Штапик #${idx + 1}: ${item.name} → под заполнение СП ${item.glazingThicknessSpMm} мм",
                                                                 fontWeight = FontWeight.Bold,
                                                                 fontSize = 12.5.sp,
-                                                                color = Color(0xFF1E293B)
+                                                                color = palette.textPrimary
                                                             )
                                                             if (shtapikList.size > 1) {
                                                                 IconButton(
@@ -4054,9 +4086,9 @@ private fun ProfileConstructorScreen(
                                                                     modifier = Modifier.size(28.dp)
                                                                 ) {
                                                                     Icon(
-                                                                        imageVector = Icons.Default.Delete,
+                                                                        imageVector = Icons.Rounded.DeleteOutline,
                                                                         contentDescription = "Удалить штапик",
-                                                                        tint = Color(0xFFD32F2F),
+                                                                        tint = palette.accentRed,
                                                                         modifier = Modifier.size(18.dp)
                                                                     )
                                                                 }
@@ -4076,6 +4108,7 @@ private fun ProfileConstructorScreen(
                                                                     }
                                                                 },
                                                                 label = { Text("H1 В проёме (мм)") },
+                                                                shape = RoundedCornerShape(10.dp),
                                                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                                                 modifier = Modifier.weight(1f),
                                                                 singleLine = true
@@ -4094,6 +4127,7 @@ private fun ProfileConstructorScreen(
                                                                     }
                                                                 },
                                                                 label = { Text("H2 Толщина (мм)") },
+                                                                shape = RoundedCornerShape(10.dp),
                                                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                                                 modifier = Modifier.weight(1f),
                                                                 singleLine = true
@@ -4107,6 +4141,7 @@ private fun ProfileConstructorScreen(
                                                                     }
                                                                 },
                                                                 label = { Text("СП Пакет (мм)") },
+                                                                shape = RoundedCornerShape(10.dp),
                                                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                                                 modifier = Modifier.weight(1f),
                                                                 singleLine = true
@@ -4122,6 +4157,7 @@ private fun ProfileConstructorScreen(
                                                                 }
                                                             },
                                                             label = { Text("Цена этого штапика за 1 пог. метр ($currencySymbol/м)") },
+                                                            shape = RoundedCornerShape(10.dp),
                                                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                                             modifier = Modifier.fillMaxWidth(),
                                                             singleLine = true
@@ -4133,18 +4169,17 @@ private fun ProfileConstructorScreen(
 
                                         ProfileAccordionSection.CLEATS_SETS -> {
                                             Surface(
-                                                color = Color(0xFFE0F2F1),
-                                                shape = RoundedCornerShape(6.dp),
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .border(1.dp, Color(0xFF80CBC4), RoundedCornerShape(6.dp))
+                                                color = palette.accentGreen.copy(alpha = 0.11f),
+                                                shape = RoundedCornerShape(14.dp),
+                                                border = BorderStroke(0.8.dp, palette.accentGreen.copy(alpha = 0.35f)),
+                                                modifier = Modifier.fillMaxWidth()
                                             ) {
-                                                Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                                     Text(
                                                         text = "Автоматический расчёт комплектов сухарей в конструкции:",
                                                         fontWeight = FontWeight.Bold,
                                                         fontSize = 12.5.sp,
-                                                        color = Color(0xFF004D40)
+                                                        color = palette.accentGreen
                                                     )
                                                     Text(
                                                         text = "• 1 рама = 1 комплект сухарей рамы (на 4 угла)\n" +
@@ -4152,7 +4187,7 @@ private fun ProfileConstructorScreen(
                                                             "• 1 створка = 1 комплект створочных сухарей (на 4 угла)\n" +
                                                             "• 1 дверь = 1 комплект дверных сухарей (на 4 угла)",
                                                         fontSize = 11.5.sp,
-                                                        color = Color(0xFF00695C)
+                                                        color = palette.textPrimary
                                                     )
                                                 }
                                             }
@@ -4196,17 +4231,17 @@ private fun ProfileConstructorScreen(
                 // Кнопка сохранения всей системы
                 Button(
                     onClick = { saveCurrentSystem() },
-                    colors = ButtonDefaults.buttonColors(containerColor = MetroBlue),
-                    shape = RoundedCornerShape(6.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
+                        .height(50.dp)
                 ) {
                     Text(
-                        "СОХРАНИТЬ ПРОФИЛЬНУЮ СИСТЕМУ «${name.uppercase()}»",
+                        "${strings.saveBtn}: «$name»",
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 13.5.sp
+                        fontSize = 14.sp
                     )
                 }
             }
@@ -4219,33 +4254,40 @@ private fun ProfileSchematicImageCard(
     drawableResId: Int,
     caption: String
 ) {
+    val palette = LocalWinStudioPalette.current
     Surface(
-        color = Color(0xFFF8FAFC),
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, Color(0xFFCBD5E1), RoundedCornerShape(8.dp))
+        color = palette.secondaryBackground.copy(alpha = 0.7f),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(0.8.dp, palette.floatingBorder),
+        modifier = Modifier.fillMaxWidth()
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(8.dp),
+                .padding(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Image(
-                painter = painterResource(id = drawableResId),
-                contentDescription = caption,
-                contentScale = ContentScale.Fit,
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 180.dp, max = 280.dp)
-                    .clip(RoundedCornerShape(6.dp))
-            )
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.White)
+                    .padding(6.dp)
+            ) {
+                Image(
+                    painter = painterResource(id = drawableResId),
+                    contentDescription = caption,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 180.dp, max = 280.dp)
+                )
+            }
             Text(
                 text = caption,
                 fontSize = 11.5.sp,
-                color = Color(0xFF475569),
+                color = palette.textSecondary,
                 fontWeight = FontWeight.Medium
             )
         }
@@ -4260,23 +4302,23 @@ private fun LetteredDimensionRow(
     unitText: String = "мм",
     onValueChange: (String) -> Unit
 ) {
+    val palette = LocalWinStudioPalette.current
     Surface(
-        color = Color(0xFFF8FAFC),
-        shape = RoundedCornerShape(6.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, Color(0xFFE2E8F0), RoundedCornerShape(6.dp))
+        color = palette.secondaryBackground.copy(alpha = 0.6f),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(0.8.dp, palette.floatingBorder),
+        modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 6.dp),
+                .padding(horizontal = 10.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Surface(
-                color = Color(0xFF0277BD),
-                shape = RoundedCornerShape(5.dp),
+                color = palette.accentBlue,
+                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.widthIn(min = 42.dp)
             ) {
                 Box(
@@ -4294,13 +4336,14 @@ private fun LetteredDimensionRow(
             Text(
                 text = description,
                 fontSize = 12.sp,
-                color = Color(0xFF1E293B),
+                color = palette.textPrimary,
                 modifier = Modifier.weight(1f)
             )
             OutlinedTextField(
                 value = value,
                 onValueChange = onValueChange,
                 label = { Text(unitText, fontSize = 10.5.sp) },
+                shape = RoundedCornerShape(10.dp),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 modifier = Modifier.width(105.dp)
@@ -4315,19 +4358,19 @@ private fun OverlapInputCard(
     value: String,
     onValueChange: (String) -> Unit
 ) {
+    val palette = LocalWinStudioPalette.current
     val ov = parseMmOrNull(value) ?: 6f
     val addBothSides = ov * 2f
     val sampleW = 800f + addBothSides
     val sampleH = 1000f + addBothSides
     Surface(
-        color = Color(0xFFFFF8E1),
-        shape = RoundedCornerShape(6.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, Color(0xFFFFCC80), RoundedCornerShape(6.dp))
+        color = palette.accentOrange.copy(alpha = 0.12f),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(0.8.dp, palette.accentOrange.copy(alpha = 0.4f)),
+        modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.padding(10.dp),
+            modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Row(
@@ -4340,18 +4383,19 @@ private fun OverlapInputCard(
                         text = title,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.5.sp,
-                        color = Color(0xFFE65100)
+                        color = palette.accentOrange
                     )
                     Text(
                         text = "При нахлёсте ${fmtMm(ov)} мм с каждой стороны (+${fmtMm(addBothSides)} мм к проёму): для проёма 800×1000 мм заготовки в раскрой будут ${fmtMm(sampleW)}×${fmtMm(sampleH)} мм",
                         fontSize = 11.sp,
-                        color = Color(0xFF6D4C41)
+                        color = palette.textSecondary
                     )
                 }
                 OutlinedTextField(
                     value = value,
                     onValueChange = onValueChange,
                     label = { Text("мм") },
+                    shape = RoundedCornerShape(10.dp),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     modifier = Modifier.width(100.dp)
@@ -4367,17 +4411,17 @@ private fun ProfilePricePerMeterField(
     value: String,
     onValueChange: (String) -> Unit
 ) {
+    val palette = LocalWinStudioPalette.current
     Surface(
-        color = Color(0xFFE8F5E9),
-        shape = RoundedCornerShape(6.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, Color(0xFFA5D6A7), RoundedCornerShape(6.dp))
+        color = palette.accentGreen.copy(alpha = 0.12f),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(0.8.dp, palette.accentGreen.copy(alpha = 0.4f)),
+        modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
@@ -4385,13 +4429,14 @@ private fun ProfilePricePerMeterField(
                 text = label,
                 fontWeight = FontWeight.Bold,
                 fontSize = 12.5.sp,
-                color = Color(0xFF1B5E20),
+                color = palette.accentGreen,
                 modifier = Modifier.weight(1f)
             )
             OutlinedTextField(
                 value = value,
                 onValueChange = onValueChange,
                 label = { Text("Цена") },
+                shape = RoundedCornerShape(10.dp),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 modifier = Modifier.width(120.dp)
@@ -4430,55 +4475,75 @@ private fun PricesEditorScreen(
     onSaveExtras: (List<ExtraAccessoryItem>) -> Unit,
     onSaveWorks: (List<WorkServiceItem>) -> Unit
 ) {
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
     var activeTab by remember { mutableStateOf(PriceCatalogTab.PROFILES_AND_CLEATS) }
     var selectedSysId by remember { mutableStateOf(profileSystems.firstOrNull()?.id ?: "") }
     val activeSys = profileSystems.find { it.id == selectedSysId } ?: profileSystems.firstOrNull()
     var savedToast by remember { mutableStateOf<String?>(null) }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.background)
+    ) {
         UnifiedTopAppBar(
-            title = "прайсы ($currencySymbol)",
+            title = String.format(strings.pricesScreenTitleFormat, currencySymbol),
             onBack = onBack
         )
 
-        // Вкладки разделов прайса
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xFF263238))
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        // Вкладки разделов прайса в стиле iOS-пилюль
+        Surface(
+            color = palette.cardSurface,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            PriceCatalogTab.entries.forEach { tab ->
-                val sel = activeTab == tab
-                Button(
-                    onClick = { activeTab = tab },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (sel) MetroBlue else Color(0xFF455A64)
-                    ),
-                    shape = RoundedCornerShape(3.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    modifier = Modifier.height(32.dp)
+            Column {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(tab.titleRu, color = Color.White, fontSize = 11.5.sp, fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal)
+                    PriceCatalogTab.entries.forEach { tab ->
+                        val sel = activeTab == tab
+                        Surface(
+                            color = if (sel) palette.accentBlue else palette.secondaryBackground,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { activeTab = tab }
+                                .testTag("price_tab_${tab.name}")
+                        ) {
+                            Text(
+                                text = tab.titleRu,
+                                color = if (sel) Color.White else palette.textPrimary,
+                                fontSize = 12.sp,
+                                fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                            )
+                        }
+                    }
                 }
+                HorizontalDivider(thickness = 0.6.dp, color = palette.divider)
             }
         }
 
         if (savedToast != null) {
             Surface(
-                color = Color(0xFF2E7D32),
+                color = palette.accentGreen,
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
                     .clickable { savedToast = null }
             ) {
                 Text(
                     text = savedToast!!,
                     color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                 )
             }
         }
@@ -4488,16 +4553,28 @@ private fun PricesEditorScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color.White)
+                        .background(palette.secondaryBackground)
                         .horizontalScroll(rememberScrollState())
-                        .padding(8.dp),
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     profileSystems.forEach { sys ->
+                        val sel = sys.id == activeSys?.id
                         FilterChip(
-                            selected = sys.id == activeSys?.id,
+                            selected = sel,
                             onClick = { selectedSysId = sys.id },
-                            label = { Text(sys.name) }
+                            label = {
+                                Text(
+                                    text = sys.name,
+                                    color = if (sel) Color.White else palette.textPrimary,
+                                    fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal
+                                )
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = palette.accentBlue,
+                                containerColor = palette.cardSurface
+                            )
                         )
                     }
                 }
@@ -4524,18 +4601,28 @@ private fun PricesEditorScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .verticalScroll(rememberScrollState())
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Surface(color = Color.White, shape = RoundedCornerShape(6.dp), shadowElevation = 2.dp) {
-                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("1. Погонные метры профилей и уплотнителя ($currencySymbol/м)", fontWeight = FontWeight.Bold, color = MetroDarkBlue)
+                        Surface(
+                            color = palette.cardSurface,
+                            shape = RoundedCornerShape(20.dp),
+                            border = BorderStroke(0.8.dp, palette.floatingBorder),
+                            shadowElevation = if (palette.isDark) 0.dp else 2.dp
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    "1. Погонные метры профилей и уплотнителя ($currencySymbol/м)",
+                                    fontWeight = FontWeight.Bold,
+                                    color = palette.accentBlue
+                                )
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedTextField(
                                         value = pFrame,
                                         onValueChange = { pFrame = it },
                                         label = { Text("Рама ($currencySymbol/м)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
@@ -4544,6 +4631,7 @@ private fun PricesEditorScreen(
                                         onValueChange = { pImpost = it },
                                         label = { Text("Импост ($currencySymbol/м)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
@@ -4554,6 +4642,7 @@ private fun PricesEditorScreen(
                                         onValueChange = { pSash = it },
                                         label = { Text("Створка окна ($currencySymbol/м)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
@@ -4562,6 +4651,7 @@ private fun PricesEditorScreen(
                                         onValueChange = { pDoorSash = it },
                                         label = { Text("Створка двери ($currencySymbol/м)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
@@ -4572,6 +4662,7 @@ private fun PricesEditorScreen(
                                         onValueChange = { pShtapik = it },
                                         label = { Text("Штапик ($currencySymbol/м)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
@@ -4580,32 +4671,39 @@ private fun PricesEditorScreen(
                                         onValueChange = { pRubber = it },
                                         label = { Text("Уплотнитель ($currencySymbol/м)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
                                 }
 
-                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                                Text("2. Угловые сухари (комплекты на 4 угла / на 1 импост, $currencySymbol/компл.)", fontWeight = FontWeight.Bold, color = MetroDarkBlue)
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = palette.divider)
+                                Text(
+                                    "2. Угловые сухари (комплекты на 4 угла / на 1 импост, $currencySymbol/компл.)",
+                                    fontWeight = FontWeight.Bold,
+                                    color = palette.accentBlue
+                                )
                                 Text(
                                     "1 рама = 1 комплект сухарей рамы • 1 импост = 1 комплект сухарей импоста • 1 створка = 1 комплект створочных сухарей • 1 дверь = 1 комплект дверных сухарей:",
-                                    fontSize = 11.sp,
-                                    color = Color.Gray
+                                    fontSize = 11.5.sp,
+                                    color = palette.textSecondary
                                 )
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedTextField(
                                         value = pCleatFrame,
                                         onValueChange = { pCleatFrame = it },
-                                        label = { Text("Комплект сухарей рамы ($currencySymbol)") },
+                                        label = { Text("Сухари рамы ($currencySymbol)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
                                     OutlinedTextField(
                                         value = pCleatSash,
                                         onValueChange = { pCleatSash = it },
-                                        label = { Text("Комплект сухарей створки ($currencySymbol)") },
+                                        label = { Text("Сухари створки ($currencySymbol)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
@@ -4614,37 +4712,45 @@ private fun PricesEditorScreen(
                                     OutlinedTextField(
                                         value = pCleatDoorSash,
                                         onValueChange = { pCleatDoorSash = it },
-                                        label = { Text("Комплект сухарей двери ($currencySymbol)") },
+                                        label = { Text("Сухари двери ($currencySymbol)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
                                     OutlinedTextField(
                                         value = pImpConn,
                                         onValueChange = { pImpConn = it },
-                                        label = { Text("Комплект сухарей импоста ($currencySymbol)") },
+                                        label = { Text("Сухари импоста ($currencySymbol)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
                                 }
 
-                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                                Text("3. Базовые механизмы открывания ($currencySymbol/компл.)", fontWeight = FontWeight.Bold, color = MetroDarkBlue)
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = palette.divider)
+                                Text(
+                                    "3. Базовые механизмы открывания ($currencySymbol/компл.)",
+                                    fontWeight = FontWeight.Bold,
+                                    color = palette.accentBlue
+                                )
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedTextField(
                                         value = pHwTurn,
                                         onValueChange = { pHwTurn = it },
-                                        label = { Text("Поворотный ($currencySymbol)") },
+                                        label = { Text("Поворот. ($currencySymbol)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
                                     OutlinedTextField(
                                         value = pHwTiltTurn,
                                         onValueChange = { pHwTiltTurn = it },
-                                        label = { Text("Пов.-откидной ($currencySymbol)") },
+                                        label = { Text("Пов.-отк. ($currencySymbol)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
@@ -4653,6 +4759,7 @@ private fun PricesEditorScreen(
                                         onValueChange = { pHwDoor = it },
                                         label = { Text("Дверной ($currencySymbol)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
@@ -4678,10 +4785,14 @@ private fun PricesEditorScreen(
                                         onSaveProfiles(profileSystems.map { if (it.id == updated.id) updated else it })
                                         savedToast = "Прайс профильной системы «${updated.name}» сохранён!"
                                     },
-                                    colors = ButtonDefaults.buttonColors(containerColor = MetroBlue),
-                                    modifier = Modifier.fillMaxWidth()
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .testTag("save_profile_prices_button")
                                 ) {
-                                    Text("СОХРАНИТЬ ПРАЙС СИСТЕМЫ И СУХАРЕЙ", color = Color.White, fontWeight = FontWeight.Bold)
+                                    Text("Сохранить прайс системы и сухарей", color = Color.White, fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }
@@ -4697,18 +4808,28 @@ private fun PricesEditorScreen(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     item {
-                        Surface(color = Color.White, shape = RoundedCornerShape(6.dp), shadowElevation = 2.dp) {
-                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("Добавить стеклопакет / заполнение в прайс", fontWeight = FontWeight.Bold, color = MetroDarkBlue)
+                        Surface(
+                            color = palette.cardSurface,
+                            shape = RoundedCornerShape(20.dp),
+                            border = BorderStroke(0.8.dp, palette.floatingBorder),
+                            shadowElevation = if (palette.isDark) 0.dp else 2.dp
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    "Добавить стеклопакет / заполнение в прайс",
+                                    fontWeight = FontWeight.Bold,
+                                    color = palette.accentBlue
+                                )
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedTextField(
                                         value = newGlzName,
                                         onValueChange = { newGlzName = it },
-                                        label = { Text("Формула / название (напр. 4-16-4i)") },
+                                        label = { Text("Формула (напр. 4-16-4i)") },
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1.4f),
                                         singleLine = true
                                     )
@@ -4717,6 +4838,7 @@ private fun PricesEditorScreen(
                                         onValueChange = { newGlzPrice = it },
                                         label = { Text("Цена ($currencySymbol/m2)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1f),
                                         singleLine = true
                                     )
@@ -4728,7 +4850,7 @@ private fun PricesEditorScreen(
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Checkbox(checked = newGlzSandwich, onCheckedChange = { newGlzSandwich = it })
-                                        Text("Непрозрачное (сэндвич)", fontSize = 12.sp)
+                                        Text("Непрозрачное (сэндвич)", fontSize = 12.5.sp, color = palette.textPrimary)
                                     }
                                     Button(
                                         onClick = {
@@ -4747,9 +4869,10 @@ private fun PricesEditorScreen(
                                                 savedToast = "Добавлен стеклопакет «${item.name}»"
                                             }
                                         },
-                                        colors = ButtonDefaults.buttonColors(containerColor = MetroBlue)
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue)
                                     ) {
-                                        Text("+ Добавить", color = Color.White, fontWeight = FontWeight.Bold)
+                                        Text("+ Добавить", color = Color.White, fontWeight = FontWeight.SemiBold)
                                     }
                                 }
                             }
@@ -4781,18 +4904,28 @@ private fun PricesEditorScreen(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     item {
-                        Surface(color = Color.White, shape = RoundedCornerShape(6.dp), shadowElevation = 2.dp) {
-                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("Добавить марку фурнитуры в прайс", fontWeight = FontWeight.Bold, color = MetroDarkBlue)
+                        Surface(
+                            color = palette.cardSurface,
+                            shape = RoundedCornerShape(20.dp),
+                            border = BorderStroke(0.8.dp, palette.floatingBorder),
+                            shadowElevation = if (palette.isDark) 0.dp else 2.dp
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    "Добавить марку фурнитуры в прайс",
+                                    fontWeight = FontWeight.Bold,
+                                    color = palette.accentBlue
+                                )
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     OutlinedTextField(
                                         value = newHwName,
                                         onValueChange = { newHwName = it },
                                         label = { Text("Название (напр. Siegenia Titan)") },
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1.4f),
                                         singleLine = true
                                     )
@@ -4801,6 +4934,7 @@ private fun PricesEditorScreen(
                                         onValueChange = { newHwPrice = it },
                                         label = { Text("Надбавка ($currencySymbol)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(0.9f),
                                         singleLine = true
                                     )
@@ -4817,9 +4951,11 @@ private fun PricesEditorScreen(
                                                 newHwName = ""
                                             }
                                         },
-                                        colors = ButtonDefaults.buttonColors(containerColor = MetroBlue)
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                                        modifier = Modifier.height(48.dp)
                                     ) {
-                                        Text("+", color = Color.White, fontWeight = FontWeight.Bold)
+                                        Icon(Icons.Rounded.Add, contentDescription = strings.saveBtn, tint = Color.White)
                                     }
                                 }
                             }
@@ -4870,17 +5006,26 @@ private fun PricesEditorScreen(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     item {
-                        Surface(color = Color.White, shape = RoundedCornerShape(6.dp), shadowElevation = 2.dp) {
-                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("Добавить цвет / ламинацию в прайс", fontWeight = FontWeight.Bold, color = MetroDarkBlue)
+                        Surface(
+                            color = palette.cardSurface,
+                            shape = RoundedCornerShape(20.dp),
+                            border = BorderStroke(0.8.dp, palette.floatingBorder),
+                            shadowElevation = if (palette.isDark) 0.dp else 2.dp
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    "Добавить цвет / ламинацию в прайс",
+                                    fontWeight = FontWeight.Bold,
+                                    color = palette.accentBlue
+                                )
                                 Text(
                                     "Выберите оттенок для отображения на 2D-чертеже и в PDF:",
-                                    fontSize = 11.5.sp,
-                                    color = Color.DarkGray
+                                    fontSize = 12.sp,
+                                    color = palette.textSecondary
                                 )
                                 Row(
                                     modifier = Modifier
@@ -4904,12 +5049,12 @@ private fun PricesEditorScreen(
                                         ) {
                                             Box(
                                                 modifier = Modifier
-                                                    .size(if (isPicked) 34.dp else 28.dp)
-                                                    .background(Color(hex), RoundedCornerShape(6.dp))
+                                                    .size(if (isPicked) 36.dp else 30.dp)
+                                                    .background(Color(hex), RoundedCornerShape(10.dp))
                                                     .border(
                                                         width = if (isPicked) 3.dp else 1.dp,
-                                                        color = if (isPicked) MetroBlue else Color.Gray,
-                                                        shape = RoundedCornerShape(6.dp)
+                                                        color = if (isPicked) palette.accentBlue else palette.floatingBorder,
+                                                        shape = RoundedCornerShape(10.dp)
                                                     )
                                             )
                                         }
@@ -4918,14 +5063,15 @@ private fun PricesEditorScreen(
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Box(
                                         modifier = Modifier
-                                            .size(36.dp)
-                                            .background(Color(selectedNewHex), RoundedCornerShape(6.dp))
-                                            .border(1.5.dp, Color.DarkGray, RoundedCornerShape(6.dp))
+                                            .size(38.dp)
+                                            .background(Color(selectedNewHex), RoundedCornerShape(10.dp))
+                                            .border(1.2.dp, palette.floatingBorder, RoundedCornerShape(10.dp))
                                     )
                                     OutlinedTextField(
                                         value = newClrName,
                                         onValueChange = { newClrName = it },
-                                        label = { Text("Цвет (напр. Красный / Антрацит)") },
+                                        label = { Text("Цвет (напр. Антрацит)") },
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1.4f),
                                         singleLine = true
                                     )
@@ -4934,6 +5080,7 @@ private fun PricesEditorScreen(
                                         onValueChange = { newClrMarkup = it },
                                         label = { Text("Наценка (%)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(0.8f),
                                         singleLine = true
                                     )
@@ -4951,9 +5098,11 @@ private fun PricesEditorScreen(
                                                 newClrName = ""
                                             }
                                         },
-                                        colors = ButtonDefaults.buttonColors(containerColor = MetroBlue)
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                                        modifier = Modifier.height(48.dp)
                                     ) {
-                                        Text("+", color = Color.White, fontWeight = FontWeight.Bold)
+                                        Icon(Icons.Rounded.Add, contentDescription = strings.saveBtn, tint = Color.White)
                                     }
                                 }
                             }
@@ -4961,10 +5110,10 @@ private fun PricesEditorScreen(
                     }
 
                     items(colorCatalog.filter { it.id != "none" }, key = { it.id }) { item ->
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             EditablePriceRowCard(
                                 title = item.name,
-                                subtitle = "Наценка к профилю (%) • Нажмите на квадрат ниже для смены оттенка",
+                                subtitle = "Наценка к профилю (%) • Выберите оттенок ниже",
                                 initialPrice = item.priceMarkupPercent,
                                 currencySymbol = "%",
                                 onSavePrice = { newP ->
@@ -4973,36 +5122,41 @@ private fun PricesEditorScreen(
                                 },
                                 onDelete = { onSaveColors(colorCatalog.filterNot { it.id == item.id }) }
                             )
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(Color.White, RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                            Surface(
+                                color = palette.cardSurface,
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(0.6.dp, palette.floatingBorder)
                             ) {
-                                Text("Оттенок:", fontSize = 11.sp, color = Color.DarkGray, fontWeight = FontWeight.Medium)
-                                colorPalette.forEach { (hex, _) ->
-                                    val isCurrent = item.hexColor == hex
-                                    Box(
-                                        modifier = Modifier
-                                            .size(if (isCurrent) 24.dp else 20.dp)
-                                            .background(Color(hex), RoundedCornerShape(4.dp))
-                                            .border(
-                                                width = if (isCurrent) 2.5.dp else 1.dp,
-                                                color = if (isCurrent) MetroBlue else Color.Gray,
-                                                shape = RoundedCornerShape(4.dp)
-                                            )
-                                            .clickable {
-                                                onSaveColors(
-                                                    colorCatalog.map {
-                                                        if (it.id == item.id) it.copy(hexColor = hex) else it
-                                                    }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Оттенок:", fontSize = 11.5.sp, color = palette.textSecondary, fontWeight = FontWeight.Medium)
+                                    colorPalette.forEach { (hex, _) ->
+                                        val isCurrent = item.hexColor == hex
+                                        Box(
+                                            modifier = Modifier
+                                                .size(if (isCurrent) 26.dp else 22.dp)
+                                                .background(Color(hex), RoundedCornerShape(7.dp))
+                                                .border(
+                                                    width = if (isCurrent) 2.5.dp else 1.dp,
+                                                    color = if (isCurrent) palette.accentBlue else palette.floatingBorder,
+                                                    shape = RoundedCornerShape(7.dp)
                                                 )
-                                                savedToast = "Обновлён оттенок для «${item.name}»"
-                                            }
-                                    )
+                                                .clickable {
+                                                    onSaveColors(
+                                                        colorCatalog.map {
+                                                            if (it.id == item.id) it.copy(hexColor = hex) else it
+                                                        }
+                                                    )
+                                                    savedToast = "Обновлён оттенок для «${item.name}»"
+                                                }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -5018,18 +5172,28 @@ private fun PricesEditorScreen(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     item {
-                        Surface(color = Color.White, shape = RoundedCornerShape(6.dp), shadowElevation = 2.dp) {
-                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("Добавить комплектующее в раздел «Разное»", fontWeight = FontWeight.Bold, color = MetroDarkBlue)
+                        Surface(
+                            color = palette.cardSurface,
+                            shape = RoundedCornerShape(20.dp),
+                            border = BorderStroke(0.8.dp, palette.floatingBorder),
+                            shadowElevation = if (palette.isDark) 0.dp else 2.dp
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    "Добавить комплектующее в раздел «Разное»",
+                                    fontWeight = FontWeight.Bold,
+                                    color = palette.accentBlue
+                                )
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedTextField(
                                         value = newExtName,
                                         onValueChange = { newExtName = it },
-                                        label = { Text("Название (напр. доводчик дверной)") },
+                                        label = { Text("Название (напр. доводчик)") },
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1.4f),
                                         singleLine = true
                                     )
@@ -5038,6 +5202,7 @@ private fun PricesEditorScreen(
                                         onValueChange = { newExtPrice = it },
                                         label = { Text("Цена ($currencySymbol)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(0.9f),
                                         singleLine = true
                                     )
@@ -5049,10 +5214,22 @@ private fun PricesEditorScreen(
                                 ) {
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         UnitRateType.entries.forEach { rt ->
+                                            val sel = newExtRate == rt
                                             FilterChip(
-                                                selected = newExtRate == rt,
+                                                selected = sel,
                                                 onClick = { newExtRate = rt },
-                                                label = { Text("за ${rt.labelRu}", fontSize = 11.sp) }
+                                                label = {
+                                                    Text(
+                                                        "за ${rt.labelRu}",
+                                                        fontSize = 11.sp,
+                                                        color = if (sel) Color.White else palette.textPrimary
+                                                    )
+                                                },
+                                                shape = RoundedCornerShape(10.dp),
+                                                colors = FilterChipDefaults.filterChipColors(
+                                                    selectedContainerColor = palette.accentBlue,
+                                                    containerColor = palette.secondaryBackground
+                                                )
                                             )
                                         }
                                     }
@@ -5070,9 +5247,10 @@ private fun PricesEditorScreen(
                                                 newExtName = ""
                                             }
                                         },
-                                        colors = ButtonDefaults.buttonColors(containerColor = MetroBlue)
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue)
                                     ) {
-                                        Text("+ Добавить", color = Color.White, fontWeight = FontWeight.Bold)
+                                        Text("+ Добавить", color = Color.White, fontWeight = FontWeight.SemiBold)
                                     }
                                 }
                             }
@@ -5103,18 +5281,28 @@ private fun PricesEditorScreen(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     item {
-                        Surface(color = Color.White, shape = RoundedCornerShape(6.dp), shadowElevation = 2.dp) {
-                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("Добавить услугу в раздел «Работы»", fontWeight = FontWeight.Bold, color = MetroDarkBlue)
+                        Surface(
+                            color = palette.cardSurface,
+                            shape = RoundedCornerShape(20.dp),
+                            border = BorderStroke(0.8.dp, palette.floatingBorder),
+                            shadowElevation = if (palette.isDark) 0.dp else 2.dp
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    "Добавить услугу в раздел «Работы»",
+                                    fontWeight = FontWeight.Bold,
+                                    color = palette.accentBlue
+                                )
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedTextField(
                                         value = newWrkName,
                                         onValueChange = { newWrkName = it },
                                         label = { Text("Название работы") },
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1.4f),
                                         singleLine = true
                                     )
@@ -5123,6 +5311,7 @@ private fun PricesEditorScreen(
                                         onValueChange = { newWrkPrice = it },
                                         label = { Text("Цена ($currencySymbol)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(0.9f),
                                         singleLine = true
                                     )
@@ -5134,10 +5323,22 @@ private fun PricesEditorScreen(
                                 ) {
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         UnitRateType.entries.forEach { rt ->
+                                            val sel = newWrkRate == rt
                                             FilterChip(
-                                                selected = newWrkRate == rt,
+                                                selected = sel,
                                                 onClick = { newWrkRate = rt },
-                                                label = { Text("за ${rt.labelRu}", fontSize = 11.sp) }
+                                                label = {
+                                                    Text(
+                                                        "за ${rt.labelRu}",
+                                                        fontSize = 11.sp,
+                                                        color = if (sel) Color.White else palette.textPrimary
+                                                    )
+                                                },
+                                                shape = RoundedCornerShape(10.dp),
+                                                colors = FilterChipDefaults.filterChipColors(
+                                                    selectedContainerColor = palette.accentBlue,
+                                                    containerColor = palette.secondaryBackground
+                                                )
                                             )
                                         }
                                     }
@@ -5155,9 +5356,10 @@ private fun PricesEditorScreen(
                                                 newWrkName = ""
                                             }
                                         },
-                                        colors = ButtonDefaults.buttonColors(containerColor = MetroBlue)
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue)
                                     ) {
-                                        Text("+ Добавить", color = Color.White, fontWeight = FontWeight.Bold)
+                                        Text("+ Добавить", color = Color.White, fontWeight = FontWeight.SemiBold)
                                     }
                                 }
                             }
@@ -5192,29 +5394,33 @@ private fun EditablePriceRowCard(
     onSavePrice: (Double) -> Unit,
     onDelete: (() -> Unit)? = null
 ) {
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
     var priceText by remember(initialPrice) { mutableStateOf(initialPrice.toString()) }
     Surface(
-        color = Color.White,
-        shape = RoundedCornerShape(4.dp),
-        shadowElevation = 1.dp,
+        color = palette.cardSurface,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(0.8.dp, palette.floatingBorder),
+        shadowElevation = if (palette.isDark) 0.dp else 1.5.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Column(modifier = Modifier.weight(1.2f)) {
-                Text(title, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF212121))
-                Text(subtitle, fontSize = 11.sp, color = Color.Gray)
+                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, color = palette.textPrimary)
+                Text(subtitle, fontSize = 11.5.sp, color = palette.textSecondary)
             }
             OutlinedTextField(
                 value = priceText,
                 onValueChange = { priceText = it },
-                label = { Text(currencySymbol, fontSize = 10.sp) },
+                label = { Text(currencySymbol, fontSize = 10.5.sp) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.weight(0.85f),
                 singleLine = true
             )
@@ -5223,15 +5429,16 @@ private fun EditablePriceRowCard(
                     val p = priceText.replace(',', '.').toDoubleOrNull() ?: initialPrice
                     onSavePrice(p)
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = MetroBlue),
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                modifier = Modifier.height(40.dp)
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                modifier = Modifier.height(44.dp)
             ) {
-                Text("ОК", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text(strings.okBtn, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
             }
             if (onDelete != null) {
-                IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Default.Delete, contentDescription = "Удалить", tint = Color(0xFFD32F2F))
+                IconButton(onClick = onDelete, modifier = Modifier.size(40.dp)) {
+                    Icon(Icons.Rounded.DeleteOutline, contentDescription = strings.deleteWindowDesc, tint = palette.accentRed)
                 }
             }
         }
@@ -5248,6 +5455,8 @@ private fun WarehouseBySystemScreen(
     onBack: () -> Unit,
     onSaveStock: (List<StockRemnantBar>) -> Unit
 ) {
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
     var selectedFolderSysId by remember { mutableStateOf(profileSystems.firstOrNull()?.id ?: "") }
     val activeSys = profileSystems.find { it.id == selectedFolderSysId } ?: profileSystems.firstOrNull()
 
@@ -5258,25 +5467,28 @@ private fun WarehouseBySystemScreen(
     var barQty by remember { mutableStateOf("20") }
     var isFullShipmentBar by remember { mutableStateOf(true) }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.background)
+    ) {
         UnifiedTopAppBar(
-            title = "склад материала и остатков",
-            onBack = onBack,
-            backgroundColor = Color(0xFF00838F)
+            title = strings.warehouseScreenTitle,
+            onBack = onBack
         )
 
         Text(
             "Папки профильных систем:",
             fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.DarkGray,
-            modifier = Modifier.padding(start = 12.dp, top = 8.dp)
+            fontWeight = FontWeight.SemiBold,
+            color = palette.textSecondary,
+            modifier = Modifier.padding(start = 14.dp, top = 10.dp)
         )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+                .padding(horizontal = 14.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             profileSystems.forEach { sys ->
@@ -5286,30 +5498,40 @@ private fun WarehouseBySystemScreen(
                 val remCnt = sysItems.filter { !it.isFullStockBar }.sumOf { it.quantity }
 
                 Surface(
-                    color = if (isSelected) Color(0xFF00838F) else Color.White,
-                    shape = RoundedCornerShape(6.dp),
-                    shadowElevation = 2.dp,
+                    color = if (isSelected) palette.accentTeal else palette.cardSurface,
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(
+                        width = if (isSelected) 0.dp else 0.8.dp,
+                        color = if (isSelected) Color.Transparent else palette.floatingBorder
+                    ),
+                    shadowElevation = if (palette.isDark) 0.dp else 2.dp,
                     modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
                         .clickable { selectedFolderSysId = sys.id }
-                        .border(1.dp, Color(0xFF00838F), RoundedCornerShape(6.dp))
+                        .testTag("warehouse_folder_${sys.id}")
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("📁", fontSize = 20.sp)
+                        Icon(
+                            imageVector = if (isSelected) Icons.Rounded.FolderOpen else Icons.Rounded.Folder,
+                            contentDescription = sys.name,
+                            tint = if (isSelected) Color.White else palette.accentTeal,
+                            modifier = Modifier.size(22.dp)
+                        )
                         Column {
                             Text(
                                 text = sys.name,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                color = if (isSelected) Color.White else Color.Black
+                                fontSize = 13.5.sp,
+                                color = if (isSelected) Color.White else palette.textPrimary
                             )
                             Text(
                                 text = "Хлыстов: $fullCnt шт. | Остатков: $remCnt шт.",
-                                fontSize = 10.5.sp,
-                                color = if (isSelected) Color.White.copy(alpha = 0.85f) else Color.Gray
+                                fontSize = 11.sp,
+                                color = if (isSelected) Color.White.copy(alpha = 0.85f) else palette.textSecondary
                             )
                         }
                     }
@@ -5325,17 +5547,23 @@ private fun WarehouseBySystemScreen(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .padding(horizontal = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(bottom = 20.dp)
             ) {
                 item {
-                    Surface(color = Color.White, shape = RoundedCornerShape(6.dp), shadowElevation = 2.dp) {
-                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        color = palette.cardSurface,
+                        shape = RoundedCornerShape(20.dp),
+                        border = BorderStroke(0.8.dp, palette.floatingBorder),
+                        shadowElevation = if (palette.isDark) 0.dp else 2.dp
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(
                                 "Приход материала / внесение в папку «${activeSys.name}»",
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = Color(0xFF006064)
+                                fontSize = 14.5.sp,
+                                color = palette.accentTeal
                             )
 
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -5345,7 +5573,17 @@ private fun WarehouseBySystemScreen(
                                         isFullShipmentBar = true
                                         barLengthMm = activeSys.stockBarLengthMm.roundToInt().toString()
                                     },
-                                    label = { Text("Целые хлысты (5500..8000 мм)") }
+                                    label = {
+                                        Text(
+                                            "Целые хлысты",
+                                            color = if (isFullShipmentBar) Color.White else palette.textPrimary
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = palette.accentTeal,
+                                        containerColor = palette.secondaryBackground
+                                    )
                                 )
                                 FilterChip(
                                     selected = !isFullShipmentBar,
@@ -5353,7 +5591,17 @@ private fun WarehouseBySystemScreen(
                                         isFullShipmentBar = false
                                         barLengthMm = "1800"
                                     },
-                                    label = { Text("Деловой остаток после раскроя") }
+                                    label = {
+                                        Text(
+                                            "Деловой остаток",
+                                            color = if (!isFullShipmentBar) Color.White else palette.textPrimary
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = palette.accentTeal,
+                                        containerColor = palette.secondaryBackground
+                                    )
                                 )
                             }
 
@@ -5364,24 +5612,38 @@ private fun WarehouseBySystemScreen(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 ProfileRole.entries.forEach { role ->
+                                    val sel = selectedRole == role
                                     FilterChip(
-                                        selected = selectedRole == role,
+                                        selected = sel,
                                         onClick = { selectedRole = role },
-                                        label = { Text(role.titleRu, fontSize = 11.5.sp) }
+                                        label = {
+                                            Text(
+                                                role.titleRu,
+                                                fontSize = 11.5.sp,
+                                                color = if (sel) Color.White else palette.textPrimary
+                                            )
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = palette.accentBlue,
+                                            containerColor = palette.secondaryBackground
+                                        )
                                     )
                                 }
                             }
 
                             if (isFullShipmentBar) {
                                 Row(
+                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Text("Быстрая длина:", fontSize = 11.sp, color = Color.Gray)
+                                    Text("Быстрая длина:", fontSize = 11.sp, color = palette.textSecondary)
                                     listOf(5500, 6000, 6500, 7000, 8000).forEach { stdLen ->
                                         AssistChip(
                                             onClick = { barLengthMm = stdLen.toString() },
-                                            label = { Text("${stdLen}мм", fontSize = 10.5.sp) }
+                                            label = { Text("${stdLen}мм", fontSize = 11.sp, color = palette.textPrimary) },
+                                            shape = RoundedCornerShape(10.dp)
                                         )
                                     }
                                 }
@@ -5393,6 +5655,7 @@ private fun WarehouseBySystemScreen(
                                     onValueChange = { barLengthMm = it },
                                     label = { Text("Длина профиля (мм)") },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.weight(1f),
                                     singleLine = true
                                 )
@@ -5401,6 +5664,7 @@ private fun WarehouseBySystemScreen(
                                     onValueChange = { barQty = it },
                                     label = { Text("Количество (шт.)") },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.weight(1f),
                                     singleLine = true
                                 )
@@ -5420,14 +5684,18 @@ private fun WarehouseBySystemScreen(
                                     )
                                     onSaveStock(listOf(newEntry) + stockBars)
                                 },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00838F)),
-                                modifier = Modifier.fillMaxWidth()
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = palette.accentTeal),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("warehouse_add_stock_button")
                             ) {
                                 Text(
-                                    if (isFullShipmentBar) "+ ОПРИХОДОВАТЬ ЦЕЛЫЕ ПРОФИЛИ НА СКЛАД"
-                                    else "+ ДОБАВИТЬ ДЕЛОВОЙ ОСТАТОК В ПАПКУ",
+                                    if (isFullShipmentBar) "+ Оприходовать целые профили"
+                                    else "+ Добавить деловой остаток",
                                     color = Color.White,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.SemiBold
                                 )
                             }
                         }
@@ -5439,7 +5707,7 @@ private fun WarehouseBySystemScreen(
                         "1. Целые профили в наличии (${fullBarsList.sumOf { it.quantity }} шт.):",
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,
-                        color = Color(0xFF263238)
+                        color = palette.textPrimary
                     )
                 }
                 items(fullBarsList, key = { it.id }) { item ->
@@ -5463,7 +5731,7 @@ private fun WarehouseBySystemScreen(
                         "2. Значимые деловые остатки после раскроя (${remnantsList.sumOf { it.quantity }} шт.):",
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,
-                        color = Color(0xFF263238)
+                        color = palette.textPrimary
                     )
                 }
                 items(remnantsList, key = { it.id }) { item ->
@@ -5491,49 +5759,59 @@ private fun StockBarRowCard(
     onChangeQty: (Int) -> Unit,
     onDelete: () -> Unit
 ) {
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
     Surface(
-        color = Color.White,
-        shape = RoundedCornerShape(4.dp),
-        shadowElevation = 1.dp,
+        color = palette.cardSurface,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(0.8.dp, palette.floatingBorder),
+        shadowElevation = if (palette.isDark) 0.dp else 1.5.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "${item.role.titleRu} — длина ${item.lengthMm} мм (${String.format(Locale.US, "%.2f", item.lengthMm / 1000.0)} м)",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.5.sp
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.5.sp,
+                    color = palette.textPrimary
                 )
                 Text(
                     text = if (item.isFullStockBar) "Целый складской хлыст" else "Деловой остаток после раскроя",
-                    fontSize = 11.sp,
-                    color = if (item.isFullStockBar) Color(0xFF00838F) else Color(0xFF2E7D32)
+                    fontSize = 11.5.sp,
+                    color = if (item.isFullStockBar) palette.accentTeal else palette.accentGreen
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = { onChangeQty(-1) },
+                    shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier.size(30.dp)
+                    modifier = Modifier.size(34.dp)
                 ) {
-                    Text("−")
+                    Text("−", color = palette.textPrimary)
                 }
-                Text("${item.quantity} шт.", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("${item.quantity} шт.", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = palette.textPrimary)
                 OutlinedButton(
                     onClick = { onChangeQty(1) },
+                    shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier.size(30.dp)
+                    modifier = Modifier.size(34.dp)
                 ) {
-                    Text("+")
+                    Text("+", color = palette.textPrimary)
                 }
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFD32F2F))
+                IconButton(onClick = onDelete, modifier = Modifier.size(38.dp)) {
+                    Icon(
+                        Icons.Rounded.DeleteOutline,
+                        contentDescription = strings.deleteWindowDesc,
+                        tint = palette.accentRed
+                    )
                 }
             }
         }
@@ -5550,42 +5828,48 @@ private fun OrderStatusManagerScreen(
     onOpenOrder: (String) -> Unit,
     onUpdateOrders: (List<CustomerOrder>) -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.background)
+    ) {
         UnifiedTopAppBar(
-            title = "статусы заказов",
-            onBack = onBack,
-            backgroundColor = Color(0xFF00838F)
+            title = strings.statusesScreenTitle,
+            onBack = onBack
         )
 
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(orders, key = { it.id }) { ord ->
                 Surface(
-                    color = Color.White,
-                    shape = RoundedCornerShape(6.dp),
-                    shadowElevation = 2.dp,
+                    color = palette.cardSurface,
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(0.8.dp, palette.floatingBorder),
+                    shadowElevation = if (palette.isDark) 0.dp else 2.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f).clickable { onOpenOrder(ord.id) }) {
-                                Text(ord.orderNumber, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = MetroDarkBlue)
+                                Text(ord.orderNumber, fontWeight = FontWeight.Bold, fontSize = 15.5.sp, color = palette.textPrimary)
                                 Text(
                                     "Клиент: ${ord.customerName.ifBlank { "не указан" }} • Конструкций: ${ord.windows.sumOf { it.quantity }} шт.",
                                     fontSize = 12.sp,
-                                    color = Color.DarkGray
+                                    color = palette.textSecondary
                                 )
                             }
                             TextButton(onClick = { onOpenOrder(ord.id) }) {
-                                Text("Открыть чертёж →", color = MetroBlue)
+                                Text(strings.openDrawingArrow, color = palette.accentBlue, fontWeight = FontWeight.SemiBold)
                             }
                         }
 
@@ -5596,14 +5880,26 @@ private fun OrderStatusManagerScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             OrderStatus.entries.forEach { st ->
+                                val sel = ord.status == st
                                 FilterChip(
-                                    selected = ord.status == st,
+                                    selected = sel,
                                     onClick = {
                                         onUpdateOrders(
                                             orders.map { if (it.id == ord.id) ord.copy(status = st) else it }
                                         )
                                     },
-                                    label = { Text(st.titleRu, fontSize = 11.5.sp) }
+                                    label = {
+                                        Text(
+                                            st.titleRu,
+                                            fontSize = 11.5.sp,
+                                            color = if (sel) Color.White else palette.textPrimary
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = palette.accentTeal,
+                                        containerColor = palette.secondaryBackground
+                                    )
                                 )
                             }
                         }
@@ -5615,104 +5911,7 @@ private fun OrderStatusManagerScreen(
 }
 
 // =========================================================================================
-// 8. НАСТРОЙКИ ИНТЕРФЕЙСА И РЕКВИЗИТОВ КОМПАНИИ ДЛЯ PDF
-// =========================================================================================
-@Composable
-private fun UiSettingsScreen(
-    settings: AppUiSettings,
-    onBack: () -> Unit,
-    onSaveSettings: (AppUiSettings) -> Unit
-) {
-    var themeMode by remember { mutableStateOf(settings.themeMode) }
-    var currencySymbol by remember { mutableStateOf(settings.currencySymbol) }
-    var companyName by remember { mutableStateOf(settings.companyName) }
-    var companyPhone by remember { mutableStateOf(settings.companyPhone) }
-
-    Column(modifier = Modifier.fillMaxSize()) {
-        UnifiedTopAppBar(
-            title = "настройки и реквизиты PDF",
-            onBack = onBack,
-            backgroundColor = MetroDarkBlue
-        )
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Surface(color = Color.White, shape = RoundedCornerShape(6.dp), shadowElevation = 2.dp) {
-                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Тема оформления:", fontWeight = FontWeight.Bold)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AppThemeMode.entries.forEach { tm ->
-                                FilterChip(
-                                    selected = themeMode == tm,
-                                    onClick = { themeMode = tm },
-                                    label = { Text(tm.titleRu) }
-                                )
-                            }
-                        }
-                    }
-
-                    Text("Валюта расчётов:", fontWeight = FontWeight.Bold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("доллар", "₾", "₽", "€").forEach { sym ->
-                            FilterChip(
-                                selected = currencySymbol == sym,
-                                onClick = { currencySymbol = sym },
-                                label = { Text(sym) }
-                            )
-                        }
-                    }
-
-                    OutlinedTextField(
-                        value = companyName,
-                        onValueChange = { companyName = it },
-                        label = { Text("Название компании в шапке PDF-отчётов") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-
-                    OutlinedTextField(
-                        value = companyPhone,
-                        onValueChange = { companyPhone = it },
-                        label = { Text("Телефон / Контакты в шапке PDF") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-
-                    Button(
-                        onClick = {
-                            onSaveSettings(
-                                settings.copy(
-                                    themeMode = themeMode,
-                                    currencySymbol = currencySymbol,
-                                    companyName = companyName,
-                                    companyPhone = companyPhone
-                                )
-                            )
-                            onBack()
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = MetroBlue),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("СОХРАНИТЬ НАСТРОЙКИ", color = Color.White, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-    }
-}
-
-// =========================================================================================
-// 9. МОДУЛЬ "ЗАДАНИЕ В ЦЕХ И 1D РАСКРОЙ ПРОФИЛЯ (С УЧЁТОМ СКЛАДА И ДЕЛОВЫХ ОСТАТКОВ)"
+// 8. МОДУЛЬ "ЗАДАНИЕ В ЦЕХ И 1D РАСКРОЙ ПРОФИЛЯ (С УЧЁТОМ СКЛАДА И ДЕЛОВЫХ ОСТАТКОВ)"
 // =========================================================================================
 @Composable
 private fun WorkshopAndCuttingScreen(
@@ -5730,6 +5929,8 @@ private fun WorkshopAndCuttingScreen(
     onOpenPdfFile: (File, String) -> Unit
 ) {
     val context = LocalContext.current
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
 
     val windowResults = remember(order, profileSystems, glazingCatalog, colorCatalog, sillsCatalog, extraAccessoriesCatalog, workServicesCatalog, hardwareBrandsCatalog) {
         order.windows.mapIndexed { idx, win ->
@@ -5757,15 +5958,20 @@ private fun WorkshopAndCuttingScreen(
         )
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.background)
+    ) {
         UnifiedTopAppBar(
-            title = "Задание в цех и 1D-раскрой",
+            title = strings.workshopScreenTitle,
             onBack = onBackToCad
         ) {
             Surface(
-                color = Color(0xFF00838F),
-                shape = RoundedCornerShape(4.dp),
+                color = palette.accentTeal,
+                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
                     .clickable {
                         val newRemnantBars = procurementSummaries.flatMap { sum ->
                             sum.newBusinessRemnantsMm.map { remLen ->
@@ -5781,14 +5987,21 @@ private fun WorkshopAndCuttingScreen(
                         }
                         onSaveStockRemnants(stockRemnants + newRemnantBars)
                     }
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .testTag("workshop_save_remnants_button")
             ) {
-                Text("Остатки → Склад", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "Остатки → Склад",
+                    color = Color.White,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                )
             }
             Surface(
-                color = MetroDarkBlue,
-                shape = RoundedCornerShape(4.dp),
+                color = palette.accentBlue,
+                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
                     .clickable {
                         val file = PdfReportGenerator.generateCuttingAndProcurementPdf(
                             context = context,
@@ -5799,16 +6012,22 @@ private fun WorkshopAndCuttingScreen(
                         )
                         onOpenPdfFile(file, "Задание в цех и раскрой PDF")
                     }
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .testTag("workshop_pdf_button")
             ) {
-                Text("PDF В ЦЕХ", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "PDF в цех",
+                    color = Color.White,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                )
             }
         }
 
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(12.dp),
+                .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             item {
@@ -5816,29 +6035,34 @@ private fun WorkshopAndCuttingScreen(
                     "1. Потребность в профиле (Рама → Импост → Створка → Дверь → Штапик):",
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
-                    color = Color(0xFF263238)
+                    color = palette.textPrimary
                 )
             }
 
             items(procurementSummaries) { sum ->
-                Surface(color = Color.White, shape = RoundedCornerShape(6.dp), shadowElevation = 2.dp) {
-                    Column(modifier = Modifier.padding(12.dp)) {
+                Surface(
+                    color = palette.cardSurface,
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(0.8.dp, palette.floatingBorder),
+                    shadowElevation = if (palette.isDark) 0.dp else 2.dp
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
                             "${sum.role.titleRu.uppercase()} — ${sum.profileSystemName} (хлыст ${sum.stockBarLengthMm} мм)",
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
-                            color = MetroDarkBlue
+                            color = palette.accentBlue
                         )
                         Text(
                             "Новых хлыстов: ${sum.newFullBarsToBuyCount} шт. • Из остатков склада: ${sum.usedRemnantBarsCount} шт. • Деталей: ${sum.totalCutPiecesCount} шт. (${String.format(Locale.US, "%.2f", sum.totalNetLengthM)} м) • Отход: ${String.format(Locale.US, "%.1f", sum.wastePercent)}%",
                             fontSize = 12.sp,
-                            color = Color.DarkGray
+                            color = palette.textSecondary
                         )
                         if (sum.newBusinessRemnantsMm.isNotEmpty() && sum.role != ProfileRole.SHTAPIK) {
                             Text(
                                 "Деловые остатки (≥400 мм): ${sum.newBusinessRemnantsMm.joinToString(", ") { "${it}мм" }}",
                                 fontSize = 11.5.sp,
-                                color = Color(0xFF2E7D32),
+                                color = palette.accentGreen,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
@@ -5852,28 +6076,35 @@ private fun WorkshopAndCuttingScreen(
                     "2. Визуальная карта раскроя хлыстов (без штапиков):",
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
-                    color = Color(0xFF263238)
+                    color = palette.textPrimary
                 )
             }
 
             items(barAllocations.filter { it.role != ProfileRole.SHTAPIK }) { bar ->
-                Surface(color = Color.White, shape = RoundedCornerShape(6.dp), shadowElevation = 2.dp) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Surface(
+                    color = palette.cardSurface,
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(0.8.dp, palette.floatingBorder),
+                    shadowElevation = if (palette.isDark) 0.dp else 2.dp
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
                                 "${bar.role.titleRu.uppercase()} (${bar.profileSystemName}) — Хлыст #${bar.barNumber}",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp,
-                                color = MetroDarkBlue
+                                color = palette.textPrimary,
+                                modifier = Modifier.weight(1f)
                             )
                             Text(
                                 if (bar.isFromRemnantStock) "СО СКЛАДА ОСТАТКОВ (${bar.sourceLengthMm} мм)"
                                 else "ЦЕЛЫЙ ХЛЫСТ (${bar.sourceLengthMm} мм)",
                                 fontSize = 11.sp,
-                                color = if (bar.isFromRemnantStock) Color(0xFF2E7D32) else MetroDarkBlue,
+                                color = if (bar.isFromRemnantStock) palette.accentGreen else palette.accentBlue,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -5881,9 +6112,9 @@ private fun WorkshopAndCuttingScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(30.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .border(1.dp, Color.Gray, RoundedCornerShape(4.dp))
+                                .height(32.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(1.dp, palette.floatingBorder, RoundedCornerShape(8.dp))
                         ) {
                             val srcLen = bar.sourceLengthMm.toFloat().coerceAtLeast(1f)
                             bar.cuts.forEach { piece ->
@@ -5919,7 +6150,7 @@ private fun WorkshopAndCuttingScreen(
                                     Text(
                                         "Ост:${bar.remnantLengthMm}",
                                         fontSize = 9.sp,
-                                        color = Color.DarkGray,
+                                        color = Color(0xFF1F2937),
                                         maxLines = 1
                                     )
                                 }

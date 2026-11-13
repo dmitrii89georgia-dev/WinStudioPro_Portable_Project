@@ -6,9 +6,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.lightColorScheme
-import androidx.compose.ui.graphics.Color
+import androidx.activity.enableEdgeToEdge
 import androidx.core.content.FileProvider
 import ru.winstudiopro.app.ui.WinStudioProMainApp
 import java.io.File
@@ -17,29 +15,20 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        val winStudioColorScheme = lightColorScheme(
-            primary = Color(0xFF0099CC),
-            onPrimary = Color.White,
-            secondary = Color(0xFF0277BD),
-            background = Color(0xFFF0F4F8),
-            surface = Color.White
-        )
+        enableEdgeToEdge()
 
         setContent {
-            MaterialTheme(colorScheme = winStudioColorScheme) {
-                WinStudioProMainApp(
-                    onOpenPdfFile = { file, title ->
-                        openPdfInViewer(file, title)
-                    },
-                    onSharePdfFile = { file, title ->
-                        sharePdfViaApps(file, title)
-                    },
-                    onShareExportFile = { file, title ->
-                        shareExportFile(file, title)
-                    }
-                )
-            }
+            WinStudioProMainApp(
+                onOpenPdfFile = { file, title ->
+                    openPdfInViewer(file, title)
+                },
+                onSharePdfFile = { file, title ->
+                    sharePdfViaApps(file, title)
+                },
+                onShareExportFile = { file, title ->
+                    shareExportFile(file, title)
+                }
+            )
         }
     }
 

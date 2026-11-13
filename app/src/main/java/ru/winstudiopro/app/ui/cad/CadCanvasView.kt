@@ -17,8 +17,11 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.dp
 import ru.winstudiopro.app.domain.model.*
+import ru.winstudiopro.app.ui.theme.LocalWinStudioPalette
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
@@ -56,6 +59,9 @@ fun InteractiveWindowCadCanvas(
     onEqualizeChain: (Boolean) -> Unit,
     onEditDoorImpostHeight: (String, Float) -> Unit = { _, _ -> },
     onToggleDoorBottomSandwich: (String) -> Unit = {},
+    topSafeInsetPx: Float = 0f,
+    rightSafeInsetPx: Float = 0f,
+    bottomSafeInsetPx: Float = 0f,
     modifier: Modifier = Modifier
 ) {
     var circleHotspots by remember { mutableStateOf<List<CircleHotspot>>(emptyList()) }
@@ -71,11 +77,12 @@ fun InteractiveWindowCadCanvas(
     val latestOnEqualizeChain by rememberUpdatedState(onEqualizeChain)
     val latestOnEditDoorImpostHeight by rememberUpdatedState(onEditDoorImpostHeight)
     val latestOnToggleDoorBottomSandwich by rememberUpdatedState(onToggleDoorBottomSandwich)
+    val palette = LocalWinStudioPalette.current
 
     Canvas(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFFCCCCCC))
+            .background(palette.canvasBg)
             .pointerInput(topology, showControls) {
                 detectTapGestures { tap ->
                     // 1. Сначала проверяем прямоугольные капсулы размеров (включая внутренний размер импоста двери),
@@ -94,15 +101,35 @@ fun InteractiveWindowCadCanvas(
                 }
             }
     ) {
+        // Лёгкая инженерная сетка на фоне холста в стиле iOS CAD
+        val gridStep = 44f
+        var gx = 0f
+        while (gx < size.width) {
+            drawLine(palette.canvasGridLine, Offset(gx, 0f), Offset(gx, size.height), 1f)
+            gx += gridStep
+        }
+        var gy = 0f
+        while (gy < size.height) {
+            drawLine(palette.canvasGridLine, Offset(0f, gy), Offset(size.width, gy), 1f)
+            gy += gridStep
+        }
+
         val xCoords = latestTopology.xGridCoords
         val yCoords = latestTopology.yGridCoords
         val hasMultiX = xCoords.size > 2
         val hasMultiY = yCoords.size > 2
 
-        val padLeft = if (hasMultiY) 148f else 98f
-        val padRight = 156f
-        val padTop = 54f
-        val padBottom = if (hasMultiX) 146f else 104f
+        // Адаптивные отступы: чертёж занимает всю область между панелями с комфортными полями ~12–14 dp
+        val dimOverhangBottom = if (hasMultiX) 114f + 12.dp.toPx() else 70f + 12.dp.toPx()
+        val padLeft = if (hasMultiY) 192f else 108f
+        val padRight = max(14.dp.toPx(), rightSafeInsetPx)
+        val rawPadTop = max(14.dp.toPx(), topSafeInsetPx + 12.dp.toPx())
+        val rawPadBottom = dimOverhangBottom + bottomSafeInsetPx
+        val maxVertPad = (size.height - 120f).coerceAtLeast(80f)
+        val vertSum = (rawPadTop + rawPadBottom).coerceAtLeast(1f)
+        val vertScale = if (vertSum > maxVertPad) maxVertPad / vertSum else 1f
+        val padTop = rawPadTop * vertScale
+        val padBottom = rawPadBottom * vertScale
 
         val availW = (size.width - padLeft - padRight).coerceAtLeast(100f)
         val availH = (size.height - padTop - padBottom).coerceAtLeast(100f)
@@ -138,15 +165,15 @@ fun InteractiveWindowCadCanvas(
         val overlapPx = (profileSystem.sashOverlapMm * scale * 0.65f).coerceIn(4f, 8f)
 
         val dimTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.rgb(30, 30, 30)
-            textSize = 25f
+            color = palette.dimCapsuleText.toArgb()
+            textSize = 28f
             textAlign = Paint.Align.CENTER
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
 
         val openingSizeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.rgb(18, 42, 66)
-            textSize = 18.5f
+            textSize = 21.5f
             textAlign = Paint.Align.CENTER
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
@@ -159,7 +186,7 @@ fun InteractiveWindowCadCanvas(
             paneRight: Float,
             paneBottom: Float
         ) {
-            if (paneRight - paneLeft < 48f || paneBottom - paneTop < 36f) return
+            if (paneRight - paneLeft < 54f || paneBottom - paneTop < 40f) return
             val leftDedMm = if (abs(op.leftMm - frame.leftMm) < 2f) profileSystem.frameWidthMm else profileSystem.impostWidthMm / 2f
             val rightDedMm = if (abs(op.rightMm - frame.rightMm) < 2f) profileSystem.frameWidthMm else profileSystem.impostWidthMm / 2f
             val topDedMm = if (abs(op.topMm - frame.topMm) < 2f) profileSystem.frameWidthMm else profileSystem.impostWidthMm / 2f
@@ -171,16 +198,16 @@ fun InteractiveWindowCadCanvas(
 
             val cx = (paneLeft + paneRight) / 2f
             val centerY = (paneTop + paneBottom) / 2f
-            // Ставим под центральным голубым кружком (или в верхней трети, если внизу мало места), чтобы ничего не перекрывать
-            val labelY = (centerY + 34f).coerceAtMost(paneBottom - 10f)
+            // Ставим под центральным голубым кружком, не перекрывая границы стекла
+            val labelY = (centerY + 38f).coerceAtMost(paneBottom - 10f)
             val textW = openingSizeTextPaint.measureText(txt)
-            val bgW = textW + 12f
-            val bgH = 22f
+            val bgW = textW + 18f
+            val bgH = 27f
             drawRoundRect(
-                color = Color.White.copy(alpha = 0.78f),
-                topLeft = Offset(cx - bgW / 2f, labelY - bgH + 5f),
+                color = Color.White.copy(alpha = 0.88f),
+                topLeft = Offset(cx - bgW / 2f, labelY - bgH + 6f),
                 size = Size(bgW, bgH),
-                cornerRadius = CornerRadius(5f, 5f)
+                cornerRadius = CornerRadius(12f, 12f)
             )
             drawIntoCanvas { nc ->
                 nc.nativeCanvas.drawText(txt, cx, labelY, openingSizeTextPaint)
@@ -188,17 +215,25 @@ fun InteractiveWindowCadCanvas(
         }
 
         fun drawDimensionCapsule(cx: Float, cy: Float, label: String, onClick: () -> Unit) {
-            val pillW = 72f
-            val pillH = 33f
+            val textW = dimTextPaint.measureText(label)
+            val pillW = max(88f, textW + 24f)
+            val pillH = 40f
             val topLeft = Offset(cx - pillW / 2f, cy - pillH / 2f)
             drawRoundRect(
-                color = Color.White,
+                color = palette.dimCapsuleBg,
                 topLeft = topLeft,
                 size = Size(pillW, pillH),
-                cornerRadius = CornerRadius(9f, 9f)
+                cornerRadius = CornerRadius(17f, 17f)
+            )
+            drawRoundRect(
+                color = palette.accentBlue.copy(alpha = 0.34f),
+                topLeft = topLeft,
+                size = Size(pillW, pillH),
+                cornerRadius = CornerRadius(17f, 17f),
+                style = Stroke(width = 1.5f)
             )
             drawIntoCanvas { nc ->
-                nc.nativeCanvas.drawText(label, cx, cy + 8.5f, dimTextPaint)
+                nc.nativeCanvas.drawText(label, cx, cy + 9.5f, dimTextPaint)
             }
             newRects.add(
                 RectHotspot(Rect(topLeft.x, topLeft.y, topLeft.x + pillW, topLeft.y + pillH), onClick)
@@ -437,16 +472,16 @@ fun InteractiveWindowCadCanvas(
                         )
                     )
 
-                    if ((glassRight - glassLeft) > 75f && (glassBottom - glassTop) > 75f) {
-                        val cornerR = 20f
-                        val offsetFromEdge = 15f
+                    if ((glassRight - glassLeft) > 112f && (glassBottom - glassTop) > 112f) {
+                        val cornerR = 28f
+                        val offsetFromEdge = 22f
                         val iconColor = Color(0xFF1565C0)
 
                         // Верхний левый: `||` (2 верт. импоста -> 3 части)
                         val tlCenter = Offset(glassLeft + offsetFromEdge, glassTop + offsetFromEdge)
                         drawCircle(Color(0x553B8EEA), cornerR, tlCenter)
-                        drawLine(iconColor, Offset(tlCenter.x - 4f, tlCenter.y - 8f), Offset(tlCenter.x - 4f, tlCenter.y + 8f), 2.8f)
-                        drawLine(iconColor, Offset(tlCenter.x + 4f, tlCenter.y - 8f), Offset(tlCenter.x + 4f, tlCenter.y + 8f), 2.8f)
+                        drawLine(iconColor, Offset(tlCenter.x - 5.5f, tlCenter.y - 11f), Offset(tlCenter.x - 5.5f, tlCenter.y + 11f), 3.4f)
+                        drawLine(iconColor, Offset(tlCenter.x + 5.5f, tlCenter.y - 11f), Offset(tlCenter.x + 5.5f, tlCenter.y + 11f), 3.4f)
                         newCircles.add(
                             CircleHotspot(tlCenter, cornerR) {
                                 latestOnQuickSplitCell(op.id, ImpostDirection.VERTICAL, 3)
@@ -456,7 +491,7 @@ fun InteractiveWindowCadCanvas(
                         // Нижний левый: `|` (1 верт. импост -> 2 части)
                         val blCenter = Offset(glassLeft + offsetFromEdge, glassBottom - offsetFromEdge)
                         drawCircle(Color(0x553B8EEA), cornerR, blCenter)
-                        drawLine(iconColor, Offset(blCenter.x, blCenter.y - 8f), Offset(blCenter.x, blCenter.y + 8f), 2.8f)
+                        drawLine(iconColor, Offset(blCenter.x, blCenter.y - 11f), Offset(blCenter.x, blCenter.y + 11f), 3.4f)
                         newCircles.add(
                             CircleHotspot(blCenter, cornerR) {
                                 latestOnQuickSplitCell(op.id, ImpostDirection.VERTICAL, 2)
@@ -466,8 +501,8 @@ fun InteractiveWindowCadCanvas(
                         // Верхний правый: `=` (2 гориз. импоста -> 3 части)
                         val trCenter = Offset(glassRight - offsetFromEdge, glassTop + offsetFromEdge)
                         drawCircle(Color(0x553B8EEA), cornerR, trCenter)
-                        drawLine(iconColor, Offset(trCenter.x - 8f, trCenter.y - 4f), Offset(trCenter.x + 8f, trCenter.y - 4f), 2.8f)
-                        drawLine(iconColor, Offset(trCenter.x - 8f, trCenter.y + 4f), Offset(trCenter.x + 8f, trCenter.y + 4f), 2.8f)
+                        drawLine(iconColor, Offset(trCenter.x - 11f, trCenter.y - 5.5f), Offset(trCenter.x + 11f, trCenter.y - 5.5f), 3.4f)
+                        drawLine(iconColor, Offset(trCenter.x - 11f, trCenter.y + 5.5f), Offset(trCenter.x + 11f, trCenter.y + 5.5f), 3.4f)
                         newCircles.add(
                             CircleHotspot(trCenter, cornerR) {
                                 latestOnQuickSplitCell(op.id, ImpostDirection.HORIZONTAL, 3)
@@ -477,7 +512,7 @@ fun InteractiveWindowCadCanvas(
                         // Нижний правый: `—` (1 гориз. импост -> 2 части)
                         val brCenter = Offset(glassRight - offsetFromEdge, glassBottom - offsetFromEdge)
                         drawCircle(Color(0x553B8EEA), cornerR, brCenter)
-                        drawLine(iconColor, Offset(brCenter.x - 8f, brCenter.y), Offset(brCenter.x + 8f, brCenter.y), 2.8f)
+                        drawLine(iconColor, Offset(brCenter.x - 11f, brCenter.y), Offset(brCenter.x + 11f, brCenter.y), 3.4f)
                         newCircles.add(
                             CircleHotspot(brCenter, cornerR) {
                                 latestOnQuickSplitCell(op.id, ImpostDirection.HORIZONTAL, 2)
@@ -765,16 +800,17 @@ fun InteractiveWindowCadCanvas(
         }
 
         // --- СЛОЙ 6: ВНЕШНИЕ РАЗМЕРНЫЕ ЦЕПОЧКИ СНИЗУ И СЛЕВА ---
+        val dimLine = palette.dimLineColor
         if (hasMultiX) {
-            val segLineY = originY + drawH + 40f
+            val segLineY = originY + drawH + 44f
             for (i in 0 until (xCoords.size - 1)) {
                 val x1 = originX + xCoords[i] * scale
                 val x2 = originX + xCoords[i + 1] * scale
                 val segLen = xCoords[i + 1] - xCoords[i]
 
-                drawLine(Color(0xFF333333), Offset(x1, segLineY), Offset(x2, segLineY), 1.5f)
-                drawCircle(Color.Black, 4.5f, Offset(x1, segLineY))
-                drawCircle(Color.Black, 4.5f, Offset(x2, segLineY))
+                drawLine(dimLine, Offset(x1, segLineY), Offset(x2, segLineY), 1.5f)
+                drawCircle(dimLine, 4.5f, Offset(x1, segLineY))
+                drawCircle(dimLine, 4.5f, Offset(x2, segLineY))
 
                 val midX = (x1 + x2) / 2f
                 val segIdx = i
@@ -784,41 +820,41 @@ fun InteractiveWindowCadCanvas(
             }
             if (showControls) {
                 val eqCenter = Offset(originX + drawW, segLineY)
-                drawCircle(Color(0x663B8EEA), 20f, eqCenter)
+                drawCircle(palette.accentBlue.copy(alpha = 0.42f), 23f, eqCenter)
                 newCircles.add(
-                    CircleHotspot(eqCenter, 20f) {
+                    CircleHotspot(eqCenter, 23f) {
                         latestOnEqualizeChain(true)
                     }
                 )
             }
 
-            val totalLineY = originY + drawH + 84f
-            drawLine(Color(0xFF333333), Offset(originX, totalLineY), Offset(originX + drawW, totalLineY), 1.5f)
-            drawCircle(Color.Black, 4.5f, Offset(originX, totalLineY))
-            drawCircle(Color.Black, 4.5f, Offset(originX + drawW, totalLineY))
+            val totalLineY = originY + drawH + 92f
+            drawLine(dimLine, Offset(originX, totalLineY), Offset(originX + drawW, totalLineY), 1.5f)
+            drawCircle(dimLine, 4.5f, Offset(originX, totalLineY))
+            drawCircle(dimLine, 4.5f, Offset(originX + drawW, totalLineY))
             drawDimensionCapsule(originX + drawW / 2f, totalLineY, "${totalW.roundToInt()}") {
                 latestOnEditTotalWidth(totalW)
             }
         } else {
-            val totalLineY = originY + drawH + 44f
-            drawLine(Color(0xFF333333), Offset(originX, totalLineY), Offset(originX + drawW, totalLineY), 1.5f)
-            drawCircle(Color.Black, 4.5f, Offset(originX, totalLineY))
-            drawCircle(Color.Black, 4.5f, Offset(originX + drawW, totalLineY))
+            val totalLineY = originY + drawH + 48f
+            drawLine(dimLine, Offset(originX, totalLineY), Offset(originX + drawW, totalLineY), 1.5f)
+            drawCircle(dimLine, 4.5f, Offset(originX, totalLineY))
+            drawCircle(dimLine, 4.5f, Offset(originX + drawW, totalLineY))
             drawDimensionCapsule(originX + drawW / 2f, totalLineY, "${totalW.roundToInt()}") {
                 latestOnEditTotalWidth(totalW)
             }
         }
 
         if (hasMultiY) {
-            val segLineX = originX - 42f
+            val segLineX = originX - 50f
             for (j in 0 until (yCoords.size - 1)) {
                 val y1 = originY + yCoords[j] * scale
                 val y2 = originY + yCoords[j + 1] * scale
                 val segLen = yCoords[j + 1] - yCoords[j]
 
-                drawLine(Color(0xFF333333), Offset(segLineX, y1), Offset(segLineX, y2), 1.5f)
-                drawCircle(Color.Black, 4.5f, Offset(segLineX, y1))
-                drawCircle(Color.Black, 4.5f, Offset(segLineX, y2))
+                drawLine(dimLine, Offset(segLineX, y1), Offset(segLineX, y2), 1.5f)
+                drawCircle(dimLine, 4.5f, Offset(segLineX, y1))
+                drawCircle(dimLine, 4.5f, Offset(segLineX, y2))
 
                 val midY = (y1 + y2) / 2f
                 val segIdx = j
@@ -828,26 +864,26 @@ fun InteractiveWindowCadCanvas(
             }
             if (showControls) {
                 val eqCenter = Offset(segLineX, originY + drawH)
-                drawCircle(Color(0x663B8EEA), 20f, eqCenter)
+                drawCircle(palette.accentBlue.copy(alpha = 0.42f), 23f, eqCenter)
                 newCircles.add(
-                    CircleHotspot(eqCenter, 20f) {
+                    CircleHotspot(eqCenter, 23f) {
                         latestOnEqualizeChain(false)
                     }
                 )
             }
 
-            val totalLineX = originX - 98f
-            drawLine(Color(0xFF333333), Offset(totalLineX, originY), Offset(totalLineX, originY + drawH), 1.5f)
-            drawCircle(Color.Black, 4.5f, Offset(totalLineX, originY))
-            drawCircle(Color.Black, 4.5f, Offset(totalLineX, originY + drawH))
+            val totalLineX = originX - 140f
+            drawLine(dimLine, Offset(totalLineX, originY), Offset(totalLineX, originY + drawH), 1.5f)
+            drawCircle(dimLine, 4.5f, Offset(totalLineX, originY))
+            drawCircle(dimLine, 4.5f, Offset(totalLineX, originY + drawH))
             drawDimensionCapsule(totalLineX, originY + drawH / 2f, "${totalH.roundToInt()}") {
                 latestOnEditTotalHeight(totalH)
             }
         } else {
-            val totalLineX = originX - 48f
-            drawLine(Color(0xFF333333), Offset(totalLineX, originY), Offset(totalLineX, originY + drawH), 1.5f)
-            drawCircle(Color.Black, 4.5f, Offset(totalLineX, originY))
-            drawCircle(Color.Black, 4.5f, Offset(totalLineX, originY + drawH))
+            val totalLineX = originX - 54f
+            drawLine(dimLine, Offset(totalLineX, originY), Offset(totalLineX, originY + drawH), 1.5f)
+            drawCircle(dimLine, 4.5f, Offset(totalLineX, originY))
+            drawCircle(dimLine, 4.5f, Offset(totalLineX, originY + drawH))
             drawDimensionCapsule(totalLineX, originY + drawH / 2f, "${totalH.roundToInt()}") {
                 latestOnEditTotalHeight(totalH)
             }
