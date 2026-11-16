@@ -12,7 +12,6 @@ import ru.winstudiopro.app.domain.model.AppLanguage
 data class AppStrings(
     val language: AppLanguage,
     // Главный экран
-    val appSubtitleFormat: String, // "%d систем • %d заказов"
     val newOrderTitle: String,
     val newOrderSubtitle: String,
     val ordersTitle: String,
@@ -27,8 +26,6 @@ data class AppStrings(
     val pricesSubtitle: String,
     val warehouseTitle: String,
     val warehouseSubFormat: String, // "хлыстов: %d • остатков: %d"
-    val orderStatusesTitle: String,
-    val orderStatusesSubFormat: String, // "в работе: %d"
     val settingsTitle: String,
     val settingsSubtitleFormat: String, // "%s • %s • %s"
     // Экран настроек
@@ -150,7 +147,6 @@ data class AppStrings(
     val backDesc: String,
     val searchOrdersHint: String,
     val importBtn: String,
-    val iconsToggle: String,
     val profilesScreenTitle: String,
     val addSystemBtn: String,
     val copySystemBtn: String,
@@ -172,7 +168,6 @@ data class AppStrings(
     val deadlineOverdueFormat: String,
     val pricesScreenTitleFormat: String, // "Прайсы (%s)"
     val warehouseScreenTitle: String,
-    val statusesScreenTitle: String,
     val openDrawingArrow: String,
     val workshopScreenTitle: String,
     val backToHomeBtn: String
@@ -180,7 +175,6 @@ data class AppStrings(
 
 val RussianAppStrings = AppStrings(
     language = AppLanguage.RU,
-    appSubtitleFormat = "%d систем • %d заказов",
     newOrderTitle = "Новый заказ",
     newOrderSubtitle = "1500×1500 • сразу в чертёж",
     ordersTitle = "Заказы",
@@ -195,8 +189,6 @@ val RussianAppStrings = AppStrings(
     pricesSubtitle = "профили, стёкла, работы",
     warehouseTitle = "Склад",
     warehouseSubFormat = "хлыстов: %d • ост.: %d",
-    orderStatusesTitle = "Статусы",
-    orderStatusesSubFormat = "в работе: %d",
     settingsTitle = "Настройки",
     settingsSubtitleFormat = "%s • %s • %s",
     settingsScreenTitle = "Настройки",
@@ -311,7 +303,6 @@ val RussianAppStrings = AppStrings(
     backDesc = "Назад",
     searchOrdersHint = "Поиск по № заказа, клиенту, телефону или адресу...",
     importBtn = "Импорт",
-    iconsToggle = "Миниатюры",
     profilesScreenTitle = "Профильные системы",
     addSystemBtn = "+ Добавить",
     copySystemBtn = "Копировать систему",
@@ -333,7 +324,6 @@ val RussianAppStrings = AppStrings(
     deadlineOverdueFormat = "Просрочено %d дн.",
     pricesScreenTitleFormat = "Прайсы (%s)",
     warehouseScreenTitle = "Склад материала",
-    statusesScreenTitle = "Статусы заказов",
     openDrawingArrow = "Открыть →",
     workshopScreenTitle = "Задание в цех и 1D-раскрой",
     backToHomeBtn = "Назад"
@@ -341,7 +331,6 @@ val RussianAppStrings = AppStrings(
 
 val EnglishAppStrings = AppStrings(
     language = AppLanguage.EN,
-    appSubtitleFormat = "%d systems • %d orders",
     newOrderTitle = "New Order",
     newOrderSubtitle = "1500×1500 • open CAD directly",
     ordersTitle = "Orders",
@@ -356,8 +345,6 @@ val EnglishAppStrings = AppStrings(
     pricesSubtitle = "profiles, glass, services",
     warehouseTitle = "Warehouse",
     warehouseSubFormat = "bars: %d • rem.: %d",
-    orderStatusesTitle = "Statuses",
-    orderStatusesSubFormat = "active: %d",
     settingsTitle = "Settings",
     settingsSubtitleFormat = "%s • %s • %s",
     settingsScreenTitle = "Settings",
@@ -472,7 +459,6 @@ val EnglishAppStrings = AppStrings(
     backDesc = "Back",
     searchOrdersHint = "Search by order #, client, phone, or address...",
     importBtn = "Import",
-    iconsToggle = "Previews",
     profilesScreenTitle = "Profile Systems",
     addSystemBtn = "+ Add",
     copySystemBtn = "Copy system",
@@ -494,7 +480,6 @@ val EnglishAppStrings = AppStrings(
     deadlineOverdueFormat = "Overdue %d d",
     pricesScreenTitleFormat = "Prices (%s)",
     warehouseScreenTitle = "Warehouse Stock",
-    statusesScreenTitle = "Order Statuses",
     openDrawingArrow = "Open →",
     workshopScreenTitle = "Workshop & 1D Cutting",
     backToHomeBtn = "Back"

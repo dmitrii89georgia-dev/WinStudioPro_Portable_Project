@@ -4,10 +4,12 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import ru.winstudiopro.app.domain.model.*
 import java.io.File
+import java.io.FileNotFoundException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -89,16 +91,20 @@ private class WinStudioSqliteHelper(context: Context) :
             if ("color_hex" !in cols) {
                 db.execSQL("ALTER TABLE stock_inventory ADD COLUMN color_hex INTEGER NOT NULL DEFAULT 4294967295")
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.e("WinStudioSqliteHelper", "Database upgrade error", e)
         }
     }
 }
 
 object AppStateStorage {
 
+    private const val TAG = "AppStateStorage"
+    private const val DEV_SEED_ASSET_NAME = "dev_seed.winbackup.json"
     private const val LOCAL_PREFS_NAME = "winstudio_local_ui_prefs"
     private const val KEY_FILTER_INITIALIZED = "orders_filter_initialized"
     private const val KEY_FILTER_STATUSES = "orders_filter_statuses"
+    private const val KEY_DEV_SEED_APPLIED = "dev_seed_v1_applied"
 
     fun loadOrdersFilterStatuses(context: Context): Set<OrderStatus> {
         return try {
@@ -110,7 +116,8 @@ object AppStateStorage {
             rawSet.mapNotNull { name ->
                 OrderStatus.entries.find { it.name == name }
             }.toSet()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load orders filter statuses", e)
             OrderStatus.entries.toSet()
         }
     }
@@ -122,7 +129,8 @@ object AppStateStorage {
                 .putBoolean(KEY_FILTER_INITIALIZED, true)
                 .putStringSet(KEY_FILTER_STATUSES, statuses.map { it.name }.toSet())
                 .apply()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save orders filter statuses", e)
         }
     }
 
@@ -131,25 +139,41 @@ object AppStateStorage {
             val dbHelper = WinStudioSqliteHelper(context)
             val db = dbHelper.readableDatabase
 
-            val profiles = loadProfilesFromDb(db).ifEmpty {
+            val existingProfiles = loadProfilesFromDb(db)
+            val existingOrders = loadOrdersFromDb(db)
+            val existingStock = loadStockFromDb(db)
+
+            // Однократно подключаем тестовую базу dev_seed.winbackup.json (и при чистой установке,
+            // и при обновлении тестового APK в эмуляторе, где уже лежала старая демо-база)
+            val seededState = tryApplyDevSeedIfNeeded(
+                context = context,
+                db = dbHelper.writableDatabase,
+                existingProfiles = existingProfiles,
+                existingOrders = existingOrders,
+                existingStock = existingStock
+            )
+            if (seededState != null) {
+                return seededState
+            }
+
+            val profiles = existingProfiles.ifEmpty {
                 val defaults = DefaultCatalogs.defaultProfileSystems()
                 saveProfilesToDb(dbHelper.writableDatabase, defaults)
                 defaults
             }
 
-            val orders = loadOrdersFromDb(db).ifEmpty {
+            val orders = existingOrders.ifEmpty {
                 val defaults = defaultDemoOrders()
                 saveOrdersToDb(dbHelper.writableDatabase, defaults)
                 defaults
             }
 
-            val stock = loadStockFromDb(db)
             val settingsBundle = loadSettingsBundleFromDb(db)
 
             PersistedAppState(
                 profileSystems = profiles,
                 orders = orders,
-                stockRemnants = stock,
+                stockRemnants = existingStock,
                 uiSettings = settingsBundle.uiSettings,
                 glazingCatalog = settingsBundle.glazingCatalog,
                 colorCatalog = settingsBundle.colorCatalog,
@@ -157,8 +181,127 @@ object AppStateStorage {
                 extraAccessories = settingsBundle.extraAccessories,
                 workServices = settingsBundle.workServices
             )
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load persisted state, falling back to defaults", e)
             createDefaultInitialState()
+        }
+    }
+
+    private fun tryApplyDevSeedIfNeeded(
+        context: Context,
+        db: SQLiteDatabase,
+        existingProfiles: List<ProfileSystemSpec>,
+        existingOrders: List<CustomerOrder>,
+        existingStock: List<StockRemnantBar>
+    ): PersistedAppState? {
+        val prefs = context.getSharedPreferences(LOCAL_PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(KEY_DEV_SEED_APPLIED, false)) {
+            return null
+        }
+        return try {
+            val jsonText = context.assets.open(DEV_SEED_ASSET_NAME)
+                .bufferedReader(Charsets.UTF_8)
+                .use { it.readText() }
+            val root = JSONObject(jsonText)
+
+            val ordArr = root.optJSONArray("orders") ?: JSONArray()
+            val seededOrders = mutableListOf<CustomerOrder>()
+            for (i in 0 until ordArr.length()) {
+                seededOrders.add(parseOrder(ordArr.getJSONObject(i)))
+            }
+
+            val profArr = root.optJSONArray("profileSystems") ?: JSONArray()
+            val seededProfiles = mutableListOf<ProfileSystemSpec>()
+            for (i in 0 until profArr.length()) {
+                seededProfiles.add(parseProfile(profArr.getJSONObject(i)))
+            }
+
+            val stockArr = root.optJSONArray("stockRemnants")
+            val seededStock = mutableListOf<StockRemnantBar>()
+            if (stockArr != null) {
+                for (i in 0 until stockArr.length()) {
+                    val so = stockArr.getJSONObject(i)
+                    val role = try {
+                        ProfileRole.valueOf(so.optString("role", "FRAME"))
+                    } catch (_: Exception) {
+                        ProfileRole.FRAME
+                    }
+                    seededStock.add(
+                        StockRemnantBar(
+                            id = so.optString("id", "stk_seed_$i"),
+                            profileSystemId = so.optString("profileSystemId", "al_test_system"),
+                            role = role,
+                            lengthMm = so.optInt("lengthMm", 6000),
+                            quantity = so.optInt("quantity", 1),
+                            isFullStockBar = so.optBoolean("isFullStockBar", false),
+                            colorName = so.optString("colorName", "Белый"),
+                            colorHex = so.optLong("colorHex", 0xFFFFFFFFL)
+                        )
+                    )
+                }
+            }
+
+            val onlyUntouchedDefaults =
+                existingProfiles.all { it.id == "al_test_system" } &&
+                    existingOrders.all { it.id == "order_demo_1" }
+
+            val finalProfiles = if (onlyUntouchedDefaults) {
+                seededProfiles.ifEmpty { DefaultCatalogs.defaultProfileSystems() }
+            } else {
+                (seededProfiles + existingProfiles).distinctBy { it.id }
+                    .ifEmpty { DefaultCatalogs.defaultProfileSystems() }
+            }
+
+            val finalOrders = if (onlyUntouchedDefaults) {
+                seededOrders.ifEmpty { defaultDemoOrders() }
+            } else {
+                (seededOrders + existingOrders.filter { it.id != "order_demo_1" })
+                    .distinctBy { it.id }
+                    .ifEmpty { defaultDemoOrders() }
+            }
+
+            val finalStock = if (onlyUntouchedDefaults) {
+                seededStock
+            } else {
+                (seededStock + existingStock).distinctBy { it.id }
+            }
+
+            db.beginTransaction()
+            try {
+                saveProfilesToDb(db, finalProfiles)
+                saveOrdersToDb(db, finalOrders)
+                saveStockToDb(db, finalStock)
+                if (root.has("appSettingsPayload")) {
+                    val cv = ContentValues().apply {
+                        put("id", 1)
+                        put("json_payload", root.getJSONObject("appSettingsPayload").toString())
+                    }
+                    db.insertWithOnConflict("app_settings", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+
+            prefs.edit().putBoolean(KEY_DEV_SEED_APPLIED, true).commit()
+            val settingsBundle = loadSettingsBundleFromDb(db)
+            Log.i(TAG, "Applied dev seed ($DEV_SEED_ASSET_NAME): ${finalOrders.size} orders, ${finalProfiles.size} profiles")
+            PersistedAppState(
+                profileSystems = finalProfiles,
+                orders = finalOrders,
+                stockRemnants = finalStock,
+                uiSettings = settingsBundle.uiSettings,
+                glazingCatalog = settingsBundle.glazingCatalog,
+                colorCatalog = settingsBundle.colorCatalog,
+                hardwareBrands = settingsBundle.hardwareBrands,
+                extraAccessories = settingsBundle.extraAccessories,
+                workServices = settingsBundle.workServices
+            )
+        } catch (_: FileNotFoundException) {
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to apply dev seed asset $DEV_SEED_ASSET_NAME", e)
+            null
         }
     }
 
@@ -186,7 +329,8 @@ object AppStateStorage {
             } finally {
                 db.endTransaction()
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save state to SQLite", e)
         }
     }
 
