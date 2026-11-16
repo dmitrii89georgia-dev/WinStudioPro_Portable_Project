@@ -9,6 +9,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,8 +34,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
@@ -81,7 +85,6 @@ enum class AppScreenMode {
     PROFILE_CONSTRUCTOR, // Конструктор профильных систем (геометрия в мм, допуски, формулы)
     PRICES_SCREEN,       // Прайсы на системы, сухари, стеклопакеты, фурнитуру, разное и работы
     WAREHOUSE_STOCK,     // Склад: папки по профильным системам (целые хлысты + деловые остатки)
-    ORDER_STATUS_BOARD,  // Доска статусов заказов (менеджер активных заказов)
     UI_SETTINGS,         // Настройки интерфейса и реквизитов компании для PDF
     WORKSHOP_CUTTING     // Модуль задания в цех и линейного 1D-раскроя профилей
 }
@@ -274,7 +277,7 @@ fun WinStudioProMainApp(
             profileSystemId = defaultSys.id,
             selectedShtapikId = defaultSys.shtapikVariants.firstOrNull()?.id ?: "",
             glazingId = glazingCatalog.firstOrNull { it.id != "none" }?.id ?: "sp_24",
-            colorId = "none"
+            colorId = defaultSys.colors.firstOrNull()?.id ?: "col_anthracite"
         )
 
         val newOrder = CustomerOrder(
@@ -337,7 +340,6 @@ fun WinStudioProMainApp(
                             onOpenProfileConstructor = { screenMode = AppScreenMode.PROFILE_CONSTRUCTOR },
                             onOpenPrices = { screenMode = AppScreenMode.PRICES_SCREEN },
                             onOpenWarehouse = { screenMode = AppScreenMode.WAREHOUSE_STOCK },
-                            onOpenOrderStatuses = { screenMode = AppScreenMode.ORDER_STATUS_BOARD },
                             onOpenSettings = { screenMode = AppScreenMode.UI_SETTINGS }
                         )
                     }
@@ -433,19 +435,6 @@ fun WinStudioProMainApp(
                         )
                     }
 
-                    AppScreenMode.ORDER_STATUS_BOARD -> {
-                        OrderStatusManagerScreen(
-                            orders = orders,
-                            onBack = { screenMode = AppScreenMode.METRO_HOME },
-                            onOpenOrder = { orderId ->
-                                activeOrderId = orderId
-                                activeWindowIndex = 0
-                                screenMode = AppScreenMode.CAD_WORKSPACE
-                            },
-                            onUpdateOrders = { updated -> persistAll(newOrders = updated) }
-                        )
-                    }
-
                     AppScreenMode.UI_SETTINGS -> {
                         IosSettingsScreen(
                             settings = uiSettings,
@@ -456,7 +445,12 @@ fun WinStudioProMainApp(
                             onApplyCurrencyToAllOrders = { cur ->
                                 val updatedOrders = orders.map { it.copy(currencySymbol = cur) }
                                 persistAll(newOrders = updatedOrders)
-                            }
+                            },
+                            onExportBackup = {
+                                val file = AppStateStorage.createFullBackupFile(context)
+                                onShareExportFile(file, "Полный бэкап WinStudio Pro")
+                            },
+                            onImportBackup = { importBackupLauncher.launch("*/*") }
                         )
                     }
 
@@ -530,8 +524,11 @@ private fun CadEditorWorkspaceScreen(
     val activeGlazing = glazingCatalog.find { it.id == currentWindow.glazingId }
         ?: glazingCatalog.first()
 
-    val activeColor = colorCatalog.find { it.id == currentWindow.colorId }
-        ?: colorCatalog.first()
+    val activeColor = WindowBomAndCostEngine.resolveWindowColor(
+        window = currentWindow,
+        profile = activeProfile,
+        legacyColorCatalog = colorCatalog
+    )
 
     // Расчёт всех конструкций текущего заказа в реальном времени (включая сухари, разное и работы из прайса)
     val allWindowResults = remember(
@@ -654,6 +651,11 @@ private fun CadEditorWorkspaceScreen(
                 glazingId = if (applyGlazing) currentWindow.glazingId else win.glazingId,
                 roundGlassTo5Mm = if (applyGlazing) currentWindow.roundGlassTo5Mm else win.roundGlassTo5Mm,
                 colorId = if (applyColors) currentWindow.colorId else win.colorId,
+                customColorName = if (applyColors) currentWindow.customColorName else win.customColorName,
+                customColorRal = if (applyColors) currentWindow.customColorRal else win.customColorRal,
+                customColorHex = if (applyColors) currentWindow.customColorHex else win.customColorHex,
+                customPaintingCost = if (applyColors) currentWindow.customPaintingCost else win.customPaintingCost,
+                customColorUseRawForStock = if (applyColors) currentWindow.customColorUseRawForStock else win.customColorUseRawForStock,
                 hardwareBrandId = if (applyHardware) currentWindow.hardwareBrandId else win.hardwareBrandId,
                 mosquitoSystemId = if (applyHardware) currentWindow.mosquitoSystemId else win.mosquitoSystemId,
                 financialSchemeId = if (applyFinancials) currentWindow.financialSchemeId else win.financialSchemeId,
@@ -1182,7 +1184,12 @@ private fun CadEditorWorkspaceScreen(
                         ) {
                             windows.mapIndexed { idx, winItem -> idx to winItem }.reversed().forEach { (idx, winItem) ->
                                 val isSelected = idx == activeWindowIndex
-                                val winColorHex = colorCatalog.find { it.id == winItem.colorId }?.hexColor ?: 0xFFE6E9ED
+                                val winProf = profileSystems.find { it.id == winItem.profileSystemId } ?: activeProfile
+                                val winColorHex = WindowBomAndCostEngine.resolveWindowColor(
+                                    window = winItem,
+                                    profile = winProf,
+                                    legacyColorCatalog = colorCatalog
+                                ).hexColor
                                 Box(
                                     modifier = Modifier
                                         .width(88.dp)
@@ -1350,47 +1357,6 @@ private fun CadEditorWorkspaceScreen(
                         ) {
                             showLeftBlueMenu = false
                             onOpenWorkshopCutting()
-                        }
-
-                        HorizontalDivider(
-                            color = palette.divider,
-                            thickness = 0.6.dp,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                        )
-
-                        LeftMenuButton(
-                            title = strings.exportOrderItem,
-                            icon = Icons.Rounded.IosShare,
-                            accentTint = palette.accentBlue
-                        ) {
-                            showLeftBlueMenu = false
-                            val file = AppStateStorage.createOrderJsonExportFile(context, order)
-                            onShareExportFile(file, "${order.orderNumber}")
-                        }
-                        LeftMenuButton(
-                            title = strings.importOrderItem,
-                            icon = Icons.Rounded.Download,
-                            accentTint = palette.accentTeal
-                        ) {
-                            showLeftBlueMenu = false
-                            onImportOrder()
-                        }
-                        LeftMenuButton(
-                            title = strings.exportBackupItem,
-                            icon = Icons.Rounded.Backup,
-                            accentTint = palette.accentIndigo
-                        ) {
-                            showLeftBlueMenu = false
-                            val file = AppStateStorage.createFullBackupFile(context)
-                            onShareExportFile(file, "WinStudio Pro Backup")
-                        }
-                        LeftMenuButton(
-                            title = strings.restoreBackupItem,
-                            icon = Icons.Rounded.Restore,
-                            accentTint = palette.accentOrange
-                        ) {
-                            showLeftBlueMenu = false
-                            onImportBackup()
                         }
                     }
                 }
@@ -1754,36 +1720,42 @@ private fun DynamicBottomCostScrollBar(
         val winWrkCost = currentResult.costWorksOnly * curQty
         val allWrkCost = allResults.sumOf { it.costWorksOnly * it.windowItem.quantity }
 
-        listOf(
-            CostColumnData(strings.colArea, "${fmt2(winArea)} m2", "", "${fmt2(allArea)} m2", ""),
-            CostColumnData(strings.colFrames, "${fmt2(winFrameM)} m", "${fmt2(winFrameCost)} $cur", "${fmt2(allFrameM)} m", "${fmt2(allFrameCost)} $cur"),
-            CostColumnData(strings.colImposts, "${fmt2(winImpM)} m", "${fmt2(winImpCost)} $cur", "${fmt2(allImpM)} m", "${fmt2(allImpCost)} $cur"),
-            CostColumnData(strings.colSashes, "${fmt2(winSashM)} m", "${fmt2(winSashCost)} $cur", "${fmt2(allSashM)} m", "${fmt2(allSashCost)} $cur"),
-            CostColumnData(strings.colDoorSashes, "${fmt2(winDoorM)} m", "${fmt2(winDoorCost)} $cur", "${fmt2(allDoorM)} m", "${fmt2(allDoorCost)} $cur"),
-            CostColumnData(strings.colCleats, "$winCornersCnt ${strings.setsShort}", "${fmt2(winCornersCost)} $cur", "$allCornersCnt ${strings.setsShort}", "${fmt2(allCornersCost)} $cur"),
-            CostColumnData(strings.colShtapik, "${fmt2(winShtM)} m", "${fmt2(winShtCost)} $cur", "${fmt2(allShtM)} m", "${fmt2(allShtCost)} $cur"),
-            CostColumnData(strings.colRubber, "${fmt2(winRubM)} m", "${fmt2(winRubCost)} $cur", "${fmt2(allRubM)} m", "${fmt2(allRubCost)} $cur"),
-            CostColumnData(strings.colGlass, "${fmt2(winGlzM2)} m2", "${fmt2(winGlzCost)} $cur", "${fmt2(allGlzM2)} m2", "${fmt2(allGlzCost)} $cur"),
-            CostColumnData(strings.colSandwich, "${fmt2(winSandM2)} m2", "${fmt2(winSandCost)} $cur", "${fmt2(allSandM2)} m2", "${fmt2(allSandCost)} $cur"),
-            CostColumnData(strings.colHardware, "${fmt2(winHwCost)} $cur", "", "${fmt2(allHwCost)} $cur", ""),
-            CostColumnData(strings.colExtras, "${fmt2(winExtCost)} $cur", "", "${fmt2(allExtCost)} $cur", ""),
-            CostColumnData(strings.colWorks, "${fmt2(winWrkCost)} $cur", "", "${fmt2(allWrkCost)} $cur", "")
-        )
+        val winPaintCost = currentResult.costCustomPainting
+        val allPaintCost = allResults.sumOf { it.costCustomPainting }
+
+        buildList {
+            add(CostColumnData(strings.colArea, "${fmt2(winArea)} m2", "", "${fmt2(allArea)} m2", ""))
+            add(CostColumnData(strings.colFrames, "${fmt2(winFrameM)} m", "${fmt2(winFrameCost)} $cur", "${fmt2(allFrameM)} m", "${fmt2(allFrameCost)} $cur"))
+            add(CostColumnData(strings.colImposts, "${fmt2(winImpM)} m", "${fmt2(winImpCost)} $cur", "${fmt2(allImpM)} m", "${fmt2(allImpCost)} $cur"))
+            add(CostColumnData(strings.colSashes, "${fmt2(winSashM)} m", "${fmt2(winSashCost)} $cur", "${fmt2(allSashM)} m", "${fmt2(allSashCost)} $cur"))
+            add(CostColumnData(strings.colDoorSashes, "${fmt2(winDoorM)} m", "${fmt2(winDoorCost)} $cur", "${fmt2(allDoorM)} m", "${fmt2(allDoorCost)} $cur"))
+            add(CostColumnData(strings.colCleats, "$winCornersCnt ${strings.setsShort}", "${fmt2(winCornersCost)} $cur", "$allCornersCnt ${strings.setsShort}", "${fmt2(allCornersCost)} $cur"))
+            add(CostColumnData(strings.colShtapik, "${fmt2(winShtM)} m", "${fmt2(winShtCost)} $cur", "${fmt2(allShtM)} m", "${fmt2(allShtCost)} $cur"))
+            add(CostColumnData(strings.colRubber, "${fmt2(winRubM)} m", "${fmt2(winRubCost)} $cur", "${fmt2(allRubM)} m", "${fmt2(allRubCost)} $cur"))
+            add(CostColumnData(strings.colGlass, "${fmt2(winGlzM2)} m2", "${fmt2(winGlzCost)} $cur", "${fmt2(allGlzM2)} m2", "${fmt2(allGlzCost)} $cur"))
+            add(CostColumnData(strings.colSandwich, "${fmt2(winSandM2)} m2", "${fmt2(winSandCost)} $cur", "${fmt2(allSandM2)} m2", "${fmt2(allSandCost)} $cur"))
+            add(CostColumnData(strings.colHardware, "${fmt2(winHwCost)} $cur", "", "${fmt2(allHwCost)} $cur", ""))
+            add(CostColumnData(strings.colExtras, "${fmt2(winExtCost)} $cur", "", "${fmt2(allExtCost)} $cur", ""))
+            add(CostColumnData(strings.colWorks, "${fmt2(winWrkCost)} $cur", "", "${fmt2(allWrkCost)} $cur", ""))
+            if (allPaintCost > 0.0 || winPaintCost > 0.0) {
+                add(CostColumnData(strings.colPainting, "${fmt2(winPaintCost)} $cur", "", "${fmt2(allPaintCost)} $cur", ""))
+            }
+        }
     }
 
     val isManualPrice = currentResult.windowItem.manualUnitPriceOverride != null
     val discPct = if (currentResult.discountPercentApplied > 0.0) currentResult.discountPercentApplied else order.discountPercent
-    val winBaseTotal = (currentResult.windowItem.manualUnitPriceOverride ?: currentResult.rawUnitCostBeforeDiscount) * curQty
-    val winFinalTotal = winBaseTotal * (1.0 - discPct / 100.0)
+    val winBaseTotal = (currentResult.windowItem.manualUnitPriceOverride ?: currentResult.rawUnitCostBeforeDiscount) * curQty + currentResult.costCustomPainting
+    val winFinalTotal = (currentResult.windowItem.manualUnitPriceOverride ?: currentResult.rawUnitCostBeforeDiscount) * curQty * (1.0 - discPct / 100.0) + currentResult.costCustomPainting
 
     val orderBaseTotal = allResults.sumOf {
         val u = it.windowItem.manualUnitPriceOverride ?: it.rawUnitCostBeforeDiscount
-        u * it.windowItem.quantity
+        u * it.windowItem.quantity + it.costCustomPainting
     }
     val orderDiscountedTotal = allResults.sumOf {
         val d = if (it.discountPercentApplied > 0.0) it.discountPercentApplied else order.discountPercent
         val u = it.windowItem.manualUnitPriceOverride ?: it.rawUnitCostBeforeDiscount
-        u * (1.0 - d / 100.0) * it.windowItem.quantity
+        u * (1.0 - d / 100.0) * it.windowItem.quantity + it.costCustomPainting
     }
 
     Surface(
@@ -2197,7 +2169,18 @@ private fun RightWindowSettingsDrawerContent(
                     selected = selected,
                     onClick = {
                         val defaultShtId = sys.shtapikVariants.firstOrNull()?.id ?: ""
-                        onUpdateWindow(windowItem.copy(profileSystemId = sys.id, selectedShtapikId = defaultShtId))
+                        val keptColorId = when {
+                            windowItem.colorId == CUSTOM_CLIENT_COLOR_ID -> CUSTOM_CLIENT_COLOR_ID
+                            sys.colors.any { it.id == windowItem.colorId } -> windowItem.colorId
+                            else -> sys.colors.firstOrNull()?.id ?: "col_anthracite"
+                        }
+                        onUpdateWindow(
+                            windowItem.copy(
+                                profileSystemId = sys.id,
+                                selectedShtapikId = defaultShtId,
+                                colorId = keptColorId
+                            )
+                        )
                     }
                 )
             }
@@ -2302,50 +2285,143 @@ private fun RightWindowSettingsDrawerContent(
                 )
             }
 
-            // 7. ЦВЕТ
+            // 7. ЦВЕТ (строго цвета выбранной профильной системы + «Индивидуальный цвет клиента...»)
+            var showCustomColorDialog by remember { mutableStateOf(false) }
+            val activeSysForColors = profileSystems.find { it.id == windowItem.profileSystemId }
             DrawerGrayHeader(
                 title = strings.colorLabel,
                 actionText = if (totalWindowsCount > 1) strings.applyShort else null,
                 onAction = { onApplyToAllWindows(false, false, true, false, false, false) }
             )
-            colorCatalog.forEach { clr ->
-                val selected = clr.id == windowItem.colorId
+            if (windowItem.profileSystemId == "none" || activeSysForColors == null) {
+                Text(
+                    text = "Выберите профильную систему выше для подбора цвета",
+                    fontSize = 11.5.sp,
+                    color = palette.textSecondary,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                )
+            } else {
+                activeSysForColors.colors.forEach { clr ->
+                    val selected = clr.id == windowItem.colorId
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { onUpdateWindow(windowItem.copy(colorId = clr.id)) }
+                            .padding(horizontal = 4.dp, vertical = 3.dp)
+                            .testTag("drawer_color_${clr.id}"),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selected,
+                            onClick = { onUpdateWindow(windowItem.copy(colorId = clr.id)) },
+                            colors = RadioButtonDefaults.colors(selectedColor = palette.accentBlue)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(22.dp)
+                                .background(Color(clr.hexColor), CircleShape)
+                                .border(0.9.dp, palette.floatingBorder, CircleShape)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            val titleWithRal = if (clr.ralCode.isNotBlank()) "${clr.name} (RAL ${clr.ralCode})" else clr.name
+                            Text(
+                                text = titleWithRal,
+                                fontSize = 13.sp,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = palette.textPrimary
+                            )
+                            if (clr.priceMarkupPercent > 0.0) {
+                                Text(
+                                    text = "+${clr.priceMarkupPercent.roundToInt()}% к профилю",
+                                    fontSize = 11.sp,
+                                    color = palette.accentOrange
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Последний пункт списка всегда: «🎨 Индивидуальный цвет клиента...»
+            val isCustomSelected = windowItem.colorId == CUSTOM_CLIENT_COLOR_ID
+            Surface(
+                color = if (isCustomSelected) palette.accentBlue.copy(alpha = 0.11f) else palette.secondaryBackground.copy(alpha = 0.65f),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(
+                    width = if (isCustomSelected) 1.2.dp else 0.7.dp,
+                    color = if (isCustomSelected) palette.accentBlue else palette.floatingBorder
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { showCustomColorDialog = true }
+                    .testTag("drawer_custom_client_color_button")
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable { onUpdateWindow(windowItem.copy(colorId = clr.id)) }
-                        .padding(horizontal = 4.dp, vertical = 3.dp),
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     RadioButton(
-                        selected = selected,
-                        onClick = { onUpdateWindow(windowItem.copy(colorId = clr.id)) },
+                        selected = isCustomSelected,
+                        onClick = { showCustomColorDialog = true },
                         colors = RadioButtonDefaults.colors(selectedColor = palette.accentBlue)
                     )
-                    Box(
-                        modifier = Modifier
-                            .size(20.dp)
-                            .background(Color(clr.hexColor), RoundedCornerShape(6.dp))
-                            .border(0.8.dp, palette.floatingBorder, RoundedCornerShape(6.dp))
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    if (isCustomSelected) {
+                        Box(
+                            modifier = Modifier
+                                .size(20.dp)
+                                .background(Color(windowItem.customColorHex), CircleShape)
+                                .border(0.9.dp, palette.floatingBorder, CircleShape)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = clr.name,
-                            fontSize = 13.5.sp,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                            color = palette.textPrimary
+                            text = strings.customClientColorItem,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = palette.accentBlue
                         )
-                        if (clr.priceMarkupPercent > 0.0) {
+                        if (isCustomSelected && (windowItem.customColorName.isNotBlank() || windowItem.customPaintingCost > 0.0)) {
+                            val ralTxt = if (windowItem.customColorRal.isNotBlank()) " RAL ${windowItem.customColorRal}" else ""
+                            val paintTxt = if (windowItem.customPaintingCost > 0.0) " • Покраска: ${windowItem.customPaintingCost.roundToInt()} $displayCurrency" else ""
                             Text(
-                                text = "+${clr.priceMarkupPercent.roundToInt()}%",
+                                text = "${windowItem.customColorName.ifBlank { "Цвет клиента" }}$ralTxt$paintTxt",
                                 fontSize = 11.sp,
-                                color = palette.textSecondary
+                                color = palette.textPrimary
                             )
                         }
                     }
                 }
+            }
+
+            if (showCustomColorDialog) {
+                CustomClientColorDialog(
+                    initialName = windowItem.customColorName,
+                    initialRal = windowItem.customColorRal,
+                    initialHex = windowItem.customColorHex,
+                    initialPaintingCost = windowItem.customPaintingCost,
+                    initialUseRawForStock = windowItem.customColorUseRawForStock,
+                    currencySymbol = displayCurrency,
+                    onDismiss = { showCustomColorDialog = false },
+                    onSave = { cName, cRal, cHex, pCost, useRaw ->
+                        onUpdateWindow(
+                            windowItem.copy(
+                                colorId = CUSTOM_CLIENT_COLOR_ID,
+                                customColorName = cName,
+                                customColorRal = cRal,
+                                customColorHex = cHex,
+                                customPaintingCost = pCost,
+                                customColorUseRawForStock = useRaw
+                            )
+                        )
+                        showCustomColorDialog = false
+                    }
+                )
             }
 
             // 8. ФУРНИТУРА
@@ -2604,6 +2680,9 @@ private fun CustomerOrderDetailsDialog(
     var address by remember { mutableStateOf(order.address) }
     var comment by remember { mutableStateOf(order.orderNote) }
     var status by remember { mutableStateOf(order.status) }
+    var contractDateMs by remember { mutableStateOf(order.contractDateMillis) }
+    var contractTermDays by remember { mutableIntStateOf(order.contractTermDays.coerceAtLeast(1)) }
+    var showContractCalendar by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -2684,11 +2763,60 @@ private fun CustomerOrderDetailsDialog(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     OrderStatus.entries.forEach { st ->
+                        val stColor = Color(st.badgeColorHex)
+                        val isSel = status == st
                         FilterChip(
-                            selected = status == st,
-                            onClick = { status = st },
-                            label = { Text(st.titleRu, fontSize = 11.5.sp) }
+                            selected = isSel,
+                            onClick = {
+                                status = st
+                                if (st == OrderStatus.CONTRACT) {
+                                    showContractCalendar = true
+                                }
+                            },
+                            leadingIcon = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .background(if (isSel) Color.White else stColor, CircleShape)
+                                )
+                            },
+                            label = {
+                                Text(
+                                    text = if (strings.language == AppLanguage.EN) st.titleEn else st.titleRu,
+                                    fontSize = 11.5.sp,
+                                    color = if (isSel) Color.White else palette.textPrimary
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = stColor,
+                                containerColor = palette.secondaryBackground
+                            )
                         )
+                    }
+                }
+
+                if (status.showDeadlineSmiley) {
+                    val dateFormat = remember { SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()) }
+                    val summary = if (contractDateMs != null) {
+                        "Договор от ${dateFormat.format(Date(contractDateMs!!))} • Срок: $contractTermDays дн."
+                    } else {
+                        "Дата договора не выбрана — нажмите для выбора"
+                    }
+                    OutlinedButton(
+                        onClick = { showContractCalendar = true },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.CalendarMonth,
+                            contentDescription = strings.contractDialogTitle,
+                            tint = palette.accentTeal,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(summary, fontSize = 12.sp, color = palette.textPrimary)
                     }
                 }
 
@@ -2704,7 +2832,7 @@ private fun CustomerOrderDetailsDialog(
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(46.dp)
+                            .height(48.dp)
                     ) {
                         Text(strings.cancelBtn, color = palette.textPrimary, fontWeight = FontWeight.SemiBold)
                     }
@@ -2717,7 +2845,9 @@ private fun CustomerOrderDetailsDialog(
                                     customerPhone = customerPhone.trim(),
                                     address = address.trim(),
                                     orderNote = comment.trim(),
-                                    status = status
+                                    status = status,
+                                    contractDateMillis = contractDateMs,
+                                    contractTermDays = contractTermDays
                                 )
                             )
                         },
@@ -2725,7 +2855,428 @@ private fun CustomerOrderDetailsDialog(
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(46.dp)
+                            .height(48.dp)
+                    ) {
+                        Text(strings.saveBtn, color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+
+    if (showContractCalendar) {
+        ContractDeadlineDialog(
+            initialDateMillis = contractDateMs,
+            initialTermDays = contractTermDays,
+            onDismiss = { showContractCalendar = false },
+            onConfirm = { pickedDateMs, termDays ->
+                contractDateMs = pickedDateMs
+                contractTermDays = termDays
+                showContractCalendar = false
+            }
+        )
+    }
+}
+
+// =========================================================================================
+// ДИАЛОГ НАСТРОЙКИ «ИНДИВИДУАЛЬНОГО ЦВЕТА КЛИЕНТА» + ФИКС. СТОИМОСТИ ПОКРАСКИ
+// =========================================================================================
+@Composable
+private fun CustomClientColorDialog(
+    initialName: String,
+    initialRal: String,
+    initialHex: Long,
+    initialPaintingCost: Double,
+    initialUseRawForStock: Boolean,
+    currencySymbol: String,
+    onDismiss: () -> Unit,
+    onSave: (name: String, ral: String, hex: Long, paintingCost: Double, useRawForStock: Boolean) -> Unit
+) {
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
+    val swatchPalette = remember {
+        listOf(
+            0xFF383E42L to "Антрацит",
+            0xFFFFFFFFL to "Белый",
+            0xFFA8A8A8L to "Серебро",
+            0xFF1F2124L to "Чёрный",
+            0xFF474A51L to "Графит",
+            0xFF442F29L to "Шоколад",
+            0xFF8B5A2BL to "Золотой дуб",
+            0xFFD32F2FL to "Красный",
+            0xFF154889L to "Синий",
+            0xFF1E5945L to "Зелёный",
+            0xFFE6D2B5L to "Слоновая кость",
+            0xFF9E5B40L to "Терракот"
+        )
+    }
+
+    var colorName by remember { mutableStateOf(initialName) }
+    var ralCode by remember { mutableStateOf(initialRal) }
+    var selectedHex by remember { mutableLongStateOf(if (initialHex != 0L) initialHex else 0xFF383E42L) }
+    var paintingCostStr by remember {
+        mutableStateOf(if (initialPaintingCost > 0.0) initialPaintingCost.toString().removeSuffix(".0") else "")
+    }
+    var useRawForStock by remember { mutableStateOf(initialUseRawForStock) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(0.96f),
+            shape = RoundedCornerShape(24.dp),
+            border = BorderStroke(0.8.dp, palette.floatingBorder),
+            color = palette.cardSurface,
+            shadowElevation = 16.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = strings.customClientColorItem,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = palette.textPrimary
+                )
+                Text(
+                    text = "Оттенок для 2D-чертежа и миниатюр:",
+                    fontSize = 12.sp,
+                    color = palette.textSecondary
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    swatchPalette.forEach { (hex, label) ->
+                        val picked = selectedHex == hex
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    selectedHex = hex
+                                    if (colorName.isBlank()) colorName = label
+                                }
+                                .padding(6.dp)
+                                .background(Color(hex), CircleShape)
+                                .border(
+                                    width = if (picked) 3.dp else 1.dp,
+                                    color = if (picked) palette.accentBlue else palette.floatingBorder,
+                                    shape = CircleShape
+                                )
+                        )
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = colorName,
+                        onValueChange = { colorName = it },
+                        label = { Text("Название цвета") },
+                        placeholder = { Text("Напр. Графит клиента") },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(1.4f)
+                            .testTag("custom_color_name_input"),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = ralCode,
+                        onValueChange = { ralCode = it },
+                        label = { Text("Код RAL") },
+                        placeholder = { Text("7024") },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(0.9f)
+                            .testTag("custom_color_ral_input"),
+                        singleLine = true
+                    )
+                }
+
+                OutlinedTextField(
+                    value = paintingCostStr,
+                    onValueChange = { paintingCostStr = it },
+                    label = { Text("Стоимость покраски (малярный цех, $currencySymbol)") },
+                    placeholder = { Text("Напр. 150") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("custom_color_cost_input"),
+                    singleLine = true
+                )
+                Text(
+                    text = "Фиксированная сумма за покраску конструкции — добавляется в смету отдельной строкой «${strings.customPaintingLineLabel}».",
+                    fontSize = 11.sp,
+                    color = palette.textSecondary
+                )
+
+                Text(
+                    text = "Цвет профиля в раскрое и остатках склада:",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = palette.textPrimary
+                )
+                val resolvedLabel = buildString {
+                    append(colorName.trim().ifBlank { "Цвет клиента" })
+                    if (ralCode.isNotBlank()) append(" (${ralCode.trim()})")
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = !useRawForStock,
+                        onClick = { useRawForStock = false },
+                        label = { Text(resolvedLabel, fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("custom_color_stock_client")
+                    )
+                    FilterChip(
+                        selected = useRawForStock,
+                        onClick = { useRawForStock = true },
+                        label = { Text(RAW_UNPAINTED_COLOR_NAME, fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("custom_color_stock_raw")
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.secondaryBackground),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("custom_color_cancel_btn")
+                    ) {
+                        Text(strings.cancelBtn, color = palette.textPrimary, fontWeight = FontWeight.SemiBold)
+                    }
+                    Button(
+                        onClick = {
+                            val parsedCost = paintingCostStr.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+                            onSave(
+                                colorName.trim().ifBlank { "Цвет клиента" },
+                                ralCode.trim(),
+                                selectedHex,
+                                parsedCost,
+                                useRawForStock
+                            )
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("custom_color_save_btn")
+                    ) {
+                        Text(strings.saveBtn, color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// =========================================================================================
+// ДИАЛОГ ДОБАВЛЕНИЯ ЦВЕТА В КАТАЛОГ ПРОФИЛЬНОЙ СИСТЕМЫ
+// =========================================================================================
+@Composable
+private fun AddProfileColorDialog(
+    onDismiss: () -> Unit,
+    onAddColor: (ProfileColorSpec) -> Unit
+) {
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
+    val quickPresets = remember {
+        listOf(
+            Triple("Антрацит", "7016", 0xFF383E42L),
+            Triple("Белый", "9016", 0xFFFFFFFFL),
+            Triple("Анодированный алюминий", "E6/EV1", 0xFFA8A8A8L),
+            Triple("Чёрный", "9005", 0xFF1F2124L)
+        )
+    }
+    val extraSwatches = remember {
+        listOf(
+            0xFF383E42L, 0xFFFFFFFFL, 0xFFA8A8A8L, 0xFF1F2124L,
+            0xFF474A51L, 0xFF442F29L, 0xFF8B5A2BL, 0xFFD32F2FL,
+            0xFF154889L, 0xFF1E5945L, 0xFFE6D2B5L, 0xFFC0C0C0L
+        )
+    }
+
+    var name by remember { mutableStateOf("") }
+    var ralCode by remember { mutableStateOf("") }
+    var selectedHex by remember { mutableLongStateOf(0xFF383E42L) }
+    var markupStr by remember { mutableStateOf("0") }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(0.96f),
+            shape = RoundedCornerShape(24.dp),
+            border = BorderStroke(0.8.dp, palette.floatingBorder),
+            color = palette.cardSurface,
+            shadowElevation = 16.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "Добавить цвет профильной системы",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = palette.textPrimary
+                )
+                Text(
+                    text = "Быстрый выбор популярных цветов:",
+                    fontSize = 12.sp,
+                    color = palette.textSecondary
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    quickPresets.forEach { (presetName, presetRal, presetHex) ->
+                        FilterChip(
+                            selected = name == presetName && selectedHex == presetHex,
+                            onClick = {
+                                name = presetName
+                                ralCode = presetRal
+                                selectedHex = presetHex
+                            },
+                            leadingIcon = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .background(Color(presetHex), CircleShape)
+                                        .border(0.8.dp, palette.floatingBorder, CircleShape)
+                                )
+                            },
+                            label = {
+                                Text("$presetName ($presetRal)", fontSize = 11.5.sp)
+                            }
+                        )
+                    }
+                }
+
+                Text(
+                    text = "Оттенок на чертеже:",
+                    fontSize = 12.sp,
+                    color = palette.textSecondary
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    extraSwatches.forEach { hex ->
+                        val picked = selectedHex == hex
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { selectedHex = hex }
+                                .padding(6.dp)
+                                .background(Color(hex), CircleShape)
+                                .border(
+                                    width = if (picked) 3.dp else 1.dp,
+                                    color = if (picked) palette.accentBlue else palette.floatingBorder,
+                                    shape = CircleShape
+                                )
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Название цвета") },
+                    placeholder = { Text("Напр. Серый") },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("add_profile_color_name"),
+                    singleLine = true
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = ralCode,
+                        onValueChange = { ralCode = it },
+                        label = { Text("Код RAL / E6") },
+                        placeholder = { Text("7016") },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("add_profile_color_ral"),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = markupStr,
+                        onValueChange = { markupStr = it },
+                        label = { Text("Наценка (%)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("add_profile_color_markup"),
+                        singleLine = true
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.secondaryBackground),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                    ) {
+                        Text(strings.cancelBtn, color = palette.textPrimary, fontWeight = FontWeight.SemiBold)
+                    }
+                    Button(
+                        onClick = {
+                            if (name.isNotBlank()) {
+                                val markup = markupStr.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+                                onAddColor(
+                                    ProfileColorSpec(
+                                        id = "col_${UUID.randomUUID().toString().take(6)}",
+                                        name = name.trim(),
+                                        ralCode = ralCode.trim(),
+                                        hexColor = selectedHex,
+                                        priceMarkupPercent = markup
+                                    )
+                                )
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("add_profile_color_confirm")
                     ) {
                         Text(strings.saveBtn, color = Color.White, fontWeight = FontWeight.Bold)
                     }
@@ -3012,21 +3563,30 @@ private fun OrdersListScreen(
     onImportOrder: () -> Unit = {},
     onExportBackup: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     val palette = LocalWinStudioPalette.current
     val strings = LocalAppStrings.current
     var searchQuery by remember { mutableStateOf("") }
-    var showIcons by remember { mutableStateOf(true) }
+    var selectedStatuses by remember {
+        mutableStateOf(AppStateStorage.loadOrdersFilterStatuses(context))
+    }
+    var showFilterDialog by remember { mutableStateOf(false) }
+    var contractDialogTargetOrder by remember { mutableStateOf<CustomerOrder?>(null) }
 
-    // Заказы всегда отображаются в порядке от нового к старому (новый наверху), без ненужной сортировки A-Z
-    val filtered = remember(orders, searchQuery) {
-        orders.filter {
-            searchQuery.isBlank() ||
-                it.orderNumber.contains(searchQuery, ignoreCase = true) ||
-                it.customerName.contains(searchQuery, ignoreCase = true) ||
-                it.customerPhone.contains(searchQuery, ignoreCase = true) ||
-                it.address.contains(searchQuery, ignoreCase = true)
+    // Заказы всегда отображаются в порядке от нового к старому (новый наверху)
+    val filtered = remember(orders, searchQuery, selectedStatuses) {
+        orders.filter { ord ->
+            ord.status in selectedStatuses && (
+                searchQuery.isBlank() ||
+                    ord.orderNumber.contains(searchQuery, ignoreCase = true) ||
+                    ord.customerName.contains(searchQuery, ignoreCase = true) ||
+                    ord.customerPhone.contains(searchQuery, ignoreCase = true) ||
+                    ord.address.contains(searchQuery, ignoreCase = true)
+                )
         }
     }
+
+    val isPartialFilter = selectedStatuses.size < OrderStatus.entries.size
 
     Column(
         modifier = Modifier
@@ -3041,32 +3601,36 @@ private fun OrdersListScreen(
                 color = palette.accentTeal.copy(alpha = 0.14f),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
+                    .heightIn(min = 36.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .clickable { onImportOrder() }
-                    .padding(horizontal = 9.dp, vertical = 6.dp)
+                    .testTag("orders_import_button")
             ) {
-                Text(strings.importBtn, color = palette.accentTeal, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-            }
-            Surface(
-                color = if (showIcons) palette.accentBlue.copy(alpha = 0.14f) else palette.segmentedBg,
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable { showIcons = !showIcons }
-                    .padding(horizontal = 9.dp, vertical = 6.dp)
-            ) {
-                Text(
-                    text = strings.iconsToggle,
-                    color = if (showIcons) palette.accentBlue else palette.textSecondary,
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Download,
+                        contentDescription = strings.importOrderHeaderBtn,
+                        tint = palette.accentTeal,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = strings.importOrderHeaderBtn,
+                        color = palette.accentTeal,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
+                    )
+                }
             }
             Surface(
                 color = palette.accentBlue,
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
-                    .size(34.dp)
+                    .size(36.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .clickable { onNewOrder() }
                     .testTag("orders_list_add_button")
@@ -3077,116 +3641,316 @@ private fun OrdersListScreen(
             }
         }
 
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            label = { Text(strings.searchOrdersHint, fontSize = 12.sp) },
-            shape = RoundedCornerShape(14.dp),
-            leadingIcon = {
-                Icon(Icons.Rounded.Search, contentDescription = null, tint = palette.textSecondary)
-            },
+        // Строка поиска + кнопка «Фильтр» справа
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 10.dp),
-            singleLine = true
-        )
-
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 12.dp),
-            contentPadding = PaddingValues(bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            items(filtered, key = { it.id }) { ord ->
-                val curSym = normalizeCurrencyDisplay(ord.currencySymbol)
-                Surface(
-                    color = palette.cardSurface,
-                    shape = RoundedCornerShape(18.dp),
-                    border = BorderStroke(0.8.dp, palette.floatingBorder),
-                    shadowElevation = if (palette.isDark) 0.dp else 2.dp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(18.dp))
-                        .clickable { onOpenOrder(ord.id) }
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                label = { Text(strings.searchOrdersHint, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                shape = RoundedCornerShape(14.dp),
+                leadingIcon = {
+                    Icon(Icons.Rounded.Search, contentDescription = null, tint = palette.textSecondary)
+                },
+                modifier = Modifier.weight(1f),
+                singleLine = true
+            )
+
+            Surface(
+                color = if (isPartialFilter) palette.accentBlue else palette.cardSurface,
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(
+                    width = if (isPartialFilter) 0.dp else 1.dp,
+                    color = if (isPartialFilter) Color.Transparent else palette.floatingBorder
+                ),
+                shadowElevation = if (palette.isDark) 0.dp else 1.5.dp,
+                modifier = Modifier
+                    .heightIn(min = 52.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable { showFilterDialog = true }
+                    .testTag("orders_filter_button")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                    Icon(
+                        imageVector = Icons.Rounded.FilterList,
+                        contentDescription = strings.filterBtn,
+                        tint = if (isPartialFilter) Color.White else palette.accentBlue,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = if (isPartialFilter) "${strings.filterBtn} (${selectedStatuses.size})" else strings.filterBtn,
+                        color = if (isPartialFilter) Color.White else palette.textPrimary,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+
+        if (filtered.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.FilterAltOff,
+                        contentDescription = null,
+                        tint = palette.textSecondary.copy(alpha = 0.6f),
+                        modifier = Modifier.size(44.dp)
+                    )
+                    Text(
+                        text = strings.emptyFilterTitle,
+                        color = palette.textSecondary,
+                        fontSize = 14.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    if (isPartialFilter) {
+                        Button(
+                            onClick = {
+                                val all = OrderStatus.entries.toSet()
+                                selectedStatuses = all
+                                AppStateStorage.saveOrdersFilterStatuses(context, all)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.heightIn(min = 48.dp)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
+                            Text(strings.resetFilterBtn, color = Color.White, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 12.dp),
+                contentPadding = PaddingValues(bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(filtered, key = { it.id }) { ord ->
+                    val curSym = normalizeCurrencyDisplay(ord.currencySymbol)
+                    val statusColor = Color(ord.status.badgeColorHex)
+                    val statusLabel = if (strings.language == AppLanguage.EN) ord.status.titleEn else ord.status.titleRu
+                    val deadlineState = remember(ord.status, ord.contractDateMillis, ord.contractTermDays) {
+                        ord.computeDeadlineState()
+                    }
+                    var statusDropdownExpanded by remember { mutableStateOf(false) }
+
+                    Surface(
+                        color = palette.cardSurface,
+                        shape = RoundedCornerShape(18.dp),
+                        border = BorderStroke(1.5.dp, statusColor.copy(alpha = 0.85f)),
+                        shadowElevation = if (palette.isDark) 0.dp else 2.dp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable { onOpenOrder(ord.id) }
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            // Строка 1: Название заказа слева + Раскрывающаяся цветная кнопка статуса справа
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Text(
                                     text = ord.orderNumber,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 15.5.sp,
-                                    color = palette.accentBlue
+                                    fontSize = 15.sp,
+                                    color = palette.accentBlue,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 8.dp)
                                 )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "${ord.customerName.ifBlank { "—" }} • ${ord.customerPhone.ifBlank { "—" }} • ${ord.address.ifBlank { "—" }}",
-                                    fontSize = 12.sp,
-                                    color = palette.textPrimary
-                                )
-                                Text(
-                                    text = "${ord.createdDate} • ${String.format(strings.windowsShortFormat, ord.windows.sumOf { it.quantity })} • $curSym • ${ord.status.titleRu}",
-                                    fontSize = 11.sp,
-                                    color = palette.textSecondary
-                                )
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(
-                                    onClick = { onExportOrder(ord) }
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.IosShare,
-                                        contentDescription = strings.exportOrderItem,
-                                        tint = palette.accentBlue
-                                    )
-                                }
-                                if (orders.size > 1) {
-                                    IconButton(
-                                        onClick = {
-                                            onUpdateOrders(orders.filterNot { it.id == ord.id })
-                                        }
+
+                                Box {
+                                    Surface(
+                                        color = statusColor,
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier
+                                            .heightIn(min = 34.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .clickable { statusDropdownExpanded = true }
+                                            .testTag("order_status_dropdown_${ord.id}")
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.DeleteOutline,
-                                            contentDescription = strings.deleteWindowDesc,
-                                            tint = palette.accentRed
-                                        )
+                                        Row(
+                                            modifier = Modifier.padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            Text(
+                                                text = statusLabel,
+                                                color = Color.White,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1
+                                            )
+                                            Icon(
+                                                imageVector = Icons.Rounded.ArrowDropDown,
+                                                contentDescription = statusLabel,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+
+                                    DropdownMenu(
+                                        expanded = statusDropdownExpanded,
+                                        onDismissRequest = { statusDropdownExpanded = false }
+                                    ) {
+                                        OrderStatus.entries.forEach { st ->
+                                            val stCol = Color(st.badgeColorHex)
+                                            val stTitle = if (strings.language == AppLanguage.EN) st.titleEn else st.titleRu
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                    ) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(12.dp)
+                                                                .background(stCol, CircleShape)
+                                                        )
+                                                        Text(
+                                                            text = stTitle,
+                                                            fontWeight = if (ord.status == st) FontWeight.Bold else FontWeight.Normal,
+                                                            fontSize = 13.5.sp
+                                                        )
+                                                    }
+                                                },
+                                                trailingIcon = if (ord.status == st) {
+                                                    {
+                                                        Icon(
+                                                            imageVector = Icons.Rounded.Check,
+                                                            contentDescription = null,
+                                                            tint = stCol,
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                    }
+                                                } else null,
+                                                onClick = {
+                                                    statusDropdownExpanded = false
+                                                    if (st == OrderStatus.CONTRACT) {
+                                                        contractDialogTargetOrder = ord
+                                                    } else {
+                                                        onUpdateOrders(
+                                                            orders.map { if (it.id == ord.id) it.copy(status = st) else it }
+                                                        )
+                                                    }
+                                                }
+                                            )
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        if (showIcons && ord.windows.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            // Строка 2: Клиент, телефон, адрес + иконки Экспорт / Удалить
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                ord.windows.forEachIndexed { idx, w ->
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(palette.secondaryBackground.copy(alpha = 0.65f))
-                                            .border(0.7.dp, palette.floatingBorder, RoundedCornerShape(12.dp))
-                                            .padding(5.dp)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "${ord.customerName.ifBlank { "—" }} • ${ord.customerPhone.ifBlank { "—" }} • ${ord.address.ifBlank { "—" }}",
+                                        fontSize = 12.sp,
+                                        color = palette.textPrimary
+                                    )
+                                    Text(
+                                        text = "${ord.createdDate} • ${String.format(strings.windowsShortFormat, ord.windows.sumOf { it.quantity })} • $curSym",
+                                        fontSize = 11.sp,
+                                        color = palette.textSecondary
+                                    )
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = { onExportOrder(ord) },
+                                        modifier = Modifier.size(40.dp)
                                     ) {
-                                        WindowMiniThumbnail(
-                                            topology = w.topology,
-                                            modifier = Modifier.size(64.dp)
+                                        Icon(
+                                            imageVector = Icons.Rounded.IosShare,
+                                            contentDescription = strings.exportOrderItem,
+                                            tint = palette.accentBlue,
+                                            modifier = Modifier.size(20.dp)
                                         )
-                                        Text(
-                                            text = "#${idx + 1} (${w.topology.totalWidthMm.roundToInt()}×${w.topology.totalHeightMm.roundToInt()})",
-                                            fontSize = 9.sp,
-                                            color = palette.textSecondary
-                                        )
+                                    }
+                                    if (orders.size > 1) {
+                                        IconButton(
+                                            onClick = {
+                                                onUpdateOrders(orders.filterNot { it.id == ord.id })
+                                            },
+                                            modifier = Modifier.size(40.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.DeleteOutline,
+                                                contentDescription = strings.deleteWindowDesc,
+                                                tint = palette.accentRed,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Смайлик контроля срока договора (на этапах Договор, Производство, Готово к монтажу, Монтаж)
+                            if (deadlineState != null) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                ContractDeadlineSmileyPill(
+                                    deadlineState = deadlineState,
+                                    onClick = { contractDialogTargetOrder = ord }
+                                )
+                            }
+
+                            // Миниатюры конструкций отображаются всегда
+                            if (ord.windows.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    ord.windows.forEachIndexed { idx, w ->
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(palette.secondaryBackground.copy(alpha = 0.65f))
+                                                .border(0.7.dp, palette.floatingBorder, RoundedCornerShape(12.dp))
+                                                .padding(5.dp)
+                                        ) {
+                                            WindowMiniThumbnail(
+                                                topology = w.topology,
+                                                modifier = Modifier.size(64.dp)
+                                            )
+                                            Text(
+                                                text = "#${idx + 1} (${w.topology.totalWidthMm.roundToInt()}×${w.topology.totalHeightMm.roundToInt()})",
+                                                fontSize = 9.sp,
+                                                color = palette.textSecondary
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -3194,6 +3958,436 @@ private fun OrdersListScreen(
                     }
                 }
             }
+        }
+    }
+
+    if (showFilterDialog) {
+        OrdersStatusFilterDialog(
+            initialSelected = selectedStatuses,
+            onDismiss = { showFilterDialog = false },
+            onApply = { updatedSet ->
+                selectedStatuses = updatedSet
+                AppStateStorage.saveOrdersFilterStatuses(context, updatedSet)
+                showFilterDialog = false
+            }
+        )
+    }
+
+    val targetForContract = contractDialogTargetOrder
+    if (targetForContract != null) {
+        ContractDeadlineDialog(
+            initialDateMillis = targetForContract.contractDateMillis,
+            initialTermDays = targetForContract.contractTermDays,
+            onDismiss = { contractDialogTargetOrder = null },
+            onConfirm = { pickedDateMs, termDays ->
+                val nextStatus = if (targetForContract.status.showDeadlineSmiley) {
+                    targetForContract.status
+                } else {
+                    OrderStatus.CONTRACT
+                }
+                onUpdateOrders(
+                    orders.map {
+                        if (it.id == targetForContract.id) {
+                            it.copy(
+                                status = nextStatus,
+                                contractDateMillis = pickedDateMs,
+                                contractTermDays = termDays
+                            )
+                        } else it
+                    }
+                )
+                contractDialogTargetOrder = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun OrdersStatusFilterDialog(
+    initialSelected: Set<OrderStatus>,
+    onDismiss: () -> Unit,
+    onApply: (Set<OrderStatus>) -> Unit
+) {
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
+    var draftSelected by remember(initialSelected) { mutableStateOf(initialSelected) }
+    val allSelected = draftSelected.size == OrderStatus.entries.size
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(0.96f),
+            shape = RoundedCornerShape(24.dp),
+            border = BorderStroke(0.8.dp, palette.floatingBorder),
+            color = palette.cardSurface,
+            shadowElevation = 16.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Длинная кнопка сверху — «Показать все» (включает все 8 или гасит все 8)
+                Button(
+                    onClick = {
+                        draftSelected = if (allSelected) emptySet() else OrderStatus.entries.toSet()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (allSelected) palette.accentBlue else palette.secondaryBackground
+                    ),
+                    border = if (allSelected) null else BorderStroke(1.dp, palette.floatingBorder),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("orders_filter_show_all_btn")
+                ) {
+                    Text(
+                        text = strings.showAllBtn,
+                        color = if (allSelected) Color.White else palette.textPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Два столбика по 4 цветные кнопки статусов
+                val rows = OrderStatus.entries.chunked(2)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    rows.forEach { pair ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            pair.forEach { st ->
+                                val isSel = st in draftSelected
+                                val stColor = Color(st.badgeColorHex)
+                                val title = if (strings.language == AppLanguage.EN) st.titleEn else st.titleRu
+                                Surface(
+                                    color = if (isSel) stColor else palette.secondaryBackground.copy(alpha = 0.7f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    border = BorderStroke(
+                                        width = if (isSel) 0.dp else 1.dp,
+                                        color = if (isSel) Color.Transparent else stColor.copy(alpha = 0.45f)
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .heightIn(min = 48.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            draftSelected = if (isSel) draftSelected - st else draftSelected + st
+                                        }
+                                        .testTag("orders_filter_status_${st.name}")
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(10.dp)
+                                                .background(
+                                                    color = if (isSel) Color.White else stColor,
+                                                    shape = CircleShape
+                                                )
+                                        )
+                                        Text(
+                                            text = title,
+                                            color = if (isSel) Color.White else palette.textSecondary,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Кнопка «ОК» внизу
+                Button(
+                    onClick = { onApply(draftSelected) },
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.accentGreen),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("orders_filter_ok_btn")
+                ) {
+                    Text(
+                        text = strings.filterOkBtn,
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ContractDeadlineDialog(
+    initialDateMillis: Long?,
+    initialTermDays: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (dateMillis: Long, termDays: Int) -> Unit
+) {
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = initialDateMillis ?: System.currentTimeMillis()
+    )
+    val initialWeeks = ((initialTermDays.coerceAtLeast(1) + 3) / 7).coerceAtLeast(1)
+    var weeksInput by remember { mutableStateOf(initialWeeks.toString()) }
+    val activeTermDays = ((weeksInput.toIntOrNull() ?: initialWeeks).coerceIn(1, 52)) * 7
+
+    val pickedDateMs = datePickerState.selectedDateMillis ?: initialDateMillis ?: System.currentTimeMillis()
+    val previewDeadlineText = remember(pickedDateMs, activeTermDays) {
+        val cal = java.util.Calendar.getInstance().apply {
+            timeInMillis = pickedDateMs
+            add(java.util.Calendar.DAY_OF_YEAR, activeTermDays)
+        }
+        val fmt = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+        String.format(strings.contractDeadlinePreviewFormat, fmt.format(cal.time), activeTermDays)
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 18.dp),
+            shape = RoundedCornerShape(24.dp),
+            border = BorderStroke(0.8.dp, palette.floatingBorder),
+            color = palette.cardSurface,
+            shadowElevation = 16.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = strings.contractDialogTitle,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = palette.textPrimary,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+
+                DatePicker(
+                    state = datePickerState,
+                    title = null,
+                    headline = null,
+                    showModeToggle = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Text(
+                    text = strings.contractTermLabel,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = palette.textSecondary,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(2, 3, 4, 6, 8).forEach { w ->
+                        val isSel = weeksInput == w.toString()
+                        FilterChip(
+                            selected = isSel,
+                            onClick = { weeksInput = w.toString() },
+                            label = {
+                                Text(
+                                    text = "$w нед.",
+                                    fontSize = 12.sp,
+                                    color = if (isSel) Color.White else palette.textPrimary
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = palette.accentTeal,
+                                containerColor = palette.secondaryBackground
+                            )
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = weeksInput,
+                        onValueChange = { weeksInput = it.filter { ch -> ch.isDigit() } },
+                        label = { Text("Недель", fontSize = 12.sp) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.width(105.dp),
+                        singleLine = true
+                    )
+                    Surface(
+                        color = palette.accentTeal.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = previewDeadlineText,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = palette.accentTeal,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp)
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.secondaryBackground),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                    ) {
+                        Text(strings.cancelBtn, color = palette.textPrimary, fontWeight = FontWeight.SemiBold)
+                    }
+                    Button(
+                        onClick = { onConfirm(pickedDateMs, activeTermDays) },
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentTeal),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("contract_dialog_save_btn")
+                    ) {
+                        Text(strings.saveBtn, color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContractDeadlineSmileyPill(
+    deadlineState: ContractDeadlineState,
+    onClick: () -> Unit
+) {
+    val strings = LocalAppStrings.current
+    val (bgColor, accentColor) = when (deadlineState.mood) {
+        DeadlineMood.HAPPY_GREEN -> Color(0xFF249A41).copy(alpha = 0.13f) to Color(0xFF1E8738)
+        DeadlineMood.CAUTIOUS_YELLOW -> Color(0xFFF59E0B).copy(alpha = 0.16f) to Color(0xFFB45309)
+        DeadlineMood.SCARED_RED -> Color(0xFFE53935).copy(alpha = 0.14f) to Color(0xFFC62828)
+    }
+    val faceColor = when (deadlineState.mood) {
+        DeadlineMood.HAPPY_GREEN -> Color(0xFF28A745)
+        DeadlineMood.CAUTIOUS_YELLOW -> Color(0xFFF59E0B)
+        DeadlineMood.SCARED_RED -> Color(0xFFE53935)
+    }
+    val textLabel = when {
+        deadlineState.daysRemaining > 0 -> String.format(strings.deadlineLeftFormat, deadlineState.daysRemaining)
+        deadlineState.daysRemaining == 0 -> strings.deadlineToday
+        else -> String.format(strings.deadlineOverdueFormat, -deadlineState.daysRemaining)
+    }
+
+    Surface(
+        color = bgColor,
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(0.7.dp, faceColor.copy(alpha = 0.45f)),
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .clickable { onClick() }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Canvas(modifier = Modifier.size(20.dp)) {
+                val r = size.minDimension / 2f
+                val cx = size.width / 2f
+                val cy = size.height / 2f
+
+                // Круг лица
+                drawCircle(color = faceColor, radius = r)
+
+                when (deadlineState.mood) {
+                    DeadlineMood.HAPPY_GREEN -> {
+                        // Довольный зелёный смайлик
+                        drawCircle(color = Color.White, radius = r * 0.13f, center = Offset(cx - r * 0.34f, cy - r * 0.22f))
+                        drawCircle(color = Color.White, radius = r * 0.13f, center = Offset(cx + r * 0.34f, cy - r * 0.22f))
+                        val smile = Path().apply {
+                            moveTo(cx - r * 0.42f, cy + r * 0.12f)
+                            quadraticBezierTo(cx, cy + r * 0.56f, cx + r * 0.42f, cy + r * 0.12f)
+                        }
+                        drawPath(smile, color = Color.White, style = Stroke(width = r * 0.16f, cap = StrokeCap.Round))
+                    }
+
+                    DeadlineMood.CAUTIOUS_YELLOW -> {
+                        // Настороженный жёлтый смайлик
+                        drawLine(
+                            color = Color(0xFF4A2B00),
+                            start = Offset(cx - r * 0.50f, cy - r * 0.36f),
+                            end = Offset(cx - r * 0.18f, cy - r * 0.46f),
+                            strokeWidth = r * 0.12f,
+                            cap = StrokeCap.Round
+                        )
+                        drawLine(
+                            color = Color(0xFF4A2B00),
+                            start = Offset(cx + r * 0.18f, cy - r * 0.46f),
+                            end = Offset(cx + r * 0.50f, cy - r * 0.36f),
+                            strokeWidth = r * 0.12f,
+                            cap = StrokeCap.Round
+                        )
+                        drawCircle(color = Color(0xFF4A2B00), radius = r * 0.13f, center = Offset(cx - r * 0.34f, cy - r * 0.15f))
+                        drawCircle(color = Color(0xFF4A2B00), radius = r * 0.13f, center = Offset(cx + r * 0.34f, cy - r * 0.15f))
+                        val mouth = Path().apply {
+                            moveTo(cx - r * 0.36f, cy + r * 0.28f)
+                            quadraticBezierTo(cx, cy + r * 0.16f, cx + r * 0.36f, cy + r * 0.28f)
+                        }
+                        drawPath(mouth, color = Color(0xFF4A2B00), style = Stroke(width = r * 0.15f, cap = StrokeCap.Round))
+                    }
+
+                    DeadlineMood.SCARED_RED -> {
+                        // Испуганный красный смайлик (широкие глаза + рот буквой О)
+                        drawCircle(color = Color.White, radius = r * 0.22f, center = Offset(cx - r * 0.34f, cy - r * 0.20f))
+                        drawCircle(color = Color.White, radius = r * 0.22f, center = Offset(cx + r * 0.34f, cy - r * 0.20f))
+                        drawCircle(color = Color(0xFF3E0000), radius = r * 0.09f, center = Offset(cx - r * 0.34f, cy - r * 0.20f))
+                        drawCircle(color = Color(0xFF3E0000), radius = r * 0.09f, center = Offset(cx + r * 0.34f, cy - r * 0.20f))
+                        drawCircle(
+                            color = Color.White,
+                            radius = r * 0.22f,
+                            center = Offset(cx, cy + r * 0.34f),
+                            style = Stroke(width = r * 0.15f)
+                        )
+                    }
+                }
+            }
+            Text(
+                text = textLabel,
+                color = accentColor,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }
@@ -3344,16 +4538,25 @@ private fun ProfileConstructorScreen(
             var rubberAllowMm by remember(activeSys.id) { mutableStateOf(fmtMm(activeSys.rubberAllowanceTotalMm)) }
             var shtapikList by remember(activeSys.id) { mutableStateOf(activeSys.shtapikVariants) }
 
+            // Цвета данной профильной системы
+            var colorsList by remember(activeSys.id) { mutableStateOf(activeSys.colors) }
+            var showAddColorDialog by remember { mutableStateOf(false) }
+
             // Угловые сухари (комплекты на 4 угла рамы, створки, двери и на 1 импост)
             var cleatFrameSetPrice by remember(activeSys.id) { mutableStateOf(activeSys.priceCornerConnectorFrame.toString()) }
             var cleatImpostSetPrice by remember(activeSys.id) { mutableStateOf(activeSys.priceImpostConnector.toString()) }
             var cleatSashSetPrice by remember(activeSys.id) { mutableStateOf(activeSys.priceCornerConnectorSash.toString()) }
             var cleatDoorSetPrice by remember(activeSys.id) { mutableStateOf(activeSys.priceCornerConnectorDoorSash.toString()) }
 
-            fun saveCurrentSystem() {
+            fun buildDraftSystem(
+                overrideId: String = activeSys.id,
+                overrideName: String = name.ifBlank { activeSys.name },
+                overrideColors: List<ProfileColorSpec> = colorsList
+            ): ProfileSystemSpec {
                 val primaryShtapik = shtapikList.firstOrNull()
-                val updatedSys = activeSys.copy(
-                    name = name.ifBlank { activeSys.name },
+                return activeSys.copy(
+                    id = overrideId,
+                    name = overrideName,
                     materialType = matType,
                     stockBarLengthMm = parseMmOrNull(stockBarLen) ?: activeSys.stockBarLengthMm,
                     weldAllowancePerCornerMm = parseMmOrNull(weldAllow) ?: activeSys.weldAllowancePerCornerMm,
@@ -3396,17 +4599,35 @@ private fun ProfileConstructorScreen(
                     priceShtulpPerM = priceShtulpM.replace(',', '.').toDoubleOrNull() ?: activeSys.priceShtulpPerM,
                     // H. Штапики
                     rubberAllowanceTotalMm = parseMmOrNull(rubberAllowMm) ?: activeSys.rubberAllowanceTotalMm,
-                    shtapikVariants = shtapikList,
+                    shtapikVariants = shtapikList.map { it.copy() },
                     shtapikWidthMm = primaryShtapik?.widthH2Mm ?: activeSys.shtapikWidthMm,
                     priceShtapikPerM = primaryShtapik?.pricePerM ?: activeSys.priceShtapikPerM,
+                    // Цвета профильной системы
+                    colors = overrideColors.map { it.copy() },
                     // Угловые сухари (комплекты)
                     priceCornerConnectorFrame = cleatFrameSetPrice.replace(',', '.').toDoubleOrNull() ?: activeSys.priceCornerConnectorFrame,
                     priceImpostConnector = cleatImpostSetPrice.replace(',', '.').toDoubleOrNull() ?: activeSys.priceImpostConnector,
                     priceCornerConnectorSash = cleatSashSetPrice.replace(',', '.').toDoubleOrNull() ?: activeSys.priceCornerConnectorSash,
                     priceCornerConnectorDoorSash = cleatDoorSetPrice.replace(',', '.').toDoubleOrNull() ?: activeSys.priceCornerConnectorDoorSash
                 )
+            }
+
+            fun saveCurrentSystem() {
+                val updatedSys = buildDraftSystem()
                 onSaveProfiles(profileSystems.map { if (it.id == updatedSys.id) updatedSys else it })
                 savedBannerText = "Профильная система «${updatedSys.name}» сохранена!"
+            }
+
+            fun copyCurrentProfileSystem() {
+                val baseName = name.trim().ifBlank { activeSys.name }
+                val copied = buildDraftSystem(
+                    overrideId = "sys_${UUID.randomUUID().toString().take(6)}",
+                    overrideName = "$baseName (Копия)"
+                )
+                onSaveProfiles(profileSystems + copied)
+                selectedId = copied.id
+                expandedSection = ProfileAccordionSection.RAMA_A
+                savedBannerText = "Создана и открыта копия системы «${copied.name}»"
             }
 
             Column(
@@ -3547,12 +4768,41 @@ private fun ProfileConstructorScreen(
                     shadowElevation = if (palette.isDark) 0.dp else 2.dp
                 ) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            "Редактирование системы: «$name»",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.5.sp,
-                            color = palette.accentBlue
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Редактирование системы: «$name»",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.5.sp,
+                                color = palette.accentBlue,
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedButton(
+                                onClick = { copyCurrentProfileSystem() },
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("profile_copy_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.ContentCopy,
+                                    contentDescription = strings.copySystemBtn,
+                                    tint = palette.accentBlue,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = strings.copySystemBtn,
+                                    color = palette.accentBlue,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
                         OutlinedTextField(
                             value = name,
                             onValueChange = { name = it },
@@ -3576,6 +4826,125 @@ private fun ProfileConstructorScreen(
                                     label = { Text(mt.titleRu, fontSize = 11.5.sp) }
                                 )
                             }
+                        }
+
+                        // Блок «Каталог цветов системы»
+                        Surface(
+                            color = palette.secondaryBackground.copy(alpha = 0.65f),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(0.8.dp, palette.floatingBorder),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${strings.profileColorsTitle} (${colorsList.size})",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.5.sp,
+                                        color = palette.textPrimary
+                                    )
+                                    Button(
+                                        onClick = { showAddColorDialog = true },
+                                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                                        shape = RoundedCornerShape(12.dp),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                        modifier = Modifier
+                                            .heightIn(min = 48.dp)
+                                            .testTag("profile_add_color_button")
+                                    ) {
+                                        Text(strings.addColorBtn, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+
+                                if (colorsList.isEmpty()) {
+                                    Text(
+                                        text = "Цвета не заданы — нажмите «${strings.addColorBtn}».",
+                                        fontSize = 12.sp,
+                                        color = palette.textSecondary
+                                    )
+                                } else {
+                                    colorsList.forEach { clr ->
+                                        Surface(
+                                            color = palette.cardSurface,
+                                            shape = RoundedCornerShape(12.dp),
+                                            border = BorderStroke(0.6.dp, palette.floatingBorder),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(26.dp)
+                                                        .background(Color(clr.hexColor), CircleShape)
+                                                        .border(1.dp, palette.floatingBorder, CircleShape)
+                                                )
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    val ralTxt = if (clr.ralCode.isNotBlank()) " • RAL ${clr.ralCode}" else ""
+                                                    Text(
+                                                        text = "${clr.name}$ralTxt",
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        fontSize = 13.sp,
+                                                        color = palette.textPrimary
+                                                    )
+                                                    Text(
+                                                        text = if (clr.priceMarkupPercent > 0.0) {
+                                                            "Наценка на профиль: +${clr.priceMarkupPercent.roundToInt()}%"
+                                                        } else {
+                                                            "Базовый цвет (наценка 0%)"
+                                                        },
+                                                        fontSize = 11.sp,
+                                                        color = if (clr.priceMarkupPercent > 0.0) palette.accentOrange else palette.textSecondary
+                                                    )
+                                                }
+                                                IconButton(
+                                                    onClick = {
+                                                        val nextColors = colorsList.filterNot { it.id == clr.id }
+                                                        colorsList = nextColors
+                                                        val updatedSys = buildDraftSystem(overrideColors = nextColors)
+                                                        onSaveProfiles(profileSystems.map { if (it.id == updatedSys.id) updatedSys else it })
+                                                    },
+                                                    modifier = Modifier
+                                                        .size(48.dp)
+                                                        .testTag("profile_delete_color_${clr.id}")
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.DeleteOutline,
+                                                        contentDescription = "Удалить цвет ${clr.name}",
+                                                        tint = palette.accentRed,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (showAddColorDialog) {
+                            AddProfileColorDialog(
+                                onDismiss = { showAddColorDialog = false },
+                                onAddColor = { newColor ->
+                                    val nextColors = colorsList + newColor
+                                    colorsList = nextColors
+                                    val updatedSys = buildDraftSystem(overrideColors = nextColors)
+                                    onSaveProfiles(profileSystems.map { if (it.id == updatedSys.id) updatedSys else it })
+                                    showAddColorDialog = false
+                                    savedBannerText = "Цвет «${newColor.name}» добавлен в систему"
+                                }
+                            )
                         }
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedTextField(
@@ -4453,7 +5822,6 @@ private enum class PriceCatalogTab(val titleRu: String) {
     PROFILES_AND_CLEATS("Профили и сухари"),
     GLAZING("Стеклопакеты"),
     HARDWARE("Фурнитура"),
-    COLORS("Цвета"),
     EXTRAS("Разное"),
     WORKS("Работы")
 }
@@ -4978,192 +6346,6 @@ private fun PricesEditorScreen(
                 }
             }
 
-            PriceCatalogTab.COLORS -> {
-                val colorPalette = remember {
-                    listOf(
-                        0xFFD32F2FL to "Красный (RAL 3020)",
-                        0xFF9B1B30L to "Рубиновый (RAL 3003)",
-                        0xFF383E42L to "Антрацит (RAL 7016)",
-                        0xFF474A51L to "Графит (RAL 7024)",
-                        0xFF442F29L to "Шоколад (RAL 8017)",
-                        0xFF3D3635L to "Тёмно-коричневый (RAL 8019)",
-                        0xFF8B5A2BL to "Золотой дуб",
-                        0xFF4A2E1BL to "Тёмный / Морёный дуб",
-                        0xFF6B2D26L to "Махагон",
-                        0xFF6E472BL to "Орех",
-                        0xFF1F2124L to "Чёрный муар (RAL 9005)",
-                        0xFFA5A9B0L to "Серебристый (RAL 9006)",
-                        0xFF1E5945L to "Зелёный мох (RAL 6005)",
-                        0xFF154889L to "Синий (RAL 5005)",
-                        0xFFE6D2B5L to "Слоновая кость (RAL 1015)",
-                        0xFFF5F7FAL to "Белый (RAL 9016)"
-                    )
-                }
-                var newClrName by remember { mutableStateOf("") }
-                var newClrMarkup by remember { mutableStateOf("15") }
-                var selectedNewHex by remember { mutableLongStateOf(colorPalette.first().first) }
-
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    item {
-                        Surface(
-                            color = palette.cardSurface,
-                            shape = RoundedCornerShape(20.dp),
-                            border = BorderStroke(0.8.dp, palette.floatingBorder),
-                            shadowElevation = if (palette.isDark) 0.dp else 2.dp
-                        ) {
-                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text(
-                                    "Добавить цвет / ламинацию в прайс",
-                                    fontWeight = FontWeight.Bold,
-                                    color = palette.accentBlue
-                                )
-                                Text(
-                                    "Выберите оттенок для отображения на 2D-чертеже и в PDF:",
-                                    fontSize = 12.sp,
-                                    color = palette.textSecondary
-                                )
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    colorPalette.forEach { (hex, presetLabel) ->
-                                        val isPicked = selectedNewHex == hex
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            modifier = Modifier
-                                                .clickable {
-                                                    selectedNewHex = hex
-                                                    if (newClrName.isBlank()) {
-                                                        newClrName = presetLabel
-                                                    }
-                                                }
-                                                .padding(2.dp)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(if (isPicked) 36.dp else 30.dp)
-                                                    .background(Color(hex), RoundedCornerShape(10.dp))
-                                                    .border(
-                                                        width = if (isPicked) 3.dp else 1.dp,
-                                                        color = if (isPicked) palette.accentBlue else palette.floatingBorder,
-                                                        shape = RoundedCornerShape(10.dp)
-                                                    )
-                                            )
-                                        }
-                                    }
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(38.dp)
-                                            .background(Color(selectedNewHex), RoundedCornerShape(10.dp))
-                                            .border(1.2.dp, palette.floatingBorder, RoundedCornerShape(10.dp))
-                                    )
-                                    OutlinedTextField(
-                                        value = newClrName,
-                                        onValueChange = { newClrName = it },
-                                        label = { Text("Цвет (напр. Антрацит)") },
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier.weight(1.4f),
-                                        singleLine = true
-                                    )
-                                    OutlinedTextField(
-                                        value = newClrMarkup,
-                                        onValueChange = { newClrMarkup = it },
-                                        label = { Text("Наценка (%)") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier.weight(0.8f),
-                                        singleLine = true
-                                    )
-                                    Button(
-                                        onClick = {
-                                            if (newClrName.isNotBlank()) {
-                                                val p = newClrMarkup.replace(',', '.').toDoubleOrNull() ?: 10.0
-                                                val item = ColorCatalogItem(
-                                                    id = "clr_${UUID.randomUUID().toString().take(6)}",
-                                                    name = newClrName.trim(),
-                                                    hexColor = selectedNewHex,
-                                                    priceMarkupPercent = p
-                                                )
-                                                onSaveColors(colorCatalog + item)
-                                                newClrName = ""
-                                            }
-                                        },
-                                        shape = RoundedCornerShape(12.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
-                                        modifier = Modifier.height(48.dp)
-                                    ) {
-                                        Icon(Icons.Rounded.Add, contentDescription = strings.saveBtn, tint = Color.White)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    items(colorCatalog.filter { it.id != "none" }, key = { it.id }) { item ->
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            EditablePriceRowCard(
-                                title = item.name,
-                                subtitle = "Наценка к профилю (%) • Выберите оттенок ниже",
-                                initialPrice = item.priceMarkupPercent,
-                                currencySymbol = "%",
-                                onSavePrice = { newP ->
-                                    onSaveColors(colorCatalog.map { if (it.id == item.id) it.copy(priceMarkupPercent = newP) else it })
-                                    savedToast = "Обновлена наценка цвета «${item.name}»"
-                                },
-                                onDelete = { onSaveColors(colorCatalog.filterNot { it.id == item.id }) }
-                            )
-                            Surface(
-                                color = palette.cardSurface,
-                                shape = RoundedCornerShape(14.dp),
-                                border = BorderStroke(0.6.dp, palette.floatingBorder)
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 12.dp, vertical = 8.dp)
-                                        .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text("Оттенок:", fontSize = 11.5.sp, color = palette.textSecondary, fontWeight = FontWeight.Medium)
-                                    colorPalette.forEach { (hex, _) ->
-                                        val isCurrent = item.hexColor == hex
-                                        Box(
-                                            modifier = Modifier
-                                                .size(if (isCurrent) 26.dp else 22.dp)
-                                                .background(Color(hex), RoundedCornerShape(7.dp))
-                                                .border(
-                                                    width = if (isCurrent) 2.5.dp else 1.dp,
-                                                    color = if (isCurrent) palette.accentBlue else palette.floatingBorder,
-                                                    shape = RoundedCornerShape(7.dp)
-                                                )
-                                                .clickable {
-                                                    onSaveColors(
-                                                        colorCatalog.map {
-                                                            if (it.id == item.id) it.copy(hexColor = hex) else it
-                                                        }
-                                                    )
-                                                    savedToast = "Обновлён оттенок для «${item.name}»"
-                                                }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
             PriceCatalogTab.EXTRAS -> {
                 var newExtName by remember { mutableStateOf("") }
                 var newExtPrice by remember { mutableStateOf("15") }
@@ -5461,6 +6643,12 @@ private fun WarehouseBySystemScreen(
     val activeSys = profileSystems.find { it.id == selectedFolderSysId } ?: profileSystems.firstOrNull()
 
     var selectedRole by remember { mutableStateOf(ProfileRole.FRAME) }
+    var selectedColorName by remember(activeSys?.id) {
+        mutableStateOf(activeSys?.colors?.firstOrNull()?.name ?: RAW_UNPAINTED_COLOR_NAME)
+    }
+    var selectedColorHex by remember(activeSys?.id) {
+        mutableLongStateOf(activeSys?.colors?.firstOrNull()?.hexColor ?: 0xFFC0C0C0L)
+    }
     var barLengthMm by remember(activeSys?.id) {
         mutableStateOf((activeSys?.stockBarLengthMm?.roundToInt() ?: 6000).toString())
     }
@@ -5632,6 +6820,55 @@ private fun WarehouseBySystemScreen(
                                 }
                             }
 
+                            // Выбор цвета профиля для прихода на склад
+                            val warehouseColorOptions = remember(activeSys.id, activeSys.colors) {
+                                (activeSys.colors.map { it.name to it.hexColor } + (RAW_UNPAINTED_COLOR_NAME to 0xFFC0C0C0L))
+                                    .distinctBy { it.first }
+                            }
+                            Text(
+                                text = "Цвет профиля:",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = palette.textSecondary
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                warehouseColorOptions.forEach { (cName, cHex) ->
+                                    val sel = selectedColorName == cName
+                                    FilterChip(
+                                        selected = sel,
+                                        onClick = {
+                                            selectedColorName = cName
+                                            selectedColorHex = cHex
+                                        },
+                                        leadingIcon = {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(14.dp)
+                                                    .background(Color(cHex), CircleShape)
+                                                    .border(0.8.dp, palette.floatingBorder, CircleShape)
+                                            )
+                                        },
+                                        label = {
+                                            Text(
+                                                text = cName,
+                                                fontSize = 11.5.sp,
+                                                color = if (sel) Color.White else palette.textPrimary
+                                            )
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = palette.accentTeal,
+                                            containerColor = palette.secondaryBackground
+                                        )
+                                    )
+                                }
+                            }
+
                             if (isFullShipmentBar) {
                                 Row(
                                     modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -5680,7 +6917,9 @@ private fun WarehouseBySystemScreen(
                                         role = selectedRole,
                                         lengthMm = len,
                                         quantity = qty,
-                                        isFullStockBar = isFullShipmentBar
+                                        isFullStockBar = isFullShipmentBar,
+                                        colorName = selectedColorName,
+                                        colorHex = selectedColorHex
                                     )
                                     onSaveStock(listOf(newEntry) + stockBars)
                                 },
@@ -5775,18 +7014,47 @@ private fun StockBarRowCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
                     text = "${item.role.titleRu} — длина ${item.lengthMm} мм (${String.format(Locale.US, "%.2f", item.lengthMm / 1000.0)} м)",
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 13.5.sp,
                     color = palette.textPrimary
                 )
-                Text(
-                    text = if (item.isFullStockBar) "Целый складской хлыст" else "Деловой остаток после раскроя",
-                    fontSize = 11.5.sp,
-                    color = if (item.isFullStockBar) palette.accentTeal else palette.accentGreen
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Surface(
+                        color = palette.secondaryBackground,
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(0.6.dp, palette.floatingBorder)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .background(Color(item.colorHex), CircleShape)
+                                    .border(0.6.dp, palette.floatingBorder, CircleShape)
+                            )
+                            Text(
+                                text = item.colorName,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = palette.textPrimary
+                            )
+                        }
+                    }
+                    Text(
+                        text = if (item.isFullStockBar) "Целый хлыст" else "Деловой остаток",
+                        fontSize = 11.sp,
+                        color = if (item.isFullStockBar) palette.accentTeal else palette.accentGreen
+                    )
+                }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
@@ -5819,99 +7087,7 @@ private fun StockBarRowCard(
 }
 
 // =========================================================================================
-// 7. ДОСКА СТАТУСОВ ЗАКАЗОВ (МЕНЕДЖЕР АКТИВНЫХ ЗАКАЗОВ)
-// =========================================================================================
-@Composable
-private fun OrderStatusManagerScreen(
-    orders: List<CustomerOrder>,
-    onBack: () -> Unit,
-    onOpenOrder: (String) -> Unit,
-    onUpdateOrders: (List<CustomerOrder>) -> Unit
-) {
-    val palette = LocalWinStudioPalette.current
-    val strings = LocalAppStrings.current
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(palette.background)
-    ) {
-        UnifiedTopAppBar(
-            title = strings.statusesScreenTitle,
-            onBack = onBack
-        )
-
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            items(orders, key = { it.id }) { ord ->
-                Surface(
-                    color = palette.cardSurface,
-                    shape = RoundedCornerShape(18.dp),
-                    border = BorderStroke(0.8.dp, palette.floatingBorder),
-                    shadowElevation = if (palette.isDark) 0.dp else 2.dp,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f).clickable { onOpenOrder(ord.id) }) {
-                                Text(ord.orderNumber, fontWeight = FontWeight.Bold, fontSize = 15.5.sp, color = palette.textPrimary)
-                                Text(
-                                    "Клиент: ${ord.customerName.ifBlank { "не указан" }} • Конструкций: ${ord.windows.sumOf { it.quantity }} шт.",
-                                    fontSize = 12.sp,
-                                    color = palette.textSecondary
-                                )
-                            }
-                            TextButton(onClick = { onOpenOrder(ord.id) }) {
-                                Text(strings.openDrawingArrow, color = palette.accentBlue, fontWeight = FontWeight.SemiBold)
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            OrderStatus.entries.forEach { st ->
-                                val sel = ord.status == st
-                                FilterChip(
-                                    selected = sel,
-                                    onClick = {
-                                        onUpdateOrders(
-                                            orders.map { if (it.id == ord.id) ord.copy(status = st) else it }
-                                        )
-                                    },
-                                    label = {
-                                        Text(
-                                            st.titleRu,
-                                            fontSize = 11.5.sp,
-                                            color = if (sel) Color.White else palette.textPrimary
-                                        )
-                                    },
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = palette.accentTeal,
-                                        containerColor = palette.secondaryBackground
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// =========================================================================================
-// 8. МОДУЛЬ "ЗАДАНИЕ В ЦЕХ И 1D РАСКРОЙ ПРОФИЛЯ (С УЧЁТОМ СКЛАДА И ДЕЛОВЫХ ОСТАТКОВ)"
+// 7. МОДУЛЬ "ЗАДАНИЕ В ЦЕХ И 1D РАСКРОЙ ПРОФИЛЯ (С УЧЁТОМ СКЛАДА И ДЕЛОВЫХ ОСТАТКОВ)"
 // =========================================================================================
 @Composable
 private fun WorkshopAndCuttingScreen(
@@ -5981,7 +7157,9 @@ private fun WorkshopAndCuttingScreen(
                                     role = sum.role,
                                     lengthMm = remLen,
                                     quantity = 1,
-                                    isFullStockBar = false
+                                    isFullStockBar = false,
+                                    colorName = sum.colorName,
+                                    colorHex = sum.colorHex
                                 )
                             }
                         }
@@ -6047,12 +7225,23 @@ private fun WorkshopAndCuttingScreen(
                     shadowElevation = if (palette.isDark) 0.dp else 2.dp
                 ) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(
-                            "${sum.role.titleRu.uppercase()} — ${sum.profileSystemName} (хлыст ${sum.stockBarLengthMm} мм)",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            color = palette.accentBlue
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .background(Color(sum.colorHex), CircleShape)
+                                    .border(0.8.dp, palette.floatingBorder, CircleShape)
+                            )
+                            Text(
+                                "${sum.role.titleRu.uppercase()} — ${sum.profileSystemName} [${sum.colorName}] (хлыст ${sum.stockBarLengthMm} мм)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = palette.accentBlue
+                            )
+                        }
                         Text(
                             "Новых хлыстов: ${sum.newFullBarsToBuyCount} шт. • Из остатков склада: ${sum.usedRemnantBarsCount} шт. • Деталей: ${sum.totalCutPiecesCount} шт. (${String.format(Locale.US, "%.2f", sum.totalNetLengthM)} м) • Отход: ${String.format(Locale.US, "%.1f", sum.wastePercent)}%",
                             fontSize = 12.sp,
@@ -6093,13 +7282,24 @@ private fun WorkshopAndCuttingScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                "${bar.role.titleRu.uppercase()} (${bar.profileSystemName}) — Хлыст #${bar.barNumber}",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                color = palette.textPrimary,
-                                modifier = Modifier.weight(1f)
-                            )
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(12.dp)
+                                        .background(Color(bar.colorHex), CircleShape)
+                                        .border(0.7.dp, palette.floatingBorder, CircleShape)
+                                )
+                                Text(
+                                    "${bar.role.titleRu.uppercase()} (${bar.profileSystemName} • ${bar.colorName}) — Хлыст #${bar.barNumber}",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = palette.textPrimary
+                                )
+                            }
                             Text(
                                 if (bar.isFromRemnantStock) "СО СКЛАДА ОСТАТКОВ (${bar.sourceLengthMm} мм)"
                                 else "ЦЕЛЫЙ ХЛЫСТ (${bar.sourceLengthMm} мм)",

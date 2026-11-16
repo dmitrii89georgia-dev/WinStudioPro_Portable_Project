@@ -220,7 +220,6 @@ fun IosHomeDashboard(
     onOpenProfileConstructor: () -> Unit,
     onOpenPrices: () -> Unit,
     onOpenWarehouse: () -> Unit,
-    onOpenOrderStatuses: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     val p = LocalWinStudioPalette.current
@@ -231,7 +230,6 @@ fun IosHomeDashboard(
     val prevOrder = orders.getOrNull(1)
     val fullBarsCount = stockRemnants.filter { it.isFullStockBar }.sumOf { it.quantity }
     val remnantsCount = stockRemnants.filter { !it.isFullStockBar }.sumOf { it.quantity }
-    val inWorkCount = orders.count { it.status == OrderStatus.IN_WORKSHOP || it.status == OrderStatus.CONFIRMED }
 
     Column(
         modifier = Modifier
@@ -249,21 +247,14 @@ fun IosHomeDashboard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "WinStudio Pro",
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = (-0.5).sp,
-                    color = p.textPrimary
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = String.format(s.appSubtitleFormat, profileSystems.size, orders.size),
-                    fontSize = 13.sp,
-                    color = p.textSecondary
-                )
-            }
+            Text(
+                text = "WinStudio Pro",
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = (-0.5).sp,
+                color = p.textPrimary,
+                modifier = Modifier.weight(1f)
+            )
 
             // Кнопка быстрого перехода в Настройки
             Surface(
@@ -419,35 +410,62 @@ fun IosHomeDashboard(
             )
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        val themeChip = if (uiSettings.themeMode == AppThemeMode.DARK) s.themeDark else s.themeLight
+        val curDisp = normalizeCurrencyDisplay(uiSettings.currencySymbol)
+        IosGroupedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("dashboard_settings_card"),
+            onClick = onOpenSettings,
+            contentPadding = PaddingValues(14.dp)
         ) {
-            IosDashboardTileCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Rounded.FactCheck,
-                iconBg = p.accentOrange,
-                title = s.orderStatusesTitle,
-                subtitle = String.format(s.orderStatusesSubFormat, inWorkCount),
-                testTag = "dashboard_statuses_card",
-                onClick = onOpenOrderStatuses
-            )
-            val themeChip = if (uiSettings.themeMode == AppThemeMode.DARK) s.themeDark else s.themeLight
-            val curDisp = normalizeCurrencyDisplay(uiSettings.currencySymbol)
-            IosDashboardTileCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Rounded.Tune,
-                iconBg = Color(0xFF636366),
-                title = s.settingsTitle,
-                subtitle = String.format(
-                    s.settingsSubtitleFormat,
-                    themeChip,
-                    uiSettings.language.code,
-                    curDisp
-                ),
-                testTag = "dashboard_settings_card",
-                onClick = onOpenSettings
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF636366)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Tune,
+                        contentDescription = s.settingsTitle,
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = s.settingsTitle,
+                        color = p.textPrimary,
+                        fontSize = 15.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = String.format(
+                            s.settingsSubtitleFormat,
+                            themeChip,
+                            uiSettings.language.code,
+                            curDisp
+                        ),
+                        color = p.textSecondary,
+                        fontSize = 11.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Rounded.ChevronRight,
+                    contentDescription = null,
+                    tint = p.textSecondary.copy(alpha = 0.6f)
+                )
+            }
         }
     }
 }
@@ -652,7 +670,9 @@ fun IosSettingsScreen(
     settings: AppUiSettings,
     onBack: () -> Unit,
     onUpdateSettingsLive: (AppUiSettings) -> Unit,
-    onApplyCurrencyToAllOrders: (String) -> Unit
+    onApplyCurrencyToAllOrders: (String) -> Unit,
+    onExportBackup: () -> Unit = {},
+    onImportBackup: () -> Unit = {}
 ) {
     val p = LocalWinStudioPalette.current
     val s = LocalAppStrings.current
@@ -880,6 +900,83 @@ fun IosSettingsScreen(
                     )
                 }
             }
+
+            // 5. РЕЗЕРВНОЕ КОПИРОВАНИЕ И ДАННЫЕ (iOS Grouped List)
+            SettingsSectionHeader(s.sectionBackupData)
+            IosGroupedCard(contentPadding = PaddingValues(14.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onExportBackup() }
+                        .padding(vertical = 6.dp, horizontal = 4.dp)
+                        .testTag("settings_export_backup_button"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    SettingsIconBadge(Icons.Rounded.Backup, p.accentIndigo)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = s.backupExportTitle,
+                            color = p.textPrimary,
+                            fontSize = 14.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = s.backupExportHint,
+                            color = p.textSecondary,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Rounded.ChevronRight,
+                        contentDescription = null,
+                        tint = p.textSecondary
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider(color = p.divider, thickness = 0.7.dp)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onImportBackup() }
+                        .padding(vertical = 6.dp, horizontal = 4.dp)
+                        .testTag("settings_import_backup_button"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    SettingsIconBadge(Icons.Rounded.Restore, p.accentOrange)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = s.backupImportTitle,
+                            color = p.textPrimary,
+                            fontSize = 14.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = s.backupImportHint,
+                            color = p.textSecondary,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Rounded.ChevronRight,
+                        contentDescription = null,
+                        tint = p.textSecondary
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
         }
     }

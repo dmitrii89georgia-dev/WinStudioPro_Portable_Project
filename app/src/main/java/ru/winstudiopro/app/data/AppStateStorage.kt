@@ -25,7 +25,7 @@ data class PersistedAppState(
 )
 
 private class WinStudioSqliteHelper(context: Context) :
-    SQLiteOpenHelper(context, "winstudio_pro_v3.db", null, 3) {
+    SQLiteOpenHelper(context, "winstudio_pro_v3.db", null, 4) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -57,7 +57,9 @@ private class WinStudioSqliteHelper(context: Context) :
                 role TEXT NOT NULL,
                 length_mm INTEGER NOT NULL,
                 quantity INTEGER NOT NULL,
-                is_full_bar INTEGER NOT NULL DEFAULT 0
+                is_full_bar INTEGER NOT NULL DEFAULT 0,
+                color_name TEXT NOT NULL DEFAULT 'Белый',
+                color_hex INTEGER NOT NULL DEFAULT 4294967295
             )
             """.trimIndent()
         )
@@ -73,10 +75,56 @@ private class WinStudioSqliteHelper(context: Context) :
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         onCreate(db)
+        try {
+            val cols = mutableSetOf<String>()
+            db.rawQuery("PRAGMA table_info(stock_inventory)", null).use { c ->
+                val nameIdx = c.getColumnIndex("name")
+                while (c.moveToNext()) {
+                    if (nameIdx >= 0) cols.add(c.getString(nameIdx))
+                }
+            }
+            if ("color_name" !in cols) {
+                db.execSQL("ALTER TABLE stock_inventory ADD COLUMN color_name TEXT NOT NULL DEFAULT 'Белый'")
+            }
+            if ("color_hex" !in cols) {
+                db.execSQL("ALTER TABLE stock_inventory ADD COLUMN color_hex INTEGER NOT NULL DEFAULT 4294967295")
+            }
+        } catch (_: Exception) {
+        }
     }
 }
 
 object AppStateStorage {
+
+    private const val LOCAL_PREFS_NAME = "winstudio_local_ui_prefs"
+    private const val KEY_FILTER_INITIALIZED = "orders_filter_initialized"
+    private const val KEY_FILTER_STATUSES = "orders_filter_statuses"
+
+    fun loadOrdersFilterStatuses(context: Context): Set<OrderStatus> {
+        return try {
+            val prefs = context.getSharedPreferences(LOCAL_PREFS_NAME, Context.MODE_PRIVATE)
+            if (!prefs.getBoolean(KEY_FILTER_INITIALIZED, false)) {
+                return OrderStatus.entries.toSet()
+            }
+            val rawSet = prefs.getStringSet(KEY_FILTER_STATUSES, null) ?: emptySet()
+            rawSet.mapNotNull { name ->
+                OrderStatus.entries.find { it.name == name }
+            }.toSet()
+        } catch (_: Exception) {
+            OrderStatus.entries.toSet()
+        }
+    }
+
+    fun saveOrdersFilterStatuses(context: Context, statuses: Set<OrderStatus>) {
+        try {
+            val prefs = context.getSharedPreferences(LOCAL_PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.edit()
+                .putBoolean(KEY_FILTER_INITIALIZED, true)
+                .putStringSet(KEY_FILTER_STATUSES, statuses.map { it.name }.toSet())
+                .apply()
+        } catch (_: Exception) {
+        }
+    }
 
     fun loadState(context: Context): PersistedAppState {
         return try {
@@ -169,16 +217,17 @@ object AppStateStorage {
         return file
     }
 
-    // Полный экспорт всей базы (все системы Asas, прайсы, склад, настройки и все заказы)
+    // Полный экспорт всей базы (все системы, прайсы, склад, настройки и все заказы)
     fun exportFullBackupJsonString(context: Context): String {
         val dbHelper = WinStudioSqliteHelper(context)
         val db = dbHelper.readableDatabase
         val profiles = loadProfilesFromDb(db)
         val orders = loadOrdersFromDb(db)
+        val stock = loadStockFromDb(db)
 
         val root = JSONObject().apply {
             put("app", "WinStudioPro")
-            put("backupVersion", 1)
+            put("backupVersion", 2)
             put("timestamp", System.currentTimeMillis())
             put("exportDate", SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()).format(Date()))
 
@@ -189,6 +238,23 @@ object AppStateStorage {
             val profArr = JSONArray()
             profiles.forEach { profArr.put(serializeProfile(it)) }
             put("profileSystems", profArr)
+
+            val stockArr = JSONArray()
+            stock.forEach { r ->
+                stockArr.put(
+                    JSONObject().apply {
+                        put("id", r.id)
+                        put("profileSystemId", r.profileSystemId)
+                        put("role", r.role.name)
+                        put("lengthMm", r.lengthMm)
+                        put("quantity", r.quantity)
+                        put("isFullStockBar", r.isFullStockBar)
+                        put("colorName", r.colorName)
+                        put("colorHex", r.colorHex)
+                    }
+                )
+            }
+            put("stockRemnants", stockArr)
         }
 
         db.rawQuery("SELECT json_payload FROM app_settings WHERE id = 1", null).use { c ->
@@ -225,6 +291,31 @@ object AppStateStorage {
             importedProfiles.add(parseProfile(profArr.getJSONObject(i)))
         }
 
+        val stockArr = root.optJSONArray("stockRemnants")
+        val importedStock = mutableListOf<StockRemnantBar>()
+        if (stockArr != null) {
+            for (i in 0 until stockArr.length()) {
+                val so = stockArr.getJSONObject(i)
+                val role = try {
+                    ProfileRole.valueOf(so.optString("role", "FRAME"))
+                } catch (_: Exception) {
+                    ProfileRole.FRAME
+                }
+                importedStock.add(
+                    StockRemnantBar(
+                        id = so.optString("id", "stk_imp_$i"),
+                        profileSystemId = so.optString("profileSystemId", "al_test_system"),
+                        role = role,
+                        lengthMm = so.optInt("lengthMm", 6000),
+                        quantity = so.optInt("quantity", 1),
+                        isFullStockBar = so.optBoolean("isFullStockBar", false),
+                        colorName = so.optString("colorName", "Белый"),
+                        colorHex = so.optLong("colorHex", 0xFFFFFFFFL)
+                    )
+                )
+            }
+        }
+
         val dbHelper = WinStudioSqliteHelper(context)
         val db = dbHelper.writableDatabase
         if (root.has("appSettingsPayload")) {
@@ -237,10 +328,16 @@ object AppStateStorage {
 
         val mergedOrders = (importedOrders + current.orders).distinctBy { it.id }
         val mergedProfiles = (importedProfiles + current.profileSystems).distinctBy { it.id }
+        val mergedStock = if (stockArr != null) {
+            (importedStock + current.stockRemnants).distinctBy { it.id }
+        } else {
+            current.stockRemnants
+        }
 
         val newState = loadState(context).copy(
             orders = mergedOrders.ifEmpty { current.orders },
-            profileSystems = mergedProfiles.ifEmpty { current.profileSystems }
+            profileSystems = mergedProfiles.ifEmpty { current.profileSystems },
+            stockRemnants = mergedStock
         )
         saveState(context, newState)
         return newState
@@ -257,7 +354,9 @@ object AppStateStorage {
                     role = ProfileRole.FRAME,
                     lengthMm = 6000,
                     quantity = 12,
-                    isFullStockBar = true
+                    isFullStockBar = true,
+                    colorName = "Антрацит",
+                    colorHex = 0xFF383E42
                 ),
                 StockRemnantBar(
                     id = "stk_full_2",
@@ -265,7 +364,9 @@ object AppStateStorage {
                     role = ProfileRole.IMPOST,
                     lengthMm = 6000,
                     quantity = 8,
-                    isFullStockBar = true
+                    isFullStockBar = true,
+                    colorName = "Антрацит",
+                    colorHex = 0xFF383E42
                 ),
                 StockRemnantBar(
                     id = "stk_rem_1",
@@ -273,7 +374,9 @@ object AppStateStorage {
                     role = ProfileRole.FRAME,
                     lengthMm = 2150,
                     quantity = 2,
-                    isFullStockBar = false
+                    isFullStockBar = false,
+                    colorName = "Антрацит",
+                    colorHex = 0xFF383E42
                 )
             ),
             uiSettings = AppUiSettings()
@@ -299,7 +402,7 @@ object AppStateStorage {
                         topology = w1,
                         profileSystemId = "al_test_system",
                         glazingId = "sp_24",
-                        colorId = "none"
+                        colorId = "col_anthracite"
                     )
                 ),
                 status = OrderStatus.DRAFT,
@@ -367,6 +470,8 @@ object AppStateStorage {
                 put("length_mm", r.lengthMm)
                 put("quantity", r.quantity)
                 put("is_full_bar", if (r.isFullStockBar) 1 else 0)
+                put("color_name", r.colorName)
+                put("color_hex", r.colorHex)
             }
             db.insertWithOnConflict("stock_inventory", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
         }
@@ -375,7 +480,7 @@ object AppStateStorage {
     private fun loadStockFromDb(db: SQLiteDatabase): List<StockRemnantBar> {
         val res = mutableListOf<StockRemnantBar>()
         db.rawQuery(
-            "SELECT id, profile_system_id, role, length_mm, quantity, is_full_bar FROM stock_inventory",
+            "SELECT id, profile_system_id, role, length_mm, quantity, is_full_bar, color_name, color_hex FROM stock_inventory",
             null
         ).use { c ->
             while (c.moveToNext()) {
@@ -385,6 +490,8 @@ object AppStateStorage {
                 } catch (_: Exception) {
                     ProfileRole.FRAME
                 }
+                val cName = if (c.isNull(6)) "Белый" else c.getString(6).ifBlank { "Белый" }
+                val cHex = if (c.isNull(7)) 0xFFFFFFFFL else c.getLong(7)
                 res.add(
                     StockRemnantBar(
                         id = c.getString(0),
@@ -392,7 +499,9 @@ object AppStateStorage {
                         role = role,
                         lengthMm = c.getInt(3),
                         quantity = c.getInt(4),
-                        isFullStockBar = c.getInt(5) == 1
+                        isFullStockBar = c.getInt(5) == 1,
+                        colorName = cName,
+                        colorHex = cHex
                     )
                 )
             }
@@ -705,6 +814,19 @@ object AppStateStorage {
         put("priceDoorHardware", p.priceDoorHardware)
         put("priceSeatProfilePerM", p.priceSeatProfilePerM)
         put("priceDoorsillPerM", p.priceDoorsillPerM)
+        val colorsArr = JSONArray()
+        p.colors.forEach { c ->
+            colorsArr.put(
+                JSONObject().apply {
+                    put("id", c.id)
+                    put("name", c.name)
+                    put("ralCode", c.ralCode)
+                    put("hexColor", c.hexColor)
+                    put("priceMarkupPercent", c.priceMarkupPercent)
+                }
+            )
+        }
+        put("colors", colorsArr)
     }
 
     private fun parseProfile(o: JSONObject): ProfileSystemSpec {
@@ -795,7 +917,23 @@ object AppStateStorage {
             priceMechanicShtulp = o.optDouble("priceMechanicShtulp", 38.0),
             priceDoorHardware = o.optDouble("priceDoorHardware", 55.0),
             priceSeatProfilePerM = o.optDouble("priceSeatProfilePerM", 2.5),
-            priceDoorsillPerM = o.optDouble("priceDoorsillPerM", 7.5)
+            priceDoorsillPerM = o.optDouble("priceDoorsillPerM", 7.5),
+            colors = o.optJSONArray("colors")?.let { arr ->
+                val list = mutableListOf<ProfileColorSpec>()
+                for (i in 0 until arr.length()) {
+                    val item = arr.getJSONObject(i)
+                    list.add(
+                        ProfileColorSpec(
+                            id = item.optString("id", "col_$i"),
+                            name = item.optString("name", "Цвет"),
+                            ralCode = item.optString("ralCode", ""),
+                            hexColor = item.optLong("hexColor", 0xFFFFFFFFL),
+                            priceMarkupPercent = item.optDouble("priceMarkupPercent", 0.0)
+                        )
+                    )
+                }
+                list.ifEmpty { null }
+            } ?: DefaultCatalogs.defaultProfileColors()
         )
     }
 
@@ -809,6 +947,8 @@ object AppStateStorage {
         put("orderNote", ord.orderNote)
         put("createdDate", ord.createdDate)
         put("status", ord.status.name)
+        put("contractDateMillis", ord.contractDateMillis ?: JSONObject.NULL)
+        put("contractTermDays", ord.contractTermDays)
         put("discountPercent", ord.discountPercent)
         put("markupPercent", ord.markupPercent)
         put("taxVatPercent", ord.taxVatPercent)
@@ -826,6 +966,11 @@ object AppStateStorage {
                     put("glazingId", w.glazingId)
                     put("roundGlassTo5Mm", w.roundGlassTo5Mm)
                     put("colorId", w.colorId)
+                    put("customColorName", w.customColorName)
+                    put("customColorRal", w.customColorRal)
+                    put("customColorHex", w.customColorHex)
+                    put("customPaintingCost", w.customPaintingCost)
+                    put("customColorUseRawForStock", w.customColorUseRawForStock)
                     put("innerSillId", w.innerSillId)
                     put("outerSillId", w.outerSillId)
                     put("financialSchemeId", w.financialSchemeId)
@@ -878,6 +1023,11 @@ object AppStateStorage {
                     glazingId = wo.optString("glazingId", "sp_24"),
                     roundGlassTo5Mm = wo.optBoolean("roundGlassTo5Mm", false),
                     colorId = wo.optString("colorId", "none"),
+                    customColorName = wo.optString("customColorName", ""),
+                    customColorRal = wo.optString("customColorRal", ""),
+                    customColorHex = wo.optLong("customColorHex", 0xFF607D8BL),
+                    customPaintingCost = wo.optDouble("customPaintingCost", 0.0),
+                    customColorUseRawForStock = wo.optBoolean("customColorUseRawForStock", false),
                     innerSillId = wo.optString("innerSillId", "sill_in_none"),
                     outerSillId = wo.optString("outerSillId", "sill_out_none"),
                     financialSchemeId = wo.optString("financialSchemeId", "fin_none"),
@@ -902,11 +1052,13 @@ object AppStateStorage {
             )
         }
         val statusStr = o.optString("status", "DRAFT")
-        val status = try {
-            OrderStatus.valueOf(statusStr)
-        } catch (_: Exception) {
-            OrderStatus.DRAFT
+        val status = OrderStatus.fromStorageName(statusStr)
+        val contractDateMs = if (o.isNull("contractDateMillis") || !o.has("contractDateMillis")) {
+            null
+        } else {
+            o.optLong("contractDateMillis").takeIf { it > 0L }
         }
+        val contractTermDays = o.optInt("contractTermDays", 28).coerceAtLeast(1)
         val manualOrdTotal = if (o.isNull("manualOrderTotalOverride")) null else o.optDouble("manualOrderTotalOverride")
         return CustomerOrder(
             id = o.getString("id"),
@@ -919,6 +1071,8 @@ object AppStateStorage {
             createdDate = o.optString("createdDate", "17.10.2026"),
             windows = windows,
             status = status,
+            contractDateMillis = contractDateMs,
+            contractTermDays = contractTermDays,
             discountPercent = o.optDouble("discountPercent", 0.0),
             markupPercent = o.optDouble("markupPercent", 0.0),
             taxVatPercent = o.optDouble("taxVatPercent", 18.0),

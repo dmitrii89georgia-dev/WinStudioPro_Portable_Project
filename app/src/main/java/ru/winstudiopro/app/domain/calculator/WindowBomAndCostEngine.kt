@@ -16,6 +16,92 @@ object WindowBomAndCostEngine {
         }
     }
 
+    /**
+     * Разрешает цвет конструкции с приоритетом:
+     * 1) Индивидуальный цвет клиента (CUSTOM_CLIENT_COLOR_ID)
+     * 2) Каталог цветов выбранной профильной системы
+     * 3) Прежний общий каталог цветов (для обратной совместимости старых заказов)
+     */
+    fun resolveWindowColor(
+        window: WindowItem,
+        profile: ProfileSystemSpec,
+        legacyColorCatalog: List<ColorCatalogItem> = DefaultCatalogs.defaultColors()
+    ): ColorCatalogItem {
+        if (window.colorId == CUSTOM_CLIENT_COLOR_ID) {
+            val baseName = window.customColorName.trim().ifBlank { "Цвет клиента" }
+            val label = if (window.customColorRal.isNotBlank()) {
+                "$baseName (RAL ${window.customColorRal.trim()})"
+            } else {
+                baseName
+            }
+            return ColorCatalogItem(
+                id = CUSTOM_CLIENT_COLOR_ID,
+                name = label,
+                hexColor = window.customColorHex,
+                priceMarkupPercent = 0.0
+            )
+        }
+        profile.colors.find { it.id == window.colorId }?.let { c ->
+            val label = if (c.ralCode.isNotBlank()) "${c.name} (${c.ralCode})" else c.name
+            return ColorCatalogItem(
+                id = c.id,
+                name = label,
+                hexColor = c.hexColor,
+                priceMarkupPercent = c.priceMarkupPercent
+            )
+        }
+        legacyColorCatalog.find { it.id == window.colorId }?.let { legacy ->
+            return legacy
+        }
+        profile.colors.firstOrNull()?.let { firstC ->
+            val label = if (firstC.ralCode.isNotBlank()) "${firstC.name} (${firstC.ralCode})" else firstC.name
+            return ColorCatalogItem(
+                id = firstC.id,
+                name = label,
+                hexColor = firstC.hexColor,
+                priceMarkupPercent = firstC.priceMarkupPercent
+            )
+        }
+        return legacyColorCatalog.firstOrNull()
+            ?: ColorCatalogItem("col_anthracite", "Антрацит (7016)", 0xFF383E42, 0.0)
+    }
+
+    /**
+     * Возвращает имя и HEX цвета профиля для карт 1D-раскроя и учёта на складе.
+     */
+    fun resolveWindowCutColor(
+        window: WindowItem,
+        profile: ProfileSystemSpec,
+        legacyColorCatalog: List<ColorCatalogItem> = DefaultCatalogs.defaultColors()
+    ): Pair<String, Long> {
+        if (window.colorId == CUSTOM_CLIENT_COLOR_ID) {
+            return if (window.customColorUseRawForStock) {
+                RAW_UNPAINTED_COLOR_NAME to 0xFFC0C0C0L
+            } else {
+                val baseName = window.customColorName.trim().ifBlank { "Цвет клиента" }
+                val label = if (window.customColorRal.isNotBlank()) {
+                    "$baseName (${window.customColorRal.trim()})"
+                } else {
+                    baseName
+                }
+                label to window.customColorHex
+            }
+        }
+        profile.colors.find { it.id == window.colorId }?.let { c ->
+            return c.name to c.hexColor
+        }
+        if (window.colorId == "none") {
+            return "Белый" to 0xFFFFFFFFL
+        }
+        legacyColorCatalog.find { it.id == window.colorId }?.let { legacy ->
+            return legacy.name.replaceFirstChar { it.uppercase() } to legacy.hexColor
+        }
+        profile.colors.firstOrNull()?.let { firstC ->
+            return firstC.name to firstC.hexColor
+        }
+        return "Антрацит" to 0xFF383E42L
+    }
+
     fun calculateWindow(
         window: WindowItem,
         profileSystems: List<ProfileSystemSpec>,
@@ -80,8 +166,8 @@ object WindowBomAndCostEngine {
         } else {
             0f
         }
-        val color = colorCatalog.find { it.id == window.colorId }
-            ?: colorCatalog.first()
+        val color = resolveWindowColor(window, profile, colorCatalog)
+        val (cutColorName, cutColorHex) = resolveWindowCutColor(window, profile, colorCatalog)
         val innerSill = sillsCatalog.find { it.id == window.innerSillId }
         val outerSill = sillsCatalog.find { it.id == window.outerSillId }
         val finScheme = financialSchemesCatalog.find { it.id == window.financialSchemeId }
@@ -690,7 +776,14 @@ object WindowBomAndCostEngine {
             afterMarkupCost
         }
 
+        val costCustomPainting = if (window.colorId == CUSTOM_CLIENT_COLOR_ID && window.customPaintingCost > 0.0) {
+            window.customPaintingCost
+        } else {
+            0.0
+        }
+
         val finalUnitCost = window.manualUnitPriceOverride ?: discountedUnitCost
+        val taggedCuts = profileCuts.map { it.copy(colorName = cutColorName, colorHex = cutColorHex) }
 
         return WindowCalculationResult(
             windowItem = window,
@@ -725,12 +818,15 @@ object WindowBomAndCostEngine {
             costWorksOnly = costWorksOnly,
             costExtrasAndWorks = extrasAndWorksCost,
             costColorMarkup = costColorMarkup,
+            costCustomPainting = costCustomPainting,
+            cutColorName = cutColorName,
+            cutColorHex = cutColorHex,
             costInstallationWork = costInstallation,
             rawUnitCostBeforeDiscount = afterMarkupCost,
             discountPercentApplied = discPct,
             unitTotalCost = finalUnitCost,
-            lineTotalCost = finalUnitCost * qty,
-            profileCuts = profileCuts,
+            lineTotalCost = finalUnitCost * qty + costCustomPainting,
+            profileCuts = taggedCuts,
             glazingSpecs = glazingSpecs,
             hardwareSpecs = hardwareSpecs
         )
@@ -743,15 +839,16 @@ object WindowBomAndCostEngine {
     ): Pair<List<CutBarAllocation>, List<ProfileProcurementSummary>> {
         val allPieces = windowResults.flatMap { it.profileCuts }
         val grouped = allPieces
-            .groupBy { it.profileSystemId to it.role }
+            .groupBy { Triple(it.profileSystemId, it.role, it.colorName) }
             .entries
-            .sortedBy { it.key.second.ordinal }
+            .sortedWith(compareBy({ it.key.second.ordinal }, { it.key.third }))
 
         val allAllocations = mutableListOf<CutBarAllocation>()
         val summaries = mutableListOf<ProfileProcurementSummary>()
 
         for ((key, pieces) in grouped) {
-            val (sysId, role) = key
+            val (sysId, role, colorName) = key
+            val groupColorHex = pieces.firstOrNull()?.colorHex ?: 0xFF383E42L
             val sys = profileSystems.find { it.id == sysId } ?: profileSystems.first()
             val fullBarLen = sys.stockBarLengthMm.roundToInt().coerceIn(3000, 8500)
             val kerf = sys.sawKerfMm.roundToInt().coerceAtLeast(0)
@@ -765,7 +862,11 @@ object WindowBomAndCostEngine {
             expandedPieces.sortByDescending { it.cutLengthMm }
 
             val availableRemnants = mutableListOf<Int>()
-            stockRemnants.filter { it.profileSystemId == sysId && it.role == role }.forEach { rem ->
+            stockRemnants.filter {
+                it.profileSystemId == sysId &&
+                    it.role == role &&
+                    it.colorName.equals(colorName, ignoreCase = true)
+            }.forEach { rem ->
                 repeat(rem.quantity) { availableRemnants.add(rem.lengthMm) }
             }
             availableRemnants.sort()
@@ -827,7 +928,9 @@ object WindowBomAndCostEngine {
                     cuts = bar.cuts,
                     usedWithKerfMm = bar.usedMm,
                     remnantLengthMm = rem,
-                    isUsableBusinessRemnant = rem >= 400
+                    isUsableBusinessRemnant = rem >= 400,
+                    colorName = colorName,
+                    colorHex = groupColorHex
                 )
             }
             allAllocations.addAll(roleAllocations)
@@ -847,7 +950,9 @@ object WindowBomAndCostEngine {
                     totalCutPiecesCount = expandedPieces.size,
                     totalNetLengthM = totalNetMm / 1000.0,
                     wastePercent = wastePct,
-                    newBusinessRemnantsMm = roleAllocations.filter { it.isUsableBusinessRemnant }.map { it.remnantLengthMm }
+                    newBusinessRemnantsMm = roleAllocations.filter { it.isUsableBusinessRemnant }.map { it.remnantLengthMm },
+                    colorName = colorName,
+                    colorHex = groupColorHex
                 )
             )
         }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.*
 import android.graphics.pdf.PdfDocument
 import ru.winstudiopro.app.domain.model.*
+import ru.winstudiopro.app.ui.i18n.normalizeCurrencyDisplay
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -201,6 +202,12 @@ object PdfReportGenerator {
             if (wItem.colorId != "none") {
                 drawCategoryAndItems("цвет", listOf(res.color.name))
             }
+            if (res.costCustomPainting > 0.0) {
+                drawCategoryAndItems(
+                    "индивидуальная покраска",
+                    listOf("${fmtMoney2(res.costCustomPainting)} ${normalizeCurrencyDisplay(order.currencySymbol)}")
+                )
+            }
             val hwBrand = hardwareBrandsCatalog.find { it.id == wItem.hardwareBrandId }
             if (hwBrand != null && hwBrand.id != "hw_none") {
                 drawCategoryAndItems("фурнитура", listOf(hwBrand.name))
@@ -310,14 +317,15 @@ object PdfReportGenerator {
             }
 
             ClientPdfReportMode.COMMERCIAL_PROPOSAL -> {
-                // Коммерческое предложение: крупные блоки (по 2 на страницу) с чертежом, спецификацией и 6-строчной таблицей цен
-                val blockH = 292f
+                // Коммерческое предложение: крупные блоки (по 2 на страницу) с чертежом, спецификацией и таблицей цен
                 windowResults.forEachIndexed { idx, res ->
+                    val wItem = res.windowItem
+                    val hasCustomPaint = res.costCustomPainting > 0.0
+                    val blockH = if (hasCustomPaint) 305.5f else 292f
                     if (y + blockH > PAGE_H - 42f) {
                         startNewPage()
                     }
 
-                    val wItem = res.windowItem
                     val blockLeft = MARGIN
                     val blockRight = PAGE_W - MARGIN
                     val blockTop = y
@@ -340,7 +348,7 @@ object PdfReportGenerator {
                         )
                     }
 
-                    val tableRowsCount = 6
+                    val tableRowsCount = if (hasCustomPaint) 7 else 6
                     val rowH = 13.5f
                     val tableH = tableRowsCount * rowH
                     val tableTop = blockBot - tableH
@@ -374,7 +382,7 @@ object PdfReportGenerator {
                         drawNoteInside = false
                     )
 
-                    // 6-строчная таблица расчёта изделия (как в эталонном КП)
+                    // Таблица расчёта изделия
                     val itemDiscPct = if (res.discountPercentApplied > 0.0) res.discountPercentApplied else order.discountPercent
                     val unitBase = if (wItem.manualUnitPriceOverride != null) {
                         wItem.manualUnitPriceOverride
@@ -383,18 +391,21 @@ object PdfReportGenerator {
                             (1.0 + order.markupPercent / 100.0)
                     }
                     val unitDiscounted = unitBase * (1.0 - itemDiscPct / 100.0)
-                    val totalBase = unitBase * wItem.quantity
-                    val totalDiscounted = unitDiscounted * wItem.quantity
+                    val totalBase = unitBase * wItem.quantity + res.costCustomPainting
+                    val totalDiscounted = unitDiscounted * wItem.quantity + res.costCustomPainting
                     val cur = order.currencySymbol
 
-                    val kpRows = listOf(
-                        "площадь изделия" to "${fmt(res.totalAreaM2)} m2",
-                        "цена" to "${fmtMoney2(unitBase)} $cur",
-                        "цена со скидкой (-${fmtPct(itemDiscPct)}%)" to "${fmtMoney2(unitDiscounted)} $cur",
-                        "количество конструкций" to "${wItem.quantity}",
-                        "стоимость" to "${fmtMoney2(totalBase)} $cur",
-                        "стоимость со скидкой" to "${fmtMoney2(totalDiscounted)} $cur"
-                    )
+                    val kpRows = buildList {
+                        add("площадь изделия" to "${fmt(res.totalAreaM2)} m2")
+                        add("цена" to "${fmtMoney2(unitBase)} $cur")
+                        add("цена со скидкой (-${fmtPct(itemDiscPct)}%)" to "${fmtMoney2(unitDiscounted)} $cur")
+                        add("количество конструкций" to "${wItem.quantity}")
+                        if (hasCustomPaint) {
+                            add("индивидуальная покраска профиля" to "${fmtMoney2(res.costCustomPainting)} $cur")
+                        }
+                        add("стоимость" to "${fmtMoney2(totalBase)} $cur")
+                        add("стоимость со скидкой" to "${fmtMoney2(totalDiscounted)} $cur")
+                    }
 
                     val midColX = blockLeft + contentW * 0.65f
                     kpRows.forEachIndexed { rIdx, (label, valStr) ->
@@ -447,8 +458,8 @@ object PdfReportGenerator {
                     ?: ((if (res.rawUnitCostBeforeDiscount > 0.0) res.rawUnitCostBeforeDiscount else res.unitTotalCost) *
                         (1.0 + order.markupPercent / 100.0))
                 val unitDisc = unitBase * (1.0 - itemDiscPct / 100.0)
-                sumRaw += unitBase * wItem.quantity
-                sumDiscounted += unitDisc * wItem.quantity
+                sumRaw += unitBase * wItem.quantity + res.costCustomPainting
+                sumDiscounted += unitDisc * wItem.quantity + res.costCustomPainting
             }
             if (order.discountPercent > 0.0 && windowResults.all { it.discountPercentApplied == 0.0 }) {
                 sumDiscounted = sumRaw * (1.0 - order.discountPercent / 100.0)
@@ -922,16 +933,18 @@ object PdfReportGenerator {
 
                 val totalBarsUsed = sum.newFullBarsToBuyCount + sum.usedRemnantBarsCount
                 val headerText = if (isShtapik) {
-                    "${role.titleRu.uppercase()} (${sum.profileSystemName}) — Нужно хлыстов по ${sum.stockBarLengthMm} мм: $totalBarsUsed шт. (Новых: ${sum.newFullBarsToBuyCount}, со склада: ${sum.usedRemnantBarsCount}) | Всего: ${fmt(sum.totalNetLengthM)} п.м. (${sum.totalCutPiecesCount} дет.)"
+                    "${role.titleRu.uppercase()} (${sum.profileSystemName} • ${sum.colorName}) — Хлыстов ${sum.stockBarLengthMm} мм: $totalBarsUsed шт. (Новых: ${sum.newFullBarsToBuyCount}, со склада: ${sum.usedRemnantBarsCount}) | Всего: ${fmt(sum.totalNetLengthM)} п.м."
                 } else {
-                    "${role.titleRu.uppercase()} (${sum.profileSystemName}) — Хлыстов (${sum.stockBarLengthMm} мм): $totalBarsUsed шт. (Новых: ${sum.newFullBarsToBuyCount}, со склада: ${sum.usedRemnantBarsCount}) | Деталей: ${sum.totalCutPiecesCount} шт. (${fmt(sum.totalNetLengthM)} п.м.)"
+                    "${role.titleRu.uppercase()} (${sum.profileSystemName} • ${sum.colorName}) — Хлыстов ${sum.stockBarLengthMm} мм: $totalBarsUsed шт. (Новых: ${sum.newFullBarsToBuyCount}, со склада: ${sum.usedRemnantBarsCount}) | Дет.: ${sum.totalCutPiecesCount} (${fmt(sum.totalNetLengthM)} п.м.)"
                 }
                 canvas.drawText(headerText, MARGIN + 6f, y + 13.5f, blockTitlePaint)
                 y += 24f
 
                 // Для ШТАПИКА полосы раскроя не рисуем (только количество хлыстов в шапке)
                 if (!isShtapik) {
-                    val sysRoleAllocs = roleAllocations.filter { it.profileSystemName == sum.profileSystemName }
+                    val sysRoleAllocs = roleAllocations.filter {
+                        it.profileSystemName == sum.profileSystemName && it.colorName == sum.colorName
+                    }
                     sysRoleAllocs.forEach { alloc ->
                         ensureSpace(34f)
                         val sourceTag = if (alloc.isFromRemnantStock) "Остаток ${alloc.sourceLengthMm} мм" else "Хлыст ${alloc.sourceLengthMm} мм"

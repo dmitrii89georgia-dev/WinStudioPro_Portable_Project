@@ -137,7 +137,12 @@ data class WindowItem(
     val selectedShtapikId: String = "",
     val glazingId: String = "sp_24",
     val roundGlassTo5Mm: Boolean = false,
-    val colorId: String = "none",
+    val colorId: String = "col_anthracite",
+    val customColorName: String = "",
+    val customColorRal: String = "",
+    val customColorHex: Long = 0xFF607D8B,
+    val customPaintingCost: Double = 0.0, // Фиксированная сумма за покраску в малярке за весь проект/позицию
+    val customColorUseRawForStock: Boolean = false,
     val innerSillId: String = "sill_in_none",
     val outerSillId: String = "sill_out_none",
     val financialSchemeId: String = "fin_none",
@@ -153,7 +158,7 @@ data class WindowItem(
 )
 
 /**
- * Хлыст или деловой остаток профиля на складе (с группировкой по папкам профильных систем).
+ * Хлыст или деловой остаток профиля на складе (с группировкой по папкам профильных систем и цвету).
  * Поддерживает как целые хлысты в наличии (приход материала 5500..8000 мм), так и деловые остатки после раскроя.
  */
 data class StockRemnantBar(
@@ -162,16 +167,50 @@ data class StockRemnantBar(
     val role: ProfileRole,
     val lengthMm: Int,
     val quantity: Int = 1,
-    val isFullStockBar: Boolean = false
+    val isFullStockBar: Boolean = false,
+    val colorName: String = "Белый",
+    val colorHex: Long = 0xFFFFFFFF
 )
 
-enum class OrderStatus(val titleRu: String, val badgeColorHex: Long) {
-    DRAFT("В расчёте / Черновик", 0xFF4CA3FF),
-    CONFIRMED("Подтверждён клиентом", 0xFF7E57C2),
-    IN_WORKSHOP("В цеху (в работе)", 0xFFFF9800),
-    READY("Готов к выдаче / монтажу", 0xFF26A69A),
-    COMPLETED("Завершён", 0xFF66BB6A)
+enum class OrderStatus(
+    val titleRu: String,
+    val titleEn: String,
+    val badgeColorHex: Long,
+    val showDeadlineSmiley: Boolean = false
+) {
+    DRAFT("Черновик", "Draft", 0xFF787880, false),
+    MEASUREMENT("Замер", "Measure", 0xFF0A84FF, false),
+    APPROVAL("Согласование", "Approval", 0xFF9C42CC, false),
+    CONTRACT("Договор", "Contract", 0xFF0097A7, true),
+    PRODUCTION("Производство", "Production", 0xFFEF7D00, true),
+    READY_FOR_INSTALL("Готово к монтажу", "Ready", 0xFF249A41, true),
+    INSTALLATION("Монтаж", "Install", 0xFF524FD1, true),
+    CLOSED("Заказ закрыт", "Closed", 0xFF4B606B, false);
+
+    companion object {
+        fun fromStorageName(raw: String?): OrderStatus {
+            return when (raw?.trim()) {
+                "CONFIRMED" -> APPROVAL
+                "IN_WORKSHOP" -> PRODUCTION
+                "READY" -> READY_FOR_INSTALL
+                "COMPLETED" -> CLOSED
+                else -> entries.find { it.name == raw?.trim() } ?: DRAFT
+            }
+        }
+    }
 }
+
+enum class DeadlineMood {
+    HAPPY_GREEN,
+    CAUTIOUS_YELLOW,
+    SCARED_RED
+}
+
+data class ContractDeadlineState(
+    val daysRemaining: Int,
+    val deadlineMillis: Long,
+    val mood: DeadlineMood
+)
 
 /**
  * Заказ клиента (содержит произвольное количество окон/конструкций).
@@ -187,12 +226,49 @@ data class CustomerOrder(
     val createdDate: String,
     val windows: List<WindowItem>,
     val status: OrderStatus = OrderStatus.DRAFT,
+    val contractDateMillis: Long? = null,
+    val contractTermDays: Int = 28,
     val discountPercent: Double = 0.0,
     val markupPercent: Double = 0.0,
     val taxVatPercent: Double = 18.0,
     val manualOrderTotalOverride: Double? = null,
     val currencySymbol: String = "доллар"
-)
+) {
+    fun computeDeadlineState(nowMillis: Long = System.currentTimeMillis()): ContractDeadlineState? {
+        if (!status.showDeadlineSmiley) return null
+        val startMs = contractDateMillis ?: return null
+        val termDays = contractTermDays.coerceAtLeast(1)
+
+        fun toLocalEpochDay(millis: Long): Long {
+            val cal = java.util.Calendar.getInstance().apply { timeInMillis = millis }
+            val utc = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+                clear()
+                set(cal.get(java.util.Calendar.YEAR), cal.get(java.util.Calendar.MONTH), cal.get(java.util.Calendar.DAY_OF_MONTH))
+            }
+            return utc.timeInMillis / 86_400_000L
+        }
+
+        val startDay = toLocalEpochDay(startMs)
+        val todayDay = toLocalEpochDay(nowMillis)
+        val deadlineDay = startDay + termDays
+        val daysLeft = (deadlineDay - todayDay).toInt()
+
+        val endCal = java.util.Calendar.getInstance().apply {
+            timeInMillis = startMs
+            add(java.util.Calendar.DAY_OF_YEAR, termDays)
+        }
+        val mood = when {
+            daysLeft > 7 -> DeadlineMood.HAPPY_GREEN
+            daysLeft >= 4 -> DeadlineMood.CAUTIOUS_YELLOW
+            else -> DeadlineMood.SCARED_RED
+        }
+        return ContractDeadlineState(
+            daysRemaining = daysLeft,
+            deadlineMillis = endCal.timeInMillis,
+            mood = mood
+        )
+    }
+}
 
 enum class ProfileRole(val titleRu: String) {
     FRAME("Профиль рамы"),
@@ -217,7 +293,9 @@ data class ProfileCutPiece(
     val cutLengthMm: Int,
     val leftAngleDeg: Int,
     val rightAngleDeg: Int,
-    val quantity: Int
+    val quantity: Int,
+    val colorName: String = "Антрацит",
+    val colorHex: Long = 0xFF383E42
 )
 
 data class GlazingSpecItem(
@@ -278,6 +356,9 @@ data class WindowCalculationResult(
     val costWorksOnly: Double = 0.0,
     val costExtrasAndWorks: Double = 0.0,
     val costColorMarkup: Double,
+    val costCustomPainting: Double = 0.0,
+    val cutColorName: String = "Антрацит",
+    val cutColorHex: Long = 0xFF383E42,
     val costInstallationWork: Double,
     val rawUnitCostBeforeDiscount: Double = 0.0,
     val discountPercentApplied: Double = 0.0,
@@ -297,7 +378,9 @@ data class CutBarAllocation(
     val cuts: List<AllocatedCutPiece>,
     val usedWithKerfMm: Int,
     val remnantLengthMm: Int,
-    val isUsableBusinessRemnant: Boolean
+    val isUsableBusinessRemnant: Boolean,
+    val colorName: String = "Антрацит",
+    val colorHex: Long = 0xFF383E42
 )
 
 data class AllocatedCutPiece(
@@ -319,5 +402,7 @@ data class ProfileProcurementSummary(
     val totalCutPiecesCount: Int,
     val totalNetLengthM: Double,
     val wastePercent: Double,
-    val newBusinessRemnantsMm: List<Int>
+    val newBusinessRemnantsMm: List<Int>,
+    val colorName: String = "Антрацит",
+    val colorHex: Long = 0xFF383E42
 )

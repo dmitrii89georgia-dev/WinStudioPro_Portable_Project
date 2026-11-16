@@ -18,6 +18,20 @@ data class ShtapikVariantSpec(
     val pricePerM: Double = 2.2             // Стоимость за 1 пог. метр штапика
 )
 
+const val CUSTOM_CLIENT_COLOR_ID = "custom_client"
+const val RAW_UNPAINTED_COLOR_NAME = "Неокрашенный (сырой)"
+
+/**
+ * Спецификация цвета / покрытия профильной системы.
+ */
+data class ProfileColorSpec(
+    val id: String,
+    val name: String,
+    val ralCode: String = "",
+    val hexColor: Long = 0xFFFFFFFF,
+    val priceMarkupPercent: Double = 0.0
+)
+
 /**
  * Полная параметрическая модель профильной системы (конструктор профильных систем).
  * Все размеры задаются в миллиметрах по буквенным схемам (A, B, C, D, E, F, G, H)
@@ -123,7 +137,10 @@ data class ProfileSystemSpec(
     val priceExtender20PerM: Double = 4.0,
     val priceExtender40PerM: Double = 5.5,
     val priceExtender60PerM: Double = 7.5,
-    val priceGlazingBarPerM: Double = 3.0
+    val priceGlazingBarPerM: Double = 3.0,
+
+    // --- Каталог доступных цветов профильной системы (Антрацит — базовый по умолчанию) ---
+    val colors: List<ProfileColorSpec> = DefaultCatalogs.defaultProfileColors()
 ) {
     /**
      * Заход стеклопакета внутрь профиля от линии светового проема с одной стороны (мм).
@@ -270,6 +287,13 @@ object DefaultCatalogs {
         GlazingCatalogItem("glass_6_12_6_temp", "6g-12-6z закаленные", "6g-12-6z", 24, false, 45.0),
         GlazingCatalogItem("triplex", "триплекс", "Триплекс", 8, false, 38.0),
         GlazingCatalogItem("sandwich_24", "сендвич", "Сэндвич 24", 24, true, 18.0)
+    )
+
+    fun defaultProfileColors(): List<ProfileColorSpec> = listOf(
+        ProfileColorSpec("col_anthracite", "Антрацит", "7016", 0xFF383E42, 0.0),
+        ProfileColorSpec("col_white", "Белый", "9016", 0xFFFFFFFF, 0.0),
+        ProfileColorSpec("col_silver", "Серебро (анод.)", "E6/EV1", 0xFFA8A8A8, 0.0),
+        ProfileColorSpec("col_black", "Чёрный", "9005", 0xFF1F2124, 0.0)
     )
 
     fun defaultColors(): List<ColorCatalogItem> = listOf(
