@@ -142,7 +142,13 @@ object WindowBomAndCostEngine {
                 priceMechanicShtulp = 0.0,
                 priceDoorHardware = 0.0,
                 priceSeatProfilePerM = 0.0,
-                priceDoorsillPerM = 0.0
+                priceDoorsillPerM = 0.0,
+                rubberCatalog = ProfileRubberCatalog(
+                    fixedGlazing = RubberBoxSpec(name = "", metersPerBox = 208.0, pricePerBox = 0.0),
+                    wedgeVariants = listOf(WedgeRubberVariantSpec("w_none", "", "", 3.6f, 210.0, 0.0)),
+                    frameRebate = RubberBoxSpec(name = "", metersPerBox = 365.0, pricePerBox = 0.0),
+                    sashDoorRebate = RubberBoxSpec(name = "", metersPerBox = 357.0, pricePerBox = 0.0)
+                )
             )
         } else {
             profileSystems.find { it.id == window.profileSystemId }
@@ -188,8 +194,13 @@ object WindowBomAndCostEngine {
         var doorSashPerimeterM = 0.0
         var windowSashLeavesTotalCount = 0
         var doorSashLeavesTotalCount = 0
+        val activeShtapikH2 = matchedShtapik?.widthH2Mm ?: profile.shtapikWidthMm
         var shtapikPerimeterM = 0.0
         var rubberPerimeterM = 0.0
+        var fixedRubberPerUnitM = 0.0
+        var rebateRubberPerUnitM = 0.0
+        var wedgeCostPerUnit = 0.0
+        val usedWedgeLabels = mutableListOf<String>()
         var glazingAreaM2 = 0.0
         var sandwichAreaM2 = 0.0
         var hardwareCostTotal = 0.0
@@ -332,7 +343,18 @@ object WindowBomAndCostEngine {
                     val vertShtLen = max(40f, lightH - shtapikVertDeductBothSidesMm).roundToInt()
                     val shtapikPerimM = 2.0 * (horizShtLen + vertShtLen) / 1000.0
                     shtapikPerimeterM += shtapikPerimM
-                    rubberPerimeterM += 2.0 * (lightW + lightH) / 1000.0
+                    val fixedPerimM = 2.0 * (lightW + lightH) / 1000.0
+                    rubberPerimeterM += fixedPerimM
+                    fixedRubberPerUnitM += fixedPerimM
+                    val glassThickMm = if (isSand) sandwichItem.thicknessMm else glazing.thicknessMm.coerceAtLeast(4)
+                    val matchedWedge = OrderProcurementHelper.selectOptimalWedgeVariant(
+                        profile = profile,
+                        shtapikH2Mm = activeShtapikH2,
+                        glazingThicknessMm = glassThickMm,
+                        seatMm = profile.frameGlazingSeatA4Mm
+                    )
+                    wedgeCostPerUnit += fixedPerimM * (matchedWedge?.pricePerMeter ?: profile.priceRubberPerM)
+                    if (matchedWedge != null) usedWedgeLabels.add(matchedWedge.name)
 
                     profileCuts.add(
                         ProfileCutPiece(
@@ -449,6 +471,9 @@ object WindowBomAndCostEngine {
                         windowSashLeavesTotalCount += sashLeavesCount
                     }
                     rubberPerimeterM += leafPerimM * 2.0
+                    if (props.openingType != SashOpeningType.BLIND_SASH) {
+                        rebateRubberPerUnitM += leafPerimM
+                    }
 
                     val sashInnerLightW = max(80f, sashOuterWFloat - 2f * sashProfileW)
                     val sashInnerLightH = max(80f, sashOuterHFloat - 2f * sashProfileW)
@@ -525,7 +550,22 @@ object WindowBomAndCostEngine {
                         val botVertShtLen = max(40f, botH - shtapikVertDeductBothSidesMm).roundToInt()
                         val shtPerim = sashLeavesCount * (2.0 * (horizShtLen + topVertShtLen) + 2.0 * (horizShtLen + botVertShtLen)) / 1000.0
                         shtapikPerimeterM += shtPerim
-                        rubberPerimeterM += sashLeavesCount * (2.0 * (sashInnerLightW + topH) + 2.0 * (sashInnerLightW + botH)) / 1000.0
+                        val topPerimM = sashLeavesCount * 2.0 * (sashInnerLightW + topH) / 1000.0
+                        val botPerimM = sashLeavesCount * 2.0 * (sashInnerLightW + botH) / 1000.0
+                        rubberPerimeterM += topPerimM + botPerimM
+                        val seatMm = when {
+                            props.isReverseDoorSash -> profile.revDoorGlazingSeatE3Mm
+                            props.isDoorSash -> profile.doorGlazingSeatD3Mm
+                            else -> profile.sashGlazingSeatC3Mm
+                        }
+                        val topThick = if (topIsSand) sandwichItem.thicknessMm else glazing.thicknessMm.coerceAtLeast(4)
+                        val botThick = if (botIsSand) sandwichItem.thicknessMm else glazing.thicknessMm.coerceAtLeast(4)
+                        val wedgeTop = OrderProcurementHelper.selectOptimalWedgeVariant(profile, activeShtapikH2, topThick, seatMm)
+                        val wedgeBot = OrderProcurementHelper.selectOptimalWedgeVariant(profile, activeShtapikH2, botThick, seatMm)
+                        wedgeCostPerUnit += topPerimM * (wedgeTop?.pricePerMeter ?: profile.priceRubberPerM)
+                        wedgeCostPerUnit += botPerimM * (wedgeBot?.pricePerMeter ?: profile.priceRubberPerM)
+                        if (wedgeTop != null) usedWedgeLabels.add(wedgeTop.name)
+                        if (wedgeBot != null) usedWedgeLabels.add(wedgeBot.name)
 
                         profileCuts.add(
                             ProfileCutPiece(
@@ -600,7 +640,17 @@ object WindowBomAndCostEngine {
                         val vertShtLen = max(40f, sashInnerLightH - shtapikVertDeductBothSidesMm).roundToInt()
                         val shtPerim = sashLeavesCount * 2.0 * (horizShtLen + vertShtLen) / 1000.0
                         shtapikPerimeterM += shtPerim
-                        rubberPerimeterM += sashLeavesCount * 2.0 * (sashInnerLightW + sashInnerLightH) / 1000.0
+                        val sashGlassPerimM = sashLeavesCount * 2.0 * (sashInnerLightW + sashInnerLightH) / 1000.0
+                        rubberPerimeterM += sashGlassPerimM
+                        val seatMm = when {
+                            props.isReverseDoorSash -> profile.revDoorGlazingSeatE3Mm
+                            props.isDoorSash -> profile.doorGlazingSeatD3Mm
+                            else -> profile.sashGlazingSeatC3Mm
+                        }
+                        val glassThickMm = if (isSand) sandwichItem.thicknessMm else glazing.thicknessMm.coerceAtLeast(4)
+                        val matchedWedge = OrderProcurementHelper.selectOptimalWedgeVariant(profile, activeShtapikH2, glassThickMm, seatMm)
+                        wedgeCostPerUnit += sashGlassPerimM * (matchedWedge?.pricePerMeter ?: profile.priceRubberPerM)
+                        if (matchedWedge != null) usedWedgeLabels.add(matchedWedge.name)
 
                         profileCuts.add(
                             ProfileCutPiece(
@@ -753,7 +803,10 @@ object WindowBomAndCostEngine {
 
         val costShtapikOnly = shtapikPerimeterM * activeShtapikPricePerM +
             glazingBarsLengthM * profile.priceGlazingBarPerM
-        val costRubberOnly = rubberPerimeterM * profile.priceRubberPerM
+        val costFixedRubber = fixedRubberPerUnitM * profile.rubberCatalog.fixedGlazing.pricePerMeter
+        val costFrameRebateRubber = rebateRubberPerUnitM * profile.rubberCatalog.frameRebate.pricePerMeter
+        val costSashRebateRubber = rebateRubberPerUnitM * profile.rubberCatalog.sashDoorRebate.pricePerMeter
+        val costRubberOnly = costFixedRubber + costFrameRebateRubber + costSashRebateRubber + wedgeCostPerUnit
         val costShtapikAndRubber = costShtapikOnly + costRubberOnly
 
         val costGlazingOnly = glazingAreaM2 * glazing.pricePerM2
@@ -828,7 +881,8 @@ object WindowBomAndCostEngine {
             lineTotalCost = finalUnitCost * qty + costCustomPainting,
             profileCuts = taggedCuts,
             glazingSpecs = glazingSpecs,
-            hardwareSpecs = hardwareSpecs
+            hardwareSpecs = hardwareSpecs,
+            matchedWedgeSummary = usedWedgeLabels.distinct().joinToString(", ")
         )
     }
 

@@ -33,6 +33,7 @@ import ru.winstudiopro.app.R
 import ru.winstudiopro.app.domain.model.*
 import ru.winstudiopro.app.ui.i18n.LocalAppStrings
 import ru.winstudiopro.app.ui.theme.LocalWinStudioPalette
+import java.util.Locale
 import java.util.UUID
 import kotlin.math.roundToInt
 
@@ -48,7 +49,8 @@ private enum class ProfileAccordionSection(val letterBadge: String, val titleRu:
     UGLOVIK_F("F", "Угловик", "Эскиз углового профиля и цена за 1 пог. м для сметы"),
     SHTULP_G("G", "Штульп", "Размеры G1–G2 и стоимость за 1 пог. метр"),
     SHTAPIK_H("H", "Штапик", "Размеры H1, H2, правило раскроя 90°/45° и цена за метр"),
-    CLEATS_SETS("∟", "Угловые сухари (комплекты)", "Цены комплектов на 4 угла (рама, створка, дверь) и на 1 импост")
+    CLEATS_SETS("∟", "Угловые сухари (комплекты)", "Цены комплектов на 4 угла (рама, створка, дверь) и на 1 импост"),
+    RUBBER_GASKETS("◐", "Резина (уплотнители)", "4 вида резины: глухарь, клин (по толщинам), притвор рамы и створки • расчёт цены за 1 м из коробки")
 }
 
 @Composable
@@ -181,6 +183,10 @@ internal fun ProfileConstructorScreen(
             var cleatSashSetPrice by remember(activeSys.id) { mutableStateOf(activeSys.priceCornerConnectorSash.toString()) }
             var cleatDoorSetPrice by remember(activeSys.id) { mutableStateOf(activeSys.priceCornerConnectorDoorSash.toString()) }
 
+            // Уплотнительная резина (4 типа: глухарь, клинья разной толщины, притвор рамы, притвор створки/двери)
+            var rubberCatalogState by remember(activeSys.id) { mutableStateOf(activeSys.rubberCatalog) }
+            var expandedRubberRow by remember(activeSys.id) { mutableStateOf<Int?>(null) }
+
             fun buildDraftSystem(
                 overrideId: String = activeSys.id,
                 overrideName: String = name.ifBlank { activeSys.name },
@@ -241,7 +247,12 @@ internal fun ProfileConstructorScreen(
                     priceCornerConnectorFrame = cleatFrameSetPrice.replace(',', '.').toDoubleOrNull() ?: activeSys.priceCornerConnectorFrame,
                     priceImpostConnector = cleatImpostSetPrice.replace(',', '.').toDoubleOrNull() ?: activeSys.priceImpostConnector,
                     priceCornerConnectorSash = cleatSashSetPrice.replace(',', '.').toDoubleOrNull() ?: activeSys.priceCornerConnectorSash,
-                    priceCornerConnectorDoorSash = cleatDoorSetPrice.replace(',', '.').toDoubleOrNull() ?: activeSys.priceCornerConnectorDoorSash
+                    priceCornerConnectorDoorSash = cleatDoorSetPrice.replace(',', '.').toDoubleOrNull() ?: activeSys.priceCornerConnectorDoorSash,
+                    // Каталог уплотнительной резины (4 вида) и синхронизация базовой цены за 1 м
+                    rubberCatalog = rubberCatalogState.copy(
+                        wedgeVariants = rubberCatalogState.wedgeVariants.map { it.copy() }
+                    ),
+                    priceRubberPerM = rubberCatalogState.fixedGlazing.pricePerMeter
                 )
             }
 
@@ -685,7 +696,11 @@ internal fun ProfileConstructorScreen(
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Surface(
-                                        color = if (section == ProfileAccordionSection.CLEATS_SETS) palette.accentGreen else palette.accentBlue,
+                                        color = when (section) {
+                                            ProfileAccordionSection.CLEATS_SETS -> palette.accentGreen
+                                            ProfileAccordionSection.RUBBER_GASKETS -> palette.accentTeal
+                                            else -> palette.accentBlue
+                                        },
                                         shape = RoundedCornerShape(10.dp),
                                         modifier = Modifier.size(34.dp)
                                     ) {
@@ -1223,6 +1238,20 @@ internal fun ProfileConstructorScreen(
                                                 onValueChange = { cleatDoorSetPrice = it }
                                             )
                                         }
+
+                                        ProfileAccordionSection.RUBBER_GASKETS -> {
+                                            ProfileRubberSectionContent(
+                                                catalog = rubberCatalogState,
+                                                expandedIndex = expandedRubberRow,
+                                                currencySymbol = currencySymbol,
+                                                onToggleExpand = { idx ->
+                                                    expandedRubberRow = if (expandedRubberRow == idx) null else idx
+                                                },
+                                                onUpdateCatalog = { updated ->
+                                                    rubberCatalogState = updated
+                                                }
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1638,6 +1667,531 @@ private fun ProfilePricePerMeterField(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 modifier = Modifier.width(120.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProfileRubberSectionContent(
+    catalog: ProfileRubberCatalog,
+    expandedIndex: Int?,
+    currencySymbol: String,
+    onToggleExpand: (Int) -> Unit,
+    onUpdateCatalog: (ProfileRubberCatalog) -> Unit
+) {
+    val palette = LocalWinStudioPalette.current
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // 1. Резина для глухаря
+        RubberAccordionRowCard(
+            rowIndex = 0,
+            isExpanded = expandedIndex == 0,
+            title = "1. Резина для глухаря",
+            subtitle = "${String.format(Locale.US, "%.0f", catalog.fixedGlazing.metersPerBox)} м в кор. • ${String.format(Locale.US, "%.2f", catalog.fixedGlazing.pricePerMeter)} $currencySymbol/м",
+            crossSectionResId = R.drawable.gasket_fixed,
+            schemeResId = R.drawable.gasket_scheme_fixed,
+            schemeCaption = "Место установки: наружная упорная резина стеклопакета",
+            testTag = "rubber_row_fixed",
+            onToggle = { onToggleExpand(0) }
+        ) {
+            RubberSingleBoxEditor(
+                spec = catalog.fixedGlazing,
+                currencySymbol = currencySymbol,
+                showThicknessField = true,
+                testTagPrefix = "rubber_fixed",
+                onUpdate = { updated ->
+                    onUpdateCatalog(catalog.copy(fixedGlazing = updated))
+                }
+            )
+        }
+
+        // 2. Клиновая резина (поддерживает несколько толщин клина)
+        val wedgeSummaryText = catalog.wedgeVariants.joinToString(" / ") { "${fmtMm(it.thicknessMm)}мм" }
+        RubberAccordionRowCard(
+            rowIndex = 1,
+            isExpanded = expandedIndex == 1,
+            title = "2. Клиновая резина (${catalog.wedgeVariants.size} вида)",
+            subtitle = "Толщины: $wedgeSummaryText • автоподбор под штапик и СП",
+            crossSectionResId = R.drawable.gasket_wedge,
+            schemeResId = R.drawable.gasket_scheme_wedge,
+            schemeCaption = "Место установки: внутренний клин со стороны штапика",
+            testTag = "rubber_row_wedge",
+            onToggle = { onToggleExpand(1) }
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(
+                    color = palette.accentBlue.copy(alpha = 0.09f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(0.7.dp, palette.accentBlue.copy(alpha = 0.3f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Программа автоматически выбирает нужный клин по формуле:\nЗазор = Посадочное место (A4/C3) − Штапик (H2) − Наружная резина − Толщина СП",
+                        fontSize = 11.sp,
+                        color = palette.accentBlue,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Виды клиновой резины (${catalog.wedgeVariants.size}):",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.5.sp,
+                        color = palette.textPrimary
+                    )
+                    Button(
+                        onClick = {
+                            val nextThick = ((catalog.wedgeVariants.maxOfOrNull { it.thicknessMm } ?: 3.6f) + 0.5f)
+                            val newWedge = WedgeRubberVariantSpec(
+                                id = "wedge_${UUID.randomUUID().toString().take(5)}",
+                                code = "",
+                                name = "Клин ${fmtMm(nextThick)} мм",
+                                thicknessMm = nextThick,
+                                metersPerBox = 200.0,
+                                pricePerBox = 120.0
+                            )
+                            onUpdateCatalog(catalog.copy(wedgeVariants = catalog.wedgeVariants + newWedge))
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .testTag("add_wedge_variant_button")
+                    ) {
+                        Text("+ Клин", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+
+                catalog.wedgeVariants.forEachIndexed { idx, wItem ->
+                    Surface(
+                        color = palette.cardSurface,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(0.8.dp, palette.floatingBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Клин #${idx + 1}: ${wItem.name}",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.5.sp,
+                                    color = palette.textPrimary
+                                )
+                                if (catalog.wedgeVariants.size > 1) {
+                                    IconButton(
+                                        onClick = {
+                                            val updated = catalog.wedgeVariants.filterIndexed { i, _ -> i != idx }
+                                            onUpdateCatalog(catalog.copy(wedgeVariants = updated))
+                                        },
+                                        modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.DeleteOutline,
+                                            contentDescription = "Удалить клин",
+                                            tint = palette.accentRed,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            var thickInput by remember(wItem.id, wItem.thicknessMm) { mutableStateOf(fmtMm(wItem.thicknessMm)) }
+                            var metersInput by remember(wItem.id, wItem.metersPerBox) {
+                                mutableStateOf(fmtBoxNum(wItem.metersPerBox))
+                            }
+                            var boxPriceInput by remember(wItem.id, wItem.pricePerBox) {
+                                mutableStateOf(fmtBoxNum(wItem.pricePerBox))
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = thickInput,
+                                    onValueChange = { raw ->
+                                        thickInput = raw
+                                        val parsed = parseMmOrNull(raw)?.coerceIn(0.5f, 15f)
+                                        if (parsed != null) {
+                                            val next = catalog.wedgeVariants.toMutableList().also {
+                                                it[idx] = wItem.copy(
+                                                    thicknessMm = parsed,
+                                                    name = "Клин ${fmtMm(parsed)} мм"
+                                                )
+                                            }
+                                            onUpdateCatalog(catalog.copy(wedgeVariants = next))
+                                        }
+                                    },
+                                    label = { Text("Толщина (мм)", fontSize = 10.5.sp) },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    shape = RoundedCornerShape(10.dp),
+                                    singleLine = true,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("wedge_thick_input_$idx")
+                                )
+                                OutlinedTextField(
+                                    value = metersInput,
+                                    onValueChange = { raw ->
+                                        metersInput = raw
+                                        val parsed = raw.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(1.0)
+                                        if (parsed != null) {
+                                            val next = catalog.wedgeVariants.toMutableList().also {
+                                                it[idx] = wItem.copy(metersPerBox = parsed)
+                                            }
+                                            onUpdateCatalog(catalog.copy(wedgeVariants = next))
+                                        }
+                                    },
+                                    label = { Text("М в кор.", fontSize = 10.5.sp) },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    shape = RoundedCornerShape(10.dp),
+                                    singleLine = true,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("wedge_meters_input_$idx")
+                                )
+                                OutlinedTextField(
+                                    value = boxPriceInput,
+                                    onValueChange = { raw ->
+                                        boxPriceInput = raw
+                                        val parsed = raw.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0)
+                                        if (parsed != null) {
+                                            val next = catalog.wedgeVariants.toMutableList().also {
+                                                it[idx] = wItem.copy(pricePerBox = parsed)
+                                            }
+                                            onUpdateCatalog(catalog.copy(wedgeVariants = next))
+                                        }
+                                    },
+                                    label = { Text("Цена кор.", fontSize = 10.5.sp) },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    shape = RoundedCornerShape(10.dp),
+                                    singleLine = true,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("wedge_price_input_$idx")
+                                )
+                            }
+
+                            Surface(
+                                color = palette.accentGreen.copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "Цена за 1 м (${wItem.name}): ${String.format(Locale.US, "%.2f", wItem.pricePerMeter)} $currencySymbol/м",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.5.sp,
+                                    color = palette.accentGreen,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Резина рамы на притвор
+        RubberAccordionRowCard(
+            rowIndex = 2,
+            isExpanded = expandedIndex == 2,
+            title = "3. Резина рамы на притвор",
+            subtitle = "${String.format(Locale.US, "%.0f", catalog.frameRebate.metersPerBox)} м в кор. • ${String.format(Locale.US, "%.2f", catalog.frameRebate.pricePerMeter)} $currencySymbol/м",
+            crossSectionResId = R.drawable.gasket_frame_rebate,
+            schemeResId = R.drawable.gasket_scheme_frame_rebate,
+            schemeCaption = "Место установки: наружный притвор рамы (акустический контур)",
+            testTag = "rubber_row_frame_rebate",
+            onToggle = { onToggleExpand(2) }
+        ) {
+            RubberSingleBoxEditor(
+                spec = catalog.frameRebate,
+                currencySymbol = currencySymbol,
+                showThicknessField = false,
+                testTagPrefix = "rubber_frame",
+                onUpdate = { updated ->
+                    onUpdateCatalog(catalog.copy(frameRebate = updated))
+                }
+            )
+        }
+
+        // 4. Резина створки / двери на притвор
+        RubberAccordionRowCard(
+            rowIndex = 3,
+            isExpanded = expandedIndex == 3,
+            title = "4. Резина створки/двери на притвор",
+            subtitle = "${String.format(Locale.US, "%.0f", catalog.sashDoorRebate.metersPerBox)} м в кор. • ${String.format(Locale.US, "%.2f", catalog.sashDoorRebate.pricePerMeter)} $currencySymbol/м",
+            crossSectionResId = R.drawable.gasket_sash_rebate,
+            schemeResId = R.drawable.gasket_scheme_sash_rebate,
+            schemeCaption = "Место установки: внутренний притвор створки / двери",
+            testTag = "rubber_row_sash_rebate",
+            onToggle = { onToggleExpand(3) }
+        ) {
+            RubberSingleBoxEditor(
+                spec = catalog.sashDoorRebate,
+                currencySymbol = currencySymbol,
+                showThicknessField = false,
+                testTagPrefix = "rubber_sash",
+                onUpdate = { updated ->
+                    onUpdateCatalog(catalog.copy(sashDoorRebate = updated))
+                }
+            )
+        }
+    }
+}
+
+private fun fmtBoxNum(v: Double): String {
+    return if (v % 1.0 == 0.0) {
+        v.roundToInt().toString()
+    } else {
+        String.format(Locale.US, "%.2f", v)
+    }
+}
+
+@Composable
+private fun RubberAccordionRowCard(
+    rowIndex: Int,
+    isExpanded: Boolean,
+    title: String,
+    subtitle: String,
+    crossSectionResId: Int,
+    schemeResId: Int,
+    schemeCaption: String,
+    testTag: String,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    val palette = LocalWinStudioPalette.current
+    Surface(
+        color = palette.secondaryBackground.copy(alpha = 0.65f),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(
+            width = if (isExpanded) 1.dp else 0.7.dp,
+            color = if (isExpanded) palette.accentTeal.copy(alpha = 0.55f) else palette.floatingBorder
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 54.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable(onClick = onToggle)
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                    .testTag(testTag),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color.White)
+                        .border(0.7.dp, palette.floatingBorder, RoundedCornerShape(10.dp))
+                        .padding(4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        painter = painterResource(id = crossSectionResId),
+                        contentDescription = title,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = palette.textPrimary
+                    )
+                    Text(
+                        text = subtitle,
+                        fontSize = 11.sp,
+                        color = palette.accentTeal,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                Text(
+                    text = if (isExpanded) "▲" else "▼",
+                    color = palette.accentTeal,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(end = 4.dp)
+                )
+            }
+
+            if (isExpanded) {
+                HorizontalDivider(color = palette.divider, thickness = 0.6.dp)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            color = Color.White,
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(0.7.dp, palette.floatingBorder),
+                            modifier = Modifier.weight(0.42f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(6.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Image(
+                                    painter = painterResource(id = crossSectionResId),
+                                    contentDescription = "Сечение: $title",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(110.dp)
+                                )
+                                Text(
+                                    text = "Сечение",
+                                    fontSize = 10.sp,
+                                    color = Color(0xFF5A6577)
+                                )
+                            }
+                        }
+                        Surface(
+                            color = Color.White,
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(0.7.dp, palette.floatingBorder),
+                            modifier = Modifier.weight(0.58f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(6.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Image(
+                                    painter = painterResource(id = schemeResId),
+                                    contentDescription = schemeCaption,
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(110.dp)
+                                )
+                                Text(
+                                    text = "Узел установки",
+                                    fontSize = 10.sp,
+                                    color = Color(0xFF5A6577)
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = schemeCaption,
+                        fontSize = 11.sp,
+                        color = palette.textSecondary
+                    )
+                    content()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RubberSingleBoxEditor(
+    spec: RubberBoxSpec,
+    currencySymbol: String,
+    showThicknessField: Boolean,
+    testTagPrefix: String,
+    onUpdate: (RubberBoxSpec) -> Unit
+) {
+    val palette = LocalWinStudioPalette.current
+    var metersInput by remember(spec.name, spec.metersPerBox) { mutableStateOf(fmtBoxNum(spec.metersPerBox)) }
+    var boxPriceInput by remember(spec.name, spec.pricePerBox) { mutableStateOf(fmtBoxNum(spec.pricePerBox)) }
+    var thickInput by remember(spec.name, spec.thicknessMm) { mutableStateOf(fmtMm(spec.thicknessMm)) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (showThicknessField) {
+                OutlinedTextField(
+                    value = thickInput,
+                    onValueChange = { raw ->
+                        thickInput = raw
+                        val parsed = parseMmOrNull(raw)?.coerceIn(1f, 12f)
+                        if (parsed != null) onUpdate(spec.copy(thicknessMm = parsed))
+                    },
+                    label = { Text("Толщина (мм)", fontSize = 10.5.sp) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    shape = RoundedCornerShape(10.dp),
+                    singleLine = true,
+                    modifier = Modifier
+                        .weight(0.85f)
+                        .testTag("${testTagPrefix}_thick_input")
+                )
+            }
+            OutlinedTextField(
+                value = metersInput,
+                onValueChange = { raw ->
+                    metersInput = raw
+                    val parsed = raw.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(1.0)
+                    if (parsed != null) onUpdate(spec.copy(metersPerBox = parsed))
+                },
+                label = { Text("Метров в коробке", fontSize = 10.5.sp) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                shape = RoundedCornerShape(10.dp),
+                singleLine = true,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("${testTagPrefix}_meters_input")
+            )
+            OutlinedTextField(
+                value = boxPriceInput,
+                onValueChange = { raw ->
+                    boxPriceInput = raw
+                    val parsed = raw.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0)
+                    if (parsed != null) onUpdate(spec.copy(pricePerBox = parsed))
+                },
+                label = { Text("Цена за коробку ($currencySymbol)", fontSize = 10.5.sp) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                shape = RoundedCornerShape(10.dp),
+                singleLine = true,
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("${testTagPrefix}_price_input")
+            )
+        }
+
+        Surface(
+            color = palette.accentGreen.copy(alpha = 0.12f),
+            shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(0.7.dp, palette.accentGreen.copy(alpha = 0.4f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = "Расчётная цена за 1 пог. метр: ${String.format(Locale.US, "%.2f", spec.pricePerMeter)} $currencySymbol/м",
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.5.sp,
+                color = palette.accentGreen,
+                modifier = Modifier
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .testTag("${testTagPrefix}_price_per_m")
             )
         }
     }

@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import ru.winstudiopro.app.data.AppStateStorage
 import ru.winstudiopro.app.data.PersistedAppState
+import ru.winstudiopro.app.domain.calculator.WarehouseInventoryHelper
 import ru.winstudiopro.app.domain.model.AppUiSettings
 import ru.winstudiopro.app.domain.model.ColorCatalogItem
 import ru.winstudiopro.app.domain.model.CustomerOrder
@@ -33,6 +34,7 @@ import ru.winstudiopro.app.domain.model.HardwareBrandItem
 import ru.winstudiopro.app.domain.model.OrderStatus
 import ru.winstudiopro.app.domain.model.ProfileSystemSpec
 import ru.winstudiopro.app.domain.model.StockRemnantBar
+import ru.winstudiopro.app.domain.model.StockRubberItem
 import ru.winstudiopro.app.domain.model.WindowCadOperations
 import ru.winstudiopro.app.domain.model.WindowItem
 import ru.winstudiopro.app.domain.model.WorkServiceItem
@@ -59,7 +61,9 @@ enum class AppScreenMode {
     PRICES_SCREEN,       // Прайсы на системы, сухари, стеклопакеты, фурнитуру, разное и работы
     WAREHOUSE_STOCK,     // Склад: папки по профильным системам (целые хлысты + деловые остатки)
     UI_SETTINGS,         // Настройки интерфейса и реквизитов компании для PDF
-    WORKSHOP_CUTTING     // Модуль задания в цех и линейного 1D-раскроя профилей
+    WORKSHOP_CUTTING,    // Модуль задания в цех и линейного 1D-раскроя профилей
+    GLAZING_ORDER_EDITOR,// Редактор «Заказ стеклопакетов» перед генерацией PDF
+    HARDWARE_ORDER_EDITOR// Редактор «Заказ фурнитуры» перед генерацией PDF
 }
 
 // Состояние вызова цифрового калькулятора размеров
@@ -120,6 +124,7 @@ fun WinStudioProMainApp(
     var profileSystems by remember { mutableStateOf(initialPersisted.profileSystems) }
     var orders by remember { mutableStateOf(initialPersisted.orders) }
     var stockRemnants by remember { mutableStateOf(initialPersisted.stockRemnants) }
+    var stockRubber by remember { mutableStateOf(initialPersisted.stockRubber) }
     var uiSettings by remember { mutableStateOf(initialPersisted.uiSettings) }
 
     var glazingCatalog by remember { mutableStateOf(initialPersisted.glazingCatalog) }
@@ -152,6 +157,7 @@ fun WinStudioProMainApp(
                             profileSystems = profileSystems,
                             orders = updatedOrders,
                             stockRemnants = stockRemnants,
+                            stockRubber = stockRubber,
                             uiSettings = uiSettings,
                             glazingCatalog = glazingCatalog,
                             colorCatalog = colorCatalog,
@@ -183,6 +189,7 @@ fun WinStudioProMainApp(
                     profileSystems = newState.profileSystems
                     orders = newState.orders
                     stockRemnants = newState.stockRemnants
+                    stockRubber = newState.stockRubber
                     uiSettings = newState.uiSettings
                     glazingCatalog = newState.glazingCatalog
                     colorCatalog = newState.colorCatalog
@@ -206,6 +213,7 @@ fun WinStudioProMainApp(
         newProfiles: List<ProfileSystemSpec> = profileSystems,
         newOrders: List<CustomerOrder> = orders,
         newStock: List<StockRemnantBar> = stockRemnants,
+        newStockRubber: List<StockRubberItem> = stockRubber,
         newSettings: AppUiSettings = uiSettings,
         newGlazing: List<GlazingCatalogItem> = glazingCatalog,
         newColors: List<ColorCatalogItem> = colorCatalog,
@@ -216,6 +224,7 @@ fun WinStudioProMainApp(
         profileSystems = newProfiles
         orders = newOrders
         stockRemnants = newStock
+        stockRubber = newStockRubber
         uiSettings = newSettings
         glazingCatalog = newGlazing
         colorCatalog = newColors
@@ -228,6 +237,7 @@ fun WinStudioProMainApp(
                 profileSystems = newProfiles,
                 orders = newOrders,
                 stockRemnants = newStock,
+                stockRubber = newStockRubber,
                 uiSettings = newSettings,
                 glazingCatalog = newGlazing,
                 colorCatalog = newColors,
@@ -236,6 +246,64 @@ fun WinStudioProMainApp(
                 workServices = newWorks
             )
         )
+    }
+
+    // Автоматическое списание профилей, деловых остатков и резины при переводе заказа в «Производство»
+    fun handleOrdersUpdateWithStockDeduction(updatedOrders: List<CustomerOrder>) {
+        val oldById = orders.associateBy { it.id }
+        var curBars = stockRemnants
+        var curRubber = stockRubber
+        var totalDeductedOrders = 0
+        var totalConsumedFull = 0
+        var totalConsumedRem = 0
+        var totalAddedRem = 0
+        var totalRubberM = 0.0
+
+        val finalOrders = updatedOrders.map { newOrder ->
+            val oldOrder = oldById[newOrder.id]
+            val enteredProduction = newOrder.status == OrderStatus.PRODUCTION &&
+                oldOrder?.status != OrderStatus.PRODUCTION &&
+                !newOrder.stockDeductedForProduction
+            if (enteredProduction) {
+                val deduction = WarehouseInventoryHelper.applyProductionStockDeduction(
+                    order = newOrder,
+                    profileSystems = profileSystems,
+                    glazingCatalog = glazingCatalog,
+                    colorCatalog = colorCatalog,
+                    sillsCatalog = sillsCatalog,
+                    extraAccessoriesCatalog = extraAccessories,
+                    workServicesCatalog = workServices,
+                    hardwareBrandsCatalog = hardwareBrands,
+                    currentStockBars = curBars,
+                    currentStockRubber = curRubber
+                )
+                curBars = deduction.updatedStockBars
+                curRubber = deduction.updatedStockRubber
+                totalDeductedOrders += 1
+                totalConsumedFull += deduction.consumedFullBarsCount
+                totalConsumedRem += deduction.consumedRemnantsCount
+                totalAddedRem += deduction.addedRemnantsCount
+                totalRubberM += deduction.deductedRubberMeters
+                deduction.updatedOrder
+            } else {
+                newOrder
+            }
+        }
+
+        persistAll(
+            newOrders = finalOrders,
+            newStock = curBars,
+            newStockRubber = curRubber
+        )
+
+        if (totalDeductedOrders > 0) {
+            val rubberMsg = String.format(Locale.US, "%.1f", totalRubberM)
+            Toast.makeText(
+                context,
+                "В производство! Списано: хлыстов $totalConsumedFull, ост. $totalConsumedRem, резины $rubberMsg м • На склад ост.: $totalAddedRem",
+                Toast.LENGTH_LONG
+            ).show()
+        }
     }
 
     // Мгновенное создание нового заказа без предварительной анкеты клиента!
@@ -283,7 +351,9 @@ fun WinStudioProMainApp(
     // возвращает на предыдущий экран вместо сворачивания приложения!
     BackHandler(enabled = screenMode != AppScreenMode.METRO_HOME) {
         screenMode = when (screenMode) {
-            AppScreenMode.WORKSHOP_CUTTING -> AppScreenMode.CAD_WORKSPACE
+            AppScreenMode.WORKSHOP_CUTTING,
+            AppScreenMode.GLAZING_ORDER_EDITOR,
+            AppScreenMode.HARDWARE_ORDER_EDITOR -> AppScreenMode.CAD_WORKSPACE
             else -> AppScreenMode.METRO_HOME
         }
     }
@@ -337,14 +407,17 @@ fun WinStudioProMainApp(
                                 hardwareBrandsCatalog = hardwareBrands,
                                 extraAccessoriesCatalog = extraAccessories,
                                 workServicesCatalog = workServices,
+                                stockRemnants = stockRemnants,
                                 uiSettings = uiSettings,
                                 onSelectWindowIndex = { idx -> activeWindowIndex = idx },
                                 onUpdateOrder = { updatedOrder ->
                                     val newList = orders.map { if (it.id == updatedOrder.id) updatedOrder else it }
-                                    persistAll(newOrders = newList)
+                                    handleOrdersUpdateWithStockDeduction(newList)
                                 },
                                 onBackToHome = { screenMode = AppScreenMode.METRO_HOME },
                                 onOpenWorkshopCutting = { screenMode = AppScreenMode.WORKSHOP_CUTTING },
+                                onOpenGlazingOrder = { screenMode = AppScreenMode.GLAZING_ORDER_EDITOR },
+                                onOpenHardwareOrder = { screenMode = AppScreenMode.HARDWARE_ORDER_EDITOR },
                                 onOpenPdfFile = onOpenPdfFile,
                                 onSharePdfFile = onSharePdfFile
                             )
@@ -361,7 +434,7 @@ fun WinStudioProMainApp(
                                 activeWindowIndex = 0
                                 screenMode = AppScreenMode.CAD_WORKSPACE
                             },
-                            onUpdateOrders = { updated -> persistAll(newOrders = updated) },
+                            onUpdateOrders = { updated -> handleOrdersUpdateWithStockDeduction(updated) },
                             onExportOrder = { ord ->
                                 val file = AppStateStorage.createOrderJsonExportFile(context, ord)
                                 onShareExportFile(file, "Заказ ${ord.orderNumber}")
@@ -400,8 +473,10 @@ fun WinStudioProMainApp(
                         WarehouseBySystemScreen(
                             profileSystems = profileSystems,
                             stockBars = stockRemnants,
+                            stockRubber = stockRubber,
                             onBack = { screenMode = AppScreenMode.METRO_HOME },
-                            onSaveStock = { updated -> persistAll(newStock = updated) }
+                            onSaveStock = { updated -> persistAll(newStock = updated) },
+                            onSaveRubberStock = { updatedRubber -> persistAll(newStockRubber = updatedRubber) }
                         )
                     }
 
@@ -436,8 +511,51 @@ fun WinStudioProMainApp(
                                 workServicesCatalog = workServices,
                                 hardwareBrandsCatalog = hardwareBrands,
                                 stockRemnants = stockRemnants,
+                                stockRubber = stockRubber,
+                                onUpdateOrder = { updatedOrder ->
+                                    val newList = orders.map { if (it.id == updatedOrder.id) updatedOrder else it }
+                                    handleOrdersUpdateWithStockDeduction(newList)
+                                },
                                 onBackToCad = { screenMode = AppScreenMode.CAD_WORKSPACE },
                                 onSaveStockRemnants = { updatedStock -> persistAll(newStock = updatedStock) },
+                                onOpenPdfFile = onOpenPdfFile
+                            )
+                        } else {
+                            screenMode = AppScreenMode.METRO_HOME
+                        }
+                    }
+
+                    AppScreenMode.GLAZING_ORDER_EDITOR -> {
+                        if (currentOrder != null) {
+                            GlazingOrderScreen(
+                                order = currentOrder,
+                                profileSystems = profileSystems,
+                                glazingCatalog = glazingCatalog,
+                                colorCatalog = colorCatalog,
+                                sillsCatalog = sillsCatalog,
+                                extraAccessoriesCatalog = extraAccessories,
+                                workServicesCatalog = workServices,
+                                hardwareBrandsCatalog = hardwareBrands,
+                                onBackToCad = { screenMode = AppScreenMode.CAD_WORKSPACE },
+                                onOpenPdfFile = onOpenPdfFile
+                            )
+                        } else {
+                            screenMode = AppScreenMode.METRO_HOME
+                        }
+                    }
+
+                    AppScreenMode.HARDWARE_ORDER_EDITOR -> {
+                        if (currentOrder != null) {
+                            HardwareOrderScreen(
+                                order = currentOrder,
+                                profileSystems = profileSystems,
+                                glazingCatalog = glazingCatalog,
+                                colorCatalog = colorCatalog,
+                                sillsCatalog = sillsCatalog,
+                                extraAccessoriesCatalog = extraAccessories,
+                                workServicesCatalog = workServices,
+                                hardwareBrandsCatalog = hardwareBrands,
+                                onBackToCad = { screenMode = AppScreenMode.CAD_WORKSPACE },
                                 onOpenPdfFile = onOpenPdfFile
                             )
                         } else {

@@ -18,6 +18,71 @@ data class ShtapikVariantSpec(
     val pricePerM: Double = 2.2             // Стоимость за 1 пог. метр штапика
 )
 
+/**
+ * Параметры уплотнительной резины: метраж в коробке, цена коробки и авторасчёт цены за 1 м.
+ */
+data class RubberBoxSpec(
+    val code: String = "",
+    val name: String,
+    val thicknessMm: Float = 4.0f,
+    val metersPerBox: Double = 200.0,
+    val pricePerBox: Double = 120.0
+) {
+    val pricePerMeter: Double
+        get() = if (metersPerBox > 0.0) pricePerBox / metersPerBox else 0.0
+}
+
+/**
+ * Вариант клиновой резины (под разные толщины стеклопакета и штапика).
+ */
+data class WedgeRubberVariantSpec(
+    val id: String,
+    val code: String = "",
+    val name: String,
+    val thicknessMm: Float = 3.6f,
+    val metersPerBox: Double = 210.0,
+    val pricePerBox: Double = 126.0
+) {
+    val pricePerMeter: Double
+        get() = if (metersPerBox > 0.0) pricePerBox / metersPerBox else 0.0
+}
+
+/**
+ * Каталог 4 типов уплотнительной резины в профильной системе:
+ * 1) Резина для глухаря (наружная под стеклопакет)
+ * 2) Клиновая резина (несколько вариантов по толщине)
+ * 3) Резина рамы на притвор
+ * 4) Резина створки/двери на притвор
+ */
+data class ProfileRubberCatalog(
+    val fixedGlazing: RubberBoxSpec = RubberBoxSpec(
+        code = "01.11.15",
+        name = "Резина для глухаря",
+        thicknessMm = 4.0f,
+        metersPerBox = 208.0,
+        pricePerBox = 124.8
+    ),
+    val wedgeVariants: List<WedgeRubberVariantSpec> = listOf(
+        WedgeRubberVariantSpec("wedge_2_8", "01.17.03", "Клин 2.8 мм", 2.8f, 254.0, 152.4),
+        WedgeRubberVariantSpec("wedge_3_6", "01.17.04", "Клин 3.6 мм", 3.6f, 210.0, 126.0),
+        WedgeRubberVariantSpec("wedge_4_6", "01.17.05", "Клин 4.6 мм", 4.6f, 168.0, 100.8)
+    ),
+    val frameRebate: RubberBoxSpec = RubberBoxSpec(
+        code = "01.18.03",
+        name = "Резина рамы на притвор",
+        thicknessMm = 0f,
+        metersPerBox = 365.0,
+        pricePerBox = 219.0
+    ),
+    val sashDoorRebate: RubberBoxSpec = RubberBoxSpec(
+        code = "01.18.04",
+        name = "Резина створки/двери на притвор",
+        thicknessMm = 0f,
+        metersPerBox = 357.0,
+        pricePerBox = 214.2
+    )
+)
+
 const val CUSTOM_CLIENT_COLOR_ID = "custom_client"
 const val RAW_UNPAINTED_COLOR_NAME = "Неокрашенный (сырой)"
 
@@ -140,7 +205,10 @@ data class ProfileSystemSpec(
     val priceGlazingBarPerM: Double = 3.0,
 
     // --- Каталог доступных цветов профильной системы (Антрацит — базовый по умолчанию) ---
-    val colors: List<ProfileColorSpec> = DefaultCatalogs.defaultProfileColors()
+    val colors: List<ProfileColorSpec> = DefaultCatalogs.defaultProfileColors(),
+
+    // --- Каталог 4 видов уплотнительной резины (цена за коробку -> за 1 пог. метр) ---
+    val rubberCatalog: ProfileRubberCatalog = ProfileRubberCatalog()
 ) {
     /**
      * Заход стеклопакета внутрь профиля от линии светового проема с одной стороны (мм).

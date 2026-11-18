@@ -155,4 +155,61 @@ class OrderStatusAndStorageRobolectricTest {
         assertEquals(emptySet<OrderStatus>(), AppStateStorage.loadOrdersFilterStatuses(context))
         assertNotNull(AppStateStorage.loadState(context))
     }
+
+    @Test
+    fun `rubber catalog stock rubber and production deduction flag persist in sqlite and backup`() {
+        val state = AppStateStorage.loadState(context)
+        val firstSys = state.profileSystems.first()
+        val updatedRubberCat = firstSys.rubberCatalog.copy(
+            fixedGlazing = firstSys.rubberCatalog.fixedGlazing.copy(metersPerBox = 250.0, pricePerBox = 375.0),
+            wedgeVariants = firstSys.rubberCatalog.wedgeVariants + ru.winstudiopro.app.domain.model.WedgeRubberVariantSpec(
+                id = "w_custom_55",
+                code = "01.17.99",
+                name = "Клин 5.5 мм",
+                thicknessMm = 5.5f,
+                metersPerBox = 150.0,
+                pricePerBox = 180.0
+            )
+        )
+        val updatedProfiles = state.profileSystems.mapIndexed { idx, p ->
+            if (idx == 0) p.copy(rubberCatalog = updatedRubberCat) else p
+        }
+        val updatedOrders = state.orders.mapIndexed { idx, o ->
+            if (idx == 0) o.copy(status = OrderStatus.PRODUCTION, stockDeductedForProduction = true) else o
+        }
+        val customStockRubber = listOf(
+            ru.winstudiopro.app.domain.model.StockRubberItem(
+                id = "rub_test_1",
+                profileSystemId = firstSys.id,
+                rubberType = ru.winstudiopro.app.domain.calculator.RubberType.WEDGE_SHTAPIK,
+                wedgeVariantId = "w_custom_55",
+                wedgeThicknessMm = 5.5f,
+                label = "Клин 5.5 мм",
+                metersInStock = 142.75
+            )
+        )
+
+        AppStateStorage.saveState(
+            context,
+            state.copy(
+                profileSystems = updatedProfiles,
+                orders = updatedOrders,
+                stockRubber = customStockRubber
+            )
+        )
+
+        val reloaded = AppStateStorage.loadState(context)
+        assertEquals(250.0, reloaded.profileSystems.first().rubberCatalog.fixedGlazing.metersPerBox, 0.01)
+        assertEquals(375.0, reloaded.profileSystems.first().rubberCatalog.fixedGlazing.pricePerBox, 0.01)
+        assertTrue(reloaded.profileSystems.first().rubberCatalog.wedgeVariants.any { it.id == "w_custom_55" })
+        assertTrue(reloaded.orders.first().stockDeductedForProduction)
+        assertEquals(1, reloaded.stockRubber.size)
+        assertEquals(142.75, reloaded.stockRubber.first().metersInStock, 0.01)
+
+        val backupJson = AppStateStorage.exportFullBackupJsonString(context)
+        val restored = AppStateStorage.importFullBackupJsonString(context, backupJson)
+        assertEquals(1, restored.stockRubber.size)
+        assertEquals(142.75, restored.stockRubber.first().metersInStock, 0.01)
+        assertTrue(restored.orders.first().stockDeductedForProduction)
+    }
 }

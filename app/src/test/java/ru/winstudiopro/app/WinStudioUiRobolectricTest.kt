@@ -2,11 +2,15 @@ package ru.winstudiopro.app
 
 import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Before
 import org.junit.Rule
@@ -64,5 +68,140 @@ class WinStudioUiRobolectricTest {
         composeRule.onNodeWithTag("top_bar_back_button").assertIsDisplayed().performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("dashboard_orders_card").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `cad drawer separates installation drawings, workshop task, and cutting manual editor`() {
+        composeRule.waitForIdle()
+
+        // Создаём новый заказ из главного экрана и переходим в 2D-редактор
+        composeRule.onNodeWithTag("dashboard_orders_card").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("orders_list_add_button").performClick()
+        composeRule.waitForIdle()
+
+        // Открываем левую шторку 2D-редактора
+        composeRule.onNodeWithTag("cad_menu_button").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("cad_menu_installation_drawings").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("cad_menu_workshop_task").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("cad_menu_cutting").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+
+        // Меняем длину 1-го хлыста вручную с 6000 на 5000 мм (прокручиваем LazyColumn до хлыста)
+        composeRule.onNodeWithTag("workshop_lazy_column")
+            .performScrollToNode(hasTestTag("workshop_edit_bar_0"))
+        composeRule.onNodeWithTag("workshop_edit_bar_0").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("workshop_edit_bar_length_input").performTextReplacement("5000")
+        composeRule.onNodeWithTag("workshop_edit_bar_confirm").performClick()
+        composeRule.waitForIdle()
+
+        // Появилась кнопка сброса и статус ручного раскроя
+        composeRule.onNodeWithTag("workshop_lazy_column")
+            .performScrollToNode(hasTestTag("workshop_reset_auto_button"))
+        composeRule.onNodeWithTag("workshop_reset_auto_button").assertIsDisplayed()
+        assert(composeRule.onAllNodesWithText("Ручной раскрой", substring = true).fetchSemanticsNodes().isNotEmpty())
+
+        // Нажимаем на 1-й отрезок и проверяем раздел "Деловые остатки со склада"
+        composeRule.onNodeWithTag("workshop_lazy_column")
+            .performScrollToNode(hasTestTag("workshop_cut_0_0"))
+        composeRule.onNodeWithTag("workshop_cut_0_0").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("workshop_open_manual_remnant_btn").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("workshop_manual_remnant_input").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Закрыть")[0].performClick()
+        composeRule.waitForIdle()
+
+        // Сбрасываем обратно на авто-раскрой
+        composeRule.onNodeWithTag("workshop_lazy_column")
+            .performScrollToNode(hasTestTag("workshop_reset_auto_button"))
+        composeRule.onNodeWithTag("workshop_reset_auto_button").performClick()
+        composeRule.waitForIdle()
+        assert(composeRule.onAllNodesWithText("Автоматический раскрой", substring = true).fetchSemanticsNodes().isNotEmpty())
+
+        // Проверяем наличие чекбоксов профиля, закладных, 4 видов резины и кнопки "Сформировать заказ профиля (PDF)"
+        composeRule.onNodeWithTag("workshop_lazy_column")
+            .performScrollToNode(hasTestTag("workshop_profile_check_0"))
+        composeRule.onNodeWithTag("workshop_profile_check_0").assertIsDisplayed()
+        composeRule.onNodeWithTag("workshop_lazy_column")
+            .performScrollToNode(hasTestTag("workshop_connector_check_FRAME"))
+        composeRule.onNodeWithTag("workshop_connector_check_FRAME").assertIsDisplayed()
+        composeRule.onNodeWithTag("workshop_lazy_column")
+            .performScrollToNode(hasTestTag("workshop_rubber_check_FIXED_GLAZING"))
+        composeRule.onNodeWithTag("workshop_rubber_check_FIXED_GLAZING").assertIsDisplayed()
+        composeRule.onNodeWithTag("workshop_lazy_column")
+            .performScrollToNode(hasTestTag("workshop_profile_order_pdf_button"))
+        composeRule.onNodeWithTag("workshop_profile_order_pdf_button").assertIsDisplayed()
+    }
+
+    @Test
+    fun `glazing and hardware order editors open from cad menu and allow selection and editing`() {
+        composeRule.waitForIdle()
+
+        // Открываем первый существующий заказ из базы и заходим в 2D-конструктор
+        composeRule.onNodeWithTag("dashboard_orders_card").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onAllNodesWithText("Окон:", substring = true)[0].performClick()
+        composeRule.waitForIdle()
+
+        // Открываем "Заказ стеклопакетов"
+        composeRule.onNodeWithTag("cad_menu_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("cad_menu_glazing_order").performScrollTo().performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("glazing_select_all_btn").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("glazing_select_all_btn").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("glazing_generate_pdf_btn").assertIsDisplayed()
+        composeRule.onNodeWithTag("top_bar_back_button").performClick()
+        composeRule.waitForIdle()
+
+        // Открываем "Заказ фурнитуры"
+        composeRule.onNodeWithTag("cad_menu_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("cad_menu_hardware_order").performScrollTo().performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("hardware_select_all_btn").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("hardware_select_all_btn").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("hardware_generate_pdf_btn").assertIsDisplayed()
+    }
+
+    @Test
+    fun `profiles screen displays rubber section with 4 rows and warehouse manages rubber meters`() {
+        composeRule.waitForIdle()
+
+        // 1. Открываем "Профили", раскрываем секцию "Резина (уплотнители)" внизу списка
+        composeRule.onNodeWithTag("dashboard_profiles_card").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onAllNodesWithText("Резина (уплотнители)", substring = true)[0]
+            .performScrollTo()
+            .performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("rubber_row_fixed").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("rubber_row_wedge").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("rubber_row_frame_rebate").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("rubber_row_sash_rebate").performScrollTo().assertIsDisplayed()
+
+        // Возвращаемся на главный экран
+        composeRule.onNodeWithTag("top_bar_back_button").performClick()
+        composeRule.waitForIdle()
+
+        // 2. Открываем "Склад", прокручиваем LazyColumn до раздела уплотнительной резины
+        composeRule.onNodeWithTag("dashboard_warehouse_card").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("warehouse_lazy_column")
+            .performScrollToNode(hasText("Уплотнительная резина", substring = true))
+        composeRule.waitForIdle()
+        assert(composeRule.onAllNodesWithText("Уплотнительная резина", substring = true).fetchSemanticsNodes().isNotEmpty())
+        composeRule.onNodeWithTag("top_bar_back_button").performClick()
+        composeRule.waitForIdle()
     }
 }

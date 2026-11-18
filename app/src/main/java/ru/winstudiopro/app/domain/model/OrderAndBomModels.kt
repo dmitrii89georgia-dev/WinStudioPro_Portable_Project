@@ -1,5 +1,7 @@
 package ru.winstudiopro.app.domain.model
 
+import ru.winstudiopro.app.domain.calculator.RubberType
+
 data class WindowPresetTemplate(
     val id: String,
     val titleRu: String,
@@ -172,6 +174,19 @@ data class StockRemnantBar(
     val colorHex: Long = 0xFFFFFFFF
 )
 
+/**
+ * Складской остаток уплотнительной резины (учёт и списание в метрах п.м. по профильной системе).
+ */
+data class StockRubberItem(
+    val id: String,
+    val profileSystemId: String,
+    val rubberType: RubberType,
+    val wedgeVariantId: String? = null,
+    val wedgeThicknessMm: Float? = null,
+    val label: String = "",
+    val metersInStock: Double = 0.0
+)
+
 enum class OrderStatus(
     val titleRu: String,
     val titleEn: String,
@@ -232,7 +247,9 @@ data class CustomerOrder(
     val markupPercent: Double = 0.0,
     val taxVatPercent: Double = 18.0,
     val manualOrderTotalOverride: Double? = null,
-    val currencySymbol: String = "доллар"
+    val currencySymbol: String = "доллар",
+    val customCuttingAllocations: List<CutBarAllocation>? = null,
+    val stockDeductedForProduction: Boolean = false
 ) {
     fun computeDeadlineState(nowMillis: Long = System.currentTimeMillis()): ContractDeadlineState? {
         if (!status.showDeadlineSmiley) return null
@@ -366,7 +383,8 @@ data class WindowCalculationResult(
     val lineTotalCost: Double,
     val profileCuts: List<ProfileCutPiece>,
     val glazingSpecs: List<GlazingSpecItem>,
-    val hardwareSpecs: List<SashHardwareSpecItem>
+    val hardwareSpecs: List<SashHardwareSpecItem>,
+    val matchedWedgeSummary: String = ""
 )
 
 data class CutBarAllocation(

@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
+import ru.winstudiopro.app.domain.calculator.RubberType
 import ru.winstudiopro.app.domain.model.*
 import java.io.File
 import java.io.FileNotFoundException
@@ -18,6 +19,7 @@ data class PersistedAppState(
     val profileSystems: List<ProfileSystemSpec>,
     val orders: List<CustomerOrder>,
     val stockRemnants: List<StockRemnantBar>,
+    val stockRubber: List<StockRubberItem> = emptyList(),
     val uiSettings: AppUiSettings = AppUiSettings(),
     val glazingCatalog: List<GlazingCatalogItem> = DefaultCatalogs.defaultGlazingItems(),
     val colorCatalog: List<ColorCatalogItem> = DefaultCatalogs.defaultColors(),
@@ -27,7 +29,7 @@ data class PersistedAppState(
 )
 
 private class WinStudioSqliteHelper(context: Context) :
-    SQLiteOpenHelper(context, "winstudio_pro_v3.db", null, 4) {
+    SQLiteOpenHelper(context, "winstudio_pro_v3.db", null, 5) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -62,6 +64,19 @@ private class WinStudioSqliteHelper(context: Context) :
                 is_full_bar INTEGER NOT NULL DEFAULT 0,
                 color_name TEXT NOT NULL DEFAULT 'Белый',
                 color_hex INTEGER NOT NULL DEFAULT 4294967295
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS stock_rubber (
+                id TEXT PRIMARY KEY,
+                profile_system_id TEXT NOT NULL,
+                rubber_type TEXT NOT NULL,
+                wedge_variant_id TEXT,
+                wedge_thickness_mm REAL,
+                label TEXT NOT NULL DEFAULT '',
+                meters_in_stock REAL NOT NULL DEFAULT 0.0
             )
             """.trimIndent()
         )
@@ -142,6 +157,7 @@ object AppStateStorage {
             val existingProfiles = loadProfilesFromDb(db)
             val existingOrders = loadOrdersFromDb(db)
             val existingStock = loadStockFromDb(db)
+            val existingRubberStock = loadStockRubberFromDb(db)
 
             // Однократно подключаем тестовую базу dev_seed.winbackup.json (и при чистой установке,
             // и при обновлении тестового APK в эмуляторе, где уже лежала старая демо-база)
@@ -150,7 +166,8 @@ object AppStateStorage {
                 db = dbHelper.writableDatabase,
                 existingProfiles = existingProfiles,
                 existingOrders = existingOrders,
-                existingStock = existingStock
+                existingStock = existingStock,
+                existingRubberStock = existingRubberStock
             )
             if (seededState != null) {
                 return seededState
@@ -174,6 +191,7 @@ object AppStateStorage {
                 profileSystems = profiles,
                 orders = orders,
                 stockRemnants = existingStock,
+                stockRubber = existingRubberStock,
                 uiSettings = settingsBundle.uiSettings,
                 glazingCatalog = settingsBundle.glazingCatalog,
                 colorCatalog = settingsBundle.colorCatalog,
@@ -192,7 +210,8 @@ object AppStateStorage {
         db: SQLiteDatabase,
         existingProfiles: List<ProfileSystemSpec>,
         existingOrders: List<CustomerOrder>,
-        existingStock: List<StockRemnantBar>
+        existingStock: List<StockRemnantBar>,
+        existingRubberStock: List<StockRubberItem>
     ): PersistedAppState? {
         val prefs = context.getSharedPreferences(LOCAL_PREFS_NAME, Context.MODE_PRIVATE)
         if (prefs.getBoolean(KEY_DEV_SEED_APPLIED, false)) {
@@ -266,11 +285,21 @@ object AppStateStorage {
                 (seededStock + existingStock).distinctBy { it.id }
             }
 
+            val rubberArr = root.optJSONArray("stockRubber")
+            val seededRubber = parseStockRubberArray(rubberArr)
+
+            val finalRubber = if (onlyUntouchedDefaults) {
+                seededRubber
+            } else {
+                (seededRubber + existingRubberStock).distinctBy { it.id }
+            }
+
             db.beginTransaction()
             try {
                 saveProfilesToDb(db, finalProfiles)
                 saveOrdersToDb(db, finalOrders)
                 saveStockToDb(db, finalStock)
+                saveStockRubberToDb(db, finalRubber)
                 if (root.has("appSettingsPayload")) {
                     val cv = ContentValues().apply {
                         put("id", 1)
@@ -290,6 +319,7 @@ object AppStateStorage {
                 profileSystems = finalProfiles,
                 orders = finalOrders,
                 stockRemnants = finalStock,
+                stockRubber = finalRubber,
                 uiSettings = settingsBundle.uiSettings,
                 glazingCatalog = settingsBundle.glazingCatalog,
                 colorCatalog = settingsBundle.colorCatalog,
@@ -314,6 +344,7 @@ object AppStateStorage {
                 saveProfilesToDb(db, state.profileSystems)
                 saveOrdersToDb(db, state.orders)
                 saveStockToDb(db, state.stockRemnants)
+                saveStockRubberToDb(db, state.stockRubber)
                 saveSettingsBundleToDb(
                     db,
                     SettingsAndCatalogsBundle(
@@ -368,10 +399,11 @@ object AppStateStorage {
         val profiles = loadProfilesFromDb(db)
         val orders = loadOrdersFromDb(db)
         val stock = loadStockFromDb(db)
+        val stockRubber = loadStockRubberFromDb(db)
 
         val root = JSONObject().apply {
             put("app", "WinStudioPro")
-            put("backupVersion", 2)
+            put("backupVersion", 3)
             put("timestamp", System.currentTimeMillis())
             put("exportDate", SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()).format(Date()))
 
@@ -399,6 +431,7 @@ object AppStateStorage {
                 )
             }
             put("stockRemnants", stockArr)
+            put("stockRubber", serializeStockRubberArray(stockRubber))
         }
 
         db.rawQuery("SELECT json_payload FROM app_settings WHERE id = 1", null).use { c ->
@@ -470,6 +503,9 @@ object AppStateStorage {
             db.insertWithOnConflict("app_settings", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
         }
 
+        val rubberArr = root.optJSONArray("stockRubber")
+        val importedRubber = parseStockRubberArray(rubberArr)
+
         val mergedOrders = (importedOrders + current.orders).distinctBy { it.id }
         val mergedProfiles = (importedProfiles + current.profileSystems).distinctBy { it.id }
         val mergedStock = if (stockArr != null) {
@@ -477,11 +513,17 @@ object AppStateStorage {
         } else {
             current.stockRemnants
         }
+        val mergedRubber = if (rubberArr != null) {
+            (importedRubber + current.stockRubber).distinctBy { it.id }
+        } else {
+            current.stockRubber
+        }
 
         val newState = loadState(context).copy(
             orders = mergedOrders.ifEmpty { current.orders },
             profileSystems = mergedProfiles.ifEmpty { current.profileSystems },
-            stockRemnants = mergedStock
+            stockRemnants = mergedStock,
+            stockRubber = mergedRubber
         )
         saveState(context, newState)
         return newState
@@ -651,6 +693,93 @@ object AppStateStorage {
             }
         }
         return res
+    }
+
+    private fun saveStockRubberToDb(db: SQLiteDatabase, list: List<StockRubberItem>) {
+        db.delete("stock_rubber", null, null)
+        list.forEach { item ->
+            val cv = ContentValues().apply {
+                put("id", item.id)
+                put("profile_system_id", item.profileSystemId)
+                put("rubber_type", item.rubberType.name)
+                if (item.wedgeVariantId != null) put("wedge_variant_id", item.wedgeVariantId) else putNull("wedge_variant_id")
+                if (item.wedgeThicknessMm != null) put("wedge_thickness_mm", item.wedgeThicknessMm.toDouble()) else putNull("wedge_thickness_mm")
+                put("label", item.label)
+                put("meters_in_stock", item.metersInStock)
+            }
+            db.insertWithOnConflict("stock_rubber", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+    }
+
+    private fun loadStockRubberFromDb(db: SQLiteDatabase): List<StockRubberItem> {
+        val res = mutableListOf<StockRubberItem>()
+        db.rawQuery(
+            "SELECT id, profile_system_id, rubber_type, wedge_variant_id, wedge_thickness_mm, label, meters_in_stock FROM stock_rubber",
+            null
+        ).use { c ->
+            while (c.moveToNext()) {
+                val rType = try {
+                    RubberType.valueOf(c.getString(2))
+                } catch (_: Exception) {
+                    RubberType.FIXED_GLAZING
+                }
+                res.add(
+                    StockRubberItem(
+                        id = c.getString(0),
+                        profileSystemId = c.getString(1),
+                        rubberType = rType,
+                        wedgeVariantId = if (c.isNull(3)) null else c.getString(3),
+                        wedgeThicknessMm = if (c.isNull(4)) null else c.getDouble(4).toFloat(),
+                        label = if (c.isNull(5)) "" else c.getString(5),
+                        metersInStock = c.getDouble(6).coerceAtLeast(0.0)
+                    )
+                )
+            }
+        }
+        return res
+    }
+
+    private fun serializeStockRubberArray(list: List<StockRubberItem>): JSONArray {
+        val arr = JSONArray()
+        list.forEach { r ->
+            arr.put(
+                JSONObject().apply {
+                    put("id", r.id)
+                    put("profileSystemId", r.profileSystemId)
+                    put("rubberType", r.rubberType.name)
+                    put("wedgeVariantId", r.wedgeVariantId ?: JSONObject.NULL)
+                    put("wedgeThicknessMm", r.wedgeThicknessMm?.toDouble() ?: JSONObject.NULL)
+                    put("label", r.label)
+                    put("metersInStock", r.metersInStock)
+                }
+            )
+        }
+        return arr
+    }
+
+    private fun parseStockRubberArray(arr: JSONArray?): List<StockRubberItem> {
+        if (arr == null) return emptyList()
+        val list = mutableListOf<StockRubberItem>()
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            val rType = try {
+                RubberType.valueOf(o.optString("rubberType", "FIXED_GLAZING"))
+            } catch (_: Exception) {
+                RubberType.FIXED_GLAZING
+            }
+            list.add(
+                StockRubberItem(
+                    id = o.optString("id", "rub_imp_$i"),
+                    profileSystemId = o.optString("profileSystemId", "al_test_system"),
+                    rubberType = rType,
+                    wedgeVariantId = if (o.isNull("wedgeVariantId")) null else o.optString("wedgeVariantId").takeIf { it.isNotBlank() },
+                    wedgeThicknessMm = if (o.isNull("wedgeThicknessMm")) null else o.optDouble("wedgeThicknessMm").toFloat(),
+                    label = o.optString("label", ""),
+                    metersInStock = o.optDouble("metersInStock", 0.0).coerceAtLeast(0.0)
+                )
+            )
+        }
+        return list
     }
 
     private data class SettingsAndCatalogsBundle(
@@ -971,6 +1100,32 @@ object AppStateStorage {
             )
         }
         put("colors", colorsArr)
+        put("rubberCatalog", JSONObject().apply {
+            fun putBoxSpec(spec: RubberBoxSpec) = JSONObject().apply {
+                put("code", spec.code)
+                put("name", spec.name)
+                put("thicknessMm", spec.thicknessMm.toDouble())
+                put("metersPerBox", spec.metersPerBox)
+                put("pricePerBox", spec.pricePerBox)
+            }
+            put("fixedGlazing", putBoxSpec(p.rubberCatalog.fixedGlazing))
+            put("frameRebate", putBoxSpec(p.rubberCatalog.frameRebate))
+            put("sashDoorRebate", putBoxSpec(p.rubberCatalog.sashDoorRebate))
+            val wArr = JSONArray()
+            p.rubberCatalog.wedgeVariants.forEach { w ->
+                wArr.put(
+                    JSONObject().apply {
+                        put("id", w.id)
+                        put("code", w.code)
+                        put("name", w.name)
+                        put("thicknessMm", w.thicknessMm.toDouble())
+                        put("metersPerBox", w.metersPerBox)
+                        put("pricePerBox", w.pricePerBox)
+                    }
+                )
+            }
+            put("wedgeVariants", wArr)
+        })
     }
 
     private fun parseProfile(o: JSONObject): ProfileSystemSpec {
@@ -1077,7 +1232,46 @@ object AppStateStorage {
                     )
                 }
                 list.ifEmpty { null }
-            } ?: DefaultCatalogs.defaultProfileColors()
+            } ?: DefaultCatalogs.defaultProfileColors(),
+            rubberCatalog = o.optJSONObject("rubberCatalog")?.let { rc ->
+                val defCat = ProfileRubberCatalog()
+                fun parseBoxSpec(obj: JSONObject?, fallback: RubberBoxSpec): RubberBoxSpec {
+                    if (obj == null) return fallback
+                    return RubberBoxSpec(
+                        code = obj.optString("code", fallback.code),
+                        name = obj.optString("name", fallback.name),
+                        thicknessMm = obj.optDouble("thicknessMm", fallback.thicknessMm.toDouble()).toFloat(),
+                        metersPerBox = obj.optDouble("metersPerBox", fallback.metersPerBox).coerceAtLeast(1.0),
+                        pricePerBox = obj.optDouble("pricePerBox", fallback.pricePerBox).coerceAtLeast(0.0)
+                    )
+                }
+                val wedgeArr = rc.optJSONArray("wedgeVariants")
+                val parsedWedges = if (wedgeArr != null) {
+                    val wList = mutableListOf<WedgeRubberVariantSpec>()
+                    for (i in 0 until wedgeArr.length()) {
+                        val wo = wedgeArr.getJSONObject(i)
+                        wList.add(
+                            WedgeRubberVariantSpec(
+                                id = wo.optString("id", "wedge_$i"),
+                                code = wo.optString("code", ""),
+                                name = wo.optString("name", "Клин"),
+                                thicknessMm = wo.optDouble("thicknessMm", 3.6).toFloat(),
+                                metersPerBox = wo.optDouble("metersPerBox", 210.0).coerceAtLeast(1.0),
+                                pricePerBox = wo.optDouble("pricePerBox", 126.0).coerceAtLeast(0.0)
+                            )
+                        )
+                    }
+                    wList.ifEmpty { defCat.wedgeVariants }
+                } else {
+                    defCat.wedgeVariants
+                }
+                ProfileRubberCatalog(
+                    fixedGlazing = parseBoxSpec(rc.optJSONObject("fixedGlazing"), defCat.fixedGlazing),
+                    wedgeVariants = parsedWedges,
+                    frameRebate = parseBoxSpec(rc.optJSONObject("frameRebate"), defCat.frameRebate),
+                    sashDoorRebate = parseBoxSpec(rc.optJSONObject("sashDoorRebate"), defCat.sashDoorRebate)
+                )
+            } ?: ProfileRubberCatalog()
         )
     }
 
@@ -1098,6 +1292,41 @@ object AppStateStorage {
         put("taxVatPercent", ord.taxVatPercent)
         put("manualOrderTotalOverride", ord.manualOrderTotalOverride ?: JSONObject.NULL)
         put("currencySymbol", ord.currencySymbol)
+        put("stockDeductedForProduction", ord.stockDeductedForProduction)
+        if (ord.customCuttingAllocations != null) {
+            val cutArr = JSONArray()
+            ord.customCuttingAllocations.forEach { alloc ->
+                cutArr.put(
+                    JSONObject().apply {
+                        put("barNumber", alloc.barNumber)
+                        put("profileSystemName", alloc.profileSystemName)
+                        put("role", alloc.role.name)
+                        put("isFromRemnantStock", alloc.isFromRemnantStock)
+                        put("sourceLengthMm", alloc.sourceLengthMm)
+                        put("usedWithKerfMm", alloc.usedWithKerfMm)
+                        put("remnantLengthMm", alloc.remnantLengthMm)
+                        put("isUsableBusinessRemnant", alloc.isUsableBusinessRemnant)
+                        put("colorName", alloc.colorName)
+                        put("colorHex", alloc.colorHex)
+                        val piecesArr = JSONArray()
+                        alloc.cuts.forEach { piece ->
+                            piecesArr.put(
+                                JSONObject().apply {
+                                    put("windowName", piece.windowName)
+                                    put("positionLabel", piece.positionLabel)
+                                    put("shortTag", piece.shortTag)
+                                    put("cutLengthMm", piece.cutLengthMm)
+                                    put("leftAngleDeg", piece.leftAngleDeg)
+                                    put("rightAngleDeg", piece.rightAngleDeg)
+                                }
+                            )
+                        }
+                        put("cuts", piecesArr)
+                    }
+                )
+            }
+            put("customCuttingAllocations", cutArr)
+        }
         val wArr = JSONArray()
         ord.windows.forEach { w ->
             wArr.put(
@@ -1204,6 +1433,51 @@ object AppStateStorage {
         }
         val contractTermDays = o.optInt("contractTermDays", 28).coerceAtLeast(1)
         val manualOrdTotal = if (o.isNull("manualOrderTotalOverride")) null else o.optDouble("manualOrderTotalOverride")
+        val customCutting = if (o.has("customCuttingAllocations") && !o.isNull("customCuttingAllocations")) {
+            val cutArr = o.optJSONArray("customCuttingAllocations")
+            if (cutArr != null) {
+                val parsedBars = mutableListOf<CutBarAllocation>()
+                for (i in 0 until cutArr.length()) {
+                    val bo = cutArr.getJSONObject(i)
+                    val role = try {
+                        ProfileRole.valueOf(bo.optString("role", "FRAME"))
+                    } catch (_: Exception) {
+                        ProfileRole.FRAME
+                    }
+                    val piecesArr = bo.optJSONArray("cuts") ?: JSONArray()
+                    val cuts = mutableListOf<AllocatedCutPiece>()
+                    for (k in 0 until piecesArr.length()) {
+                        val po = piecesArr.getJSONObject(k)
+                        cuts.add(
+                            AllocatedCutPiece(
+                                windowName = po.optString("windowName", ""),
+                                positionLabel = po.optString("positionLabel", ""),
+                                shortTag = po.optString("shortTag", "1"),
+                                cutLengthMm = po.optInt("cutLengthMm", 0),
+                                leftAngleDeg = po.optInt("leftAngleDeg", 45),
+                                rightAngleDeg = po.optInt("rightAngleDeg", 45)
+                            )
+                        )
+                    }
+                    parsedBars.add(
+                        CutBarAllocation(
+                            barNumber = bo.optInt("barNumber", 1),
+                            profileSystemName = bo.optString("profileSystemName", ""),
+                            role = role,
+                            isFromRemnantStock = bo.optBoolean("isFromRemnantStock", false),
+                            sourceLengthMm = bo.optInt("sourceLengthMm", 6000),
+                            cuts = cuts,
+                            usedWithKerfMm = bo.optInt("usedWithKerfMm", 0),
+                            remnantLengthMm = bo.optInt("remnantLengthMm", 0),
+                            isUsableBusinessRemnant = bo.optBoolean("isUsableBusinessRemnant", false),
+                            colorName = bo.optString("colorName", "Белый"),
+                            colorHex = bo.optLong("colorHex", 0xFFFFFFFFL)
+                        )
+                    )
+                }
+                parsedBars
+            } else null
+        } else null
         return CustomerOrder(
             id = o.getString("id"),
             orderNumber = o.optString("orderNumber", "Заказ №1"),
@@ -1221,7 +1495,9 @@ object AppStateStorage {
             markupPercent = o.optDouble("markupPercent", 0.0),
             taxVatPercent = o.optDouble("taxVatPercent", 18.0),
             manualOrderTotalOverride = manualOrdTotal,
-            currencySymbol = o.optString("currencySymbol", "доллар")
+            currencySymbol = o.optString("currencySymbol", "доллар"),
+            customCuttingAllocations = customCutting,
+            stockDeductedForProduction = o.optBoolean("stockDeductedForProduction", false)
         )
     }
 

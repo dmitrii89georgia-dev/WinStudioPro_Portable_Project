@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import ru.winstudiopro.app.domain.calculator.CuttingPlanManualHelper
 import ru.winstudiopro.app.domain.calculator.WindowBomAndCostEngine
 import ru.winstudiopro.app.domain.model.*
 import ru.winstudiopro.app.pdf.ClientPdfReportMode
@@ -74,11 +75,14 @@ internal fun CadEditorWorkspaceScreen(
     hardwareBrandsCatalog: List<HardwareBrandItem>,
     extraAccessoriesCatalog: List<ExtraAccessoryItem>,
     workServicesCatalog: List<WorkServiceItem>,
+    stockRemnants: List<StockRemnantBar> = emptyList(),
     uiSettings: AppUiSettings,
     onSelectWindowIndex: (Int) -> Unit,
     onUpdateOrder: (CustomerOrder) -> Unit,
     onBackToHome: () -> Unit,
     onOpenWorkshopCutting: () -> Unit,
+    onOpenGlazingOrder: () -> Unit = {},
+    onOpenHardwareOrder: () -> Unit = {},
     onOpenPdfFile: (File, String) -> Unit,
     onSharePdfFile: (File, String) -> Unit
 ) {
@@ -181,7 +185,7 @@ internal fun CadEditorWorkspaceScreen(
                 item
             }
         }
-        onUpdateOrder(order.copy(windows = updatedWindows))
+        onUpdateOrder(order.copy(windows = updatedWindows, customCuttingAllocations = null))
     }
 
     // Отмена последнего действия в 2D-редакторе (Undo)
@@ -194,7 +198,7 @@ internal fun CadEditorWorkspaceScreen(
         val updatedWindows = windows.mapIndexed { idx, item ->
             if (idx == activeWindowIndex) previousState else item
         }
-        onUpdateOrder(order.copy(windows = updatedWindows))
+        onUpdateOrder(order.copy(windows = updatedWindows, customCuttingAllocations = null))
     }
 
     // Повтор отменённого действия в 2D-редакторе (Redo)
@@ -207,7 +211,7 @@ internal fun CadEditorWorkspaceScreen(
         val updatedWindows = windows.mapIndexed { idx, item ->
             if (idx == activeWindowIndex) nextState else item
         }
-        onUpdateOrder(order.copy(windows = updatedWindows))
+        onUpdateOrder(order.copy(windows = updatedWindows, customCuttingAllocations = null))
     }
 
     // Применение настроек к ВСЕМ конструкциям заказа (с сохранением их индивидуальной геометрии)
@@ -238,7 +242,7 @@ internal fun CadEditorWorkspaceScreen(
                 selectedWorkIds = if (applyExtrasAndWorks) currentWindow.selectedWorkIds else win.selectedWorkIds
             )
         }
-        onUpdateOrder(order.copy(windows = updatedWindows))
+        onUpdateOrder(order.copy(windows = updatedWindows, customCuttingAllocations = null))
         snackMessage = "Настройки применены ко всем конструкциям заказа (${updatedWindows.size} шт.)!"
     }
 
@@ -253,7 +257,7 @@ internal fun CadEditorWorkspaceScreen(
             topology = WindowCadOperations.single1500Topology()
         )
         val updated = windows + newWin
-        onUpdateOrder(order.copy(windows = updated))
+        onUpdateOrder(order.copy(windows = updated, customCuttingAllocations = null))
         onSelectWindowIndex(updated.lastIndex)
     }
 
@@ -265,7 +269,7 @@ internal fun CadEditorWorkspaceScreen(
             name = "Окно $nextNum (копия)"
         )
         val updated = windows + copyWin
-        onUpdateOrder(order.copy(windows = updated))
+        onUpdateOrder(order.copy(windows = updated, customCuttingAllocations = null))
         onSelectWindowIndex(updated.lastIndex)
     }
 
@@ -490,7 +494,7 @@ internal fun CadEditorWorkspaceScreen(
                                         .clip(RoundedCornerShape(11.dp))
                                         .clickable {
                                             val updated = windows.filterIndexed { index, _ -> index != activeWindowIndex }
-                                            onUpdateOrder(order.copy(windows = updated))
+                                            onUpdateOrder(order.copy(windows = updated, customCuttingAllocations = null))
                                             onSelectWindowIndex((activeWindowIndex - 1).coerceAtLeast(0))
                                         }
                                         .testTag("cad_delete_window_button")
@@ -901,6 +905,21 @@ internal fun CadEditorWorkspaceScreen(
                             previewReportMode = ClientPdfReportMode.COMMERCIAL_PROPOSAL
                         }
 
+                        LeftMenuButton(
+                            title = strings.pdfInstallationDrawingsItem,
+                            icon = Icons.Rounded.Architecture,
+                            accentTint = palette.accentBlue,
+                            modifier = Modifier.testTag("cad_menu_installation_drawings")
+                        ) {
+                            showLeftBlueMenu = false
+                            val file = PdfReportGenerator.generateInstallationDrawingsPdf(
+                                context = context,
+                                order = order,
+                                windowResults = allWindowResults
+                            )
+                            onOpenPdfFile(file, strings.pdfInstallationDrawingsItem)
+                        }
+
                         HorizontalDivider(
                             color = palette.divider,
                             thickness = 0.6.dp,
@@ -910,25 +929,58 @@ internal fun CadEditorWorkspaceScreen(
                         LeftMenuButton(
                             title = strings.pdfGlazingItem,
                             icon = Icons.Rounded.GridView,
-                            accentTint = palette.accentTeal
+                            accentTint = palette.accentTeal,
+                            modifier = Modifier.testTag("cad_menu_glazing_order")
                         ) {
                             showLeftBlueMenu = false
-                            val file = PdfReportGenerator.generateGlazingSpecPdf(context, order, allWindowResults)
-                            onOpenPdfFile(file, strings.pdfGlazingItem)
+                            onOpenGlazingOrder()
                         }
                         LeftMenuButton(
                             title = strings.pdfHardwareItem,
                             icon = Icons.Rounded.Build,
-                            accentTint = palette.accentOrange
+                            accentTint = palette.accentOrange,
+                            modifier = Modifier.testTag("cad_menu_hardware_order")
                         ) {
                             showLeftBlueMenu = false
-                            val file = PdfReportGenerator.generateHardwareSpecPdf(context, order, allWindowResults)
-                            onOpenPdfFile(file, strings.pdfHardwareItem)
+                            onOpenHardwareOrder()
                         }
                         LeftMenuButton(
-                            title = strings.workshopCuttingItem,
+                            title = strings.workshopTaskItem,
+                            icon = Icons.Rounded.Assignment,
+                            accentTint = palette.accentGreen,
+                            modifier = Modifier.testTag("cad_menu_workshop_task")
+                        ) {
+                            showLeftBlueMenu = false
+                            val usableRemnants = stockRemnants.filter { !it.isFullStockBar }
+                            val autoResult = WindowBomAndCostEngine.optimizeOrderProfileCutting(
+                                windowResults = allWindowResults,
+                                stockRemnants = usableRemnants,
+                                profileSystems = profileSystems
+                            )
+                            val activeAllocations = order.customCuttingAllocations ?: autoResult.first
+                            val activeSummaries = if (order.customCuttingAllocations != null) {
+                                CuttingPlanManualHelper.rebuildProcurementSummaries(
+                                    allocations = activeAllocations,
+                                    baseAutoSummaries = autoResult.second,
+                                    profileSystems = profileSystems
+                                )
+                            } else {
+                                autoResult.second
+                            }
+                            val file = PdfReportGenerator.generateCuttingAndProcurementPdf(
+                                context = context,
+                                order = order,
+                                allocations = activeAllocations,
+                                procurement = activeSummaries,
+                                windowResults = allWindowResults
+                            )
+                            onOpenPdfFile(file, strings.workshopTaskItem)
+                        }
+                        LeftMenuButton(
+                            title = strings.cuttingItem,
                             icon = Icons.Rounded.ContentCut,
-                            accentTint = palette.accentGreen
+                            accentTint = palette.accentGreen,
+                            modifier = Modifier.testTag("cad_menu_cutting")
                         ) {
                             showLeftBlueMenu = false
                             onOpenWorkshopCutting()
@@ -1463,11 +1515,12 @@ private fun LeftMenuButton(
     title: String,
     icon: ImageVector? = null,
     accentTint: Color = LocalWinStudioPalette.current.accentBlue,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val palette = LocalWinStudioPalette.current
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable { onClick() }
             .padding(horizontal = 16.dp, vertical = 11.dp),
@@ -2391,6 +2444,15 @@ private fun CustomerOrderDetailsDialog(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(summary, fontSize = 12.sp, color = palette.textPrimary)
                     }
+                }
+
+                if (order.stockDeductedForProduction) {
+                    Text(
+                        text = "✓ Профили, остатки и резина уже списаны со склада в производство",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = palette.accentGreen
+                    )
                 }
 
                 Row(
