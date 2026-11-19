@@ -204,4 +204,63 @@ class WinStudioUiRobolectricTest {
         composeRule.onNodeWithTag("top_bar_back_button").performClick()
         composeRule.waitForIdle()
     }
+
+    @Test
+    fun `prices tabs and cad drawer display assembly schemes order services and prime cost bar`() {
+        composeRule.waitForIdle()
+
+        // 1. Открываем "Прайсы" и проверяем переименованную вкладку "Монтаж", вкладку "Сборка" и вкладку "Доп. услуги"
+        composeRule.onNodeWithTag("dashboard_prices_card").performScrollTo().performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("price_tab_WORKS").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("price_tab_ASSEMBLY").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("price_tab_ORDER_SERVICES").performScrollTo().assertIsDisplayed()
+
+        // Проверяем вкладку "Сборка" и сохранение ставок
+        composeRule.onNodeWithTag("price_tab_ASSEMBLY").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("save_assembly_pricing_button").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+
+        // Проверяем вкладку "Доп. услуги" и добавление услуги заказа
+        composeRule.onNodeWithTag("price_tab_ORDER_SERVICES").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("order_service_name_input").performScrollTo().performTextReplacement("Упаковка в плёнку")
+        composeRule.onNodeWithTag("order_service_price_input").performScrollTo().performTextReplacement("35")
+        composeRule.onNodeWithTag("order_service_add_button").performScrollTo().performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("top_bar_back_button").performClick()
+        composeRule.waitForIdle()
+
+        // 2. Открываем заказ в 2D-конструкторе и проверяем нижнюю расчётную панель и правую шторку
+        composeRule.onNodeWithTag("dashboard_orders_card").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onAllNodesWithText("Окон:", substring = true)[0].performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("cad_cost_bar").assertIsDisplayed()
+        composeRule.onNodeWithTag("cad_cost_total_box").assertIsDisplayed()
+
+        // Открываем правую шторку настроек окна
+        composeRule.onNodeWithTag("cad_window_settings_button").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("drawer_assembly_section", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("drawer_assembly_scheme_PER_M2").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("drawer_floor_assembly_input").performScrollTo().performTextReplacement("2")
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("drawer_order_services_section", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("drawer_order_service_check_ord_srv_delivery").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("drawer_order_service_price_ord_srv_delivery").performScrollTo().performTextReplacement("75")
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("drawer_done_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("cad_cost_bar").assertIsDisplayed()
+    }
 }

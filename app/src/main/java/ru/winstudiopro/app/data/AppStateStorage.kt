@@ -25,11 +25,13 @@ data class PersistedAppState(
     val colorCatalog: List<ColorCatalogItem> = DefaultCatalogs.defaultColors(),
     val hardwareBrands: List<HardwareBrandItem> = DefaultCatalogs.defaultHardwareBrands(),
     val extraAccessories: List<ExtraAccessoryItem> = DefaultCatalogs.defaultExtraAccessories(),
-    val workServices: List<WorkServiceItem> = DefaultCatalogs.defaultWorkServices()
+    val workServices: List<WorkServiceItem> = DefaultCatalogs.defaultWorkServices(),
+    val assemblyPricing: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog(),
+    val orderExtraServices: List<OrderExtraServiceItem> = DefaultCatalogs.defaultOrderExtraServices()
 )
 
 private class WinStudioSqliteHelper(context: Context) :
-    SQLiteOpenHelper(context, "winstudio_pro_v3.db", null, 5) {
+    SQLiteOpenHelper(context, "winstudio_pro_v3.db", null, 6) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -88,6 +90,25 @@ private class WinStudioSqliteHelper(context: Context) :
             )
             """.trimIndent()
         )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS assembly_presets (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                json_payload TEXT NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS order_extra_services (
+                id TEXT PRIMARY KEY,
+                sort_order INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                default_price REAL NOT NULL,
+                apply_to_whole_order INTEGER NOT NULL DEFAULT 1
+            )
+            """.trimIndent()
+        )
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -105,6 +126,9 @@ private class WinStudioSqliteHelper(context: Context) :
             }
             if ("color_hex" !in cols) {
                 db.execSQL("ALTER TABLE stock_inventory ADD COLUMN color_hex INTEGER NOT NULL DEFAULT 4294967295")
+            }
+            if (oldVersion < 6) {
+                AppStateStorage.migrateDatabaseV5ToV6(db)
             }
         } catch (e: Exception) {
             Log.e("WinStudioSqliteHelper", "Database upgrade error", e)
@@ -185,19 +209,28 @@ object AppStateStorage {
                 defaults
             }
 
-            val settingsBundle = loadSettingsBundleFromDb(db)
+            val settingsBundle = loadSettingsBundleFromDb(dbHelper.readableDatabase)
+            if (!settingsBundle.v6CatalogsSeeded) {
+                migrateDatabaseV5ToV6(dbHelper.writableDatabase)
+            }
+            val finalBundle = loadSettingsBundleFromDb(dbHelper.readableDatabase)
+            val finalOrders = loadOrdersFromDb(dbHelper.readableDatabase).ifEmpty { orders }
+            val assemblyPricing = loadAssemblyPricingFromDb(dbHelper.readableDatabase)
+            val orderExtraServices = loadOrderExtraServicesFromDb(dbHelper.readableDatabase, fallbackToDefaults = !finalBundle.v6CatalogsSeeded)
 
             PersistedAppState(
                 profileSystems = profiles,
-                orders = orders,
+                orders = finalOrders,
                 stockRemnants = existingStock,
                 stockRubber = existingRubberStock,
-                uiSettings = settingsBundle.uiSettings,
-                glazingCatalog = settingsBundle.glazingCatalog,
-                colorCatalog = settingsBundle.colorCatalog,
-                hardwareBrands = settingsBundle.hardwareBrands,
-                extraAccessories = settingsBundle.extraAccessories,
-                workServices = settingsBundle.workServices
+                uiSettings = finalBundle.uiSettings,
+                glazingCatalog = finalBundle.glazingCatalog,
+                colorCatalog = finalBundle.colorCatalog,
+                hardwareBrands = finalBundle.hardwareBrands,
+                extraAccessories = finalBundle.extraAccessories,
+                workServices = finalBundle.workServices,
+                assemblyPricing = assemblyPricing,
+                orderExtraServices = orderExtraServices
             )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load persisted state, falling back to defaults", e)
@@ -307,6 +340,13 @@ object AppStateStorage {
                     }
                     db.insertWithOnConflict("app_settings", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
                 }
+                if (root.has("assemblyPricing")) {
+                    saveAssemblyPricingToDb(db, parseAssemblyPricing(root.getJSONObject("assemblyPricing")))
+                }
+                if (root.has("orderExtraServices")) {
+                    saveOrderExtraServicesToDb(db, parseOrderExtraServicesArray(root.getJSONArray("orderExtraServices")))
+                }
+                migrateDatabaseV5ToV6Internal(db)
                 db.setTransactionSuccessful()
             } finally {
                 db.endTransaction()
@@ -314,10 +354,13 @@ object AppStateStorage {
 
             prefs.edit().putBoolean(KEY_DEV_SEED_APPLIED, true).commit()
             val settingsBundle = loadSettingsBundleFromDb(db)
-            Log.i(TAG, "Applied dev seed ($DEV_SEED_ASSET_NAME): ${finalOrders.size} orders, ${finalProfiles.size} profiles")
+            val migratedOrders = loadOrdersFromDb(db).ifEmpty { finalOrders }
+            val assemblyPricing = loadAssemblyPricingFromDb(db)
+            val orderExtraServices = loadOrderExtraServicesFromDb(db)
+            Log.i(TAG, "Applied dev seed ($DEV_SEED_ASSET_NAME): ${migratedOrders.size} orders, ${finalProfiles.size} profiles")
             PersistedAppState(
                 profileSystems = finalProfiles,
-                orders = finalOrders,
+                orders = migratedOrders,
                 stockRemnants = finalStock,
                 stockRubber = finalRubber,
                 uiSettings = settingsBundle.uiSettings,
@@ -325,7 +368,9 @@ object AppStateStorage {
                 colorCatalog = settingsBundle.colorCatalog,
                 hardwareBrands = settingsBundle.hardwareBrands,
                 extraAccessories = settingsBundle.extraAccessories,
-                workServices = settingsBundle.workServices
+                workServices = settingsBundle.workServices,
+                assemblyPricing = assemblyPricing,
+                orderExtraServices = orderExtraServices
             )
         } catch (_: FileNotFoundException) {
             null
@@ -345,6 +390,8 @@ object AppStateStorage {
                 saveOrdersToDb(db, state.orders)
                 saveStockToDb(db, state.stockRemnants)
                 saveStockRubberToDb(db, state.stockRubber)
+                saveAssemblyPricingToDb(db, state.assemblyPricing)
+                saveOrderExtraServicesToDb(db, state.orderExtraServices)
                 saveSettingsBundleToDb(
                     db,
                     SettingsAndCatalogsBundle(
@@ -353,7 +400,8 @@ object AppStateStorage {
                         colorCatalog = state.colorCatalog,
                         hardwareBrands = state.hardwareBrands,
                         extraAccessories = state.extraAccessories,
-                        workServices = state.workServices
+                        workServices = state.workServices,
+                        v6CatalogsSeeded = true
                     )
                 )
                 db.setTransactionSuccessful()
@@ -400,10 +448,12 @@ object AppStateStorage {
         val orders = loadOrdersFromDb(db)
         val stock = loadStockFromDb(db)
         val stockRubber = loadStockRubberFromDb(db)
+        val assemblyPricing = loadAssemblyPricingFromDb(db)
+        val orderExtraServices = loadOrderExtraServicesFromDb(db)
 
         val root = JSONObject().apply {
             put("app", "WinStudioPro")
-            put("backupVersion", 3)
+            put("backupVersion", 4)
             put("timestamp", System.currentTimeMillis())
             put("exportDate", SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()).format(Date()))
 
@@ -432,6 +482,8 @@ object AppStateStorage {
             }
             put("stockRemnants", stockArr)
             put("stockRubber", serializeStockRubberArray(stockRubber))
+            put("assemblyPricing", serializeAssemblyPricing(assemblyPricing))
+            put("orderExtraServices", serializeOrderExtraServicesArray(orderExtraServices))
         }
 
         db.rawQuery("SELECT json_payload FROM app_settings WHERE id = 1", null).use { c ->
@@ -506,7 +558,19 @@ object AppStateStorage {
         val rubberArr = root.optJSONArray("stockRubber")
         val importedRubber = parseStockRubberArray(rubberArr)
 
-        val mergedOrders = (importedOrders + current.orders).distinctBy { it.id }
+        val importedAssembly = if (root.has("assemblyPricing") && !root.isNull("assemblyPricing")) {
+            parseAssemblyPricing(root.getJSONObject("assemblyPricing"))
+        } else {
+            current.assemblyPricing
+        }
+        val importedOrderServices = if (root.has("orderExtraServices") && !root.isNull("orderExtraServices")) {
+            parseOrderExtraServicesArray(root.getJSONArray("orderExtraServices"))
+        } else {
+            current.orderExtraServices
+        }
+
+        val normalizedImportedOrders = importedOrders.map { migrateLegacyDeliveryOnOrder(it) }
+        val mergedOrders = (normalizedImportedOrders + current.orders).distinctBy { it.id }
         val mergedProfiles = (importedProfiles + current.profileSystems).distinctBy { it.id }
         val mergedStock = if (stockArr != null) {
             (importedStock + current.stockRemnants).distinctBy { it.id }
@@ -519,11 +583,19 @@ object AppStateStorage {
             current.stockRubber
         }
 
-        val newState = loadState(context).copy(
+        val reloadedSettings = loadState(context)
+        val cleanedWorkServices = reloadedSettings.workServices.filterNot {
+            it.id == "wrk_delivery" || it.name.trim().equals("доставка", ignoreCase = true)
+        }
+
+        val newState = reloadedSettings.copy(
             orders = mergedOrders.ifEmpty { current.orders },
             profileSystems = mergedProfiles.ifEmpty { current.profileSystems },
             stockRemnants = mergedStock,
-            stockRubber = mergedRubber
+            stockRubber = mergedRubber,
+            workServices = cleanedWorkServices,
+            assemblyPricing = importedAssembly,
+            orderExtraServices = importedOrderServices
         )
         saveState(context, newState)
         return newState
@@ -782,13 +854,250 @@ object AppStateStorage {
         return list
     }
 
+    internal fun migrateDatabaseV5ToV6(db: SQLiteDatabase) {
+        db.beginTransaction()
+        try {
+            migrateDatabaseV5ToV6Internal(db)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    private fun migrateDatabaseV5ToV6Internal(db: SQLiteDatabase) {
+        val currentBundle = loadSettingsBundleFromDb(db)
+        var deliveryMigratedPrice: Double? = null
+        val filteredWorks = currentBundle.workServices.filter { w ->
+            val isDelivery = w.id == "wrk_delivery" || w.name.trim().equals("доставка", ignoreCase = true)
+            if (isDelivery) {
+                deliveryMigratedPrice = w.price
+            }
+            !isDelivery
+        }
+
+        val updatedBundle = currentBundle.copy(
+            workServices = filteredWorks,
+            v6CatalogsSeeded = true
+        )
+        saveSettingsBundleToDb(db, updatedBundle)
+
+        // Засеиваем пресеты сборки Схема 1 по умолчанию, если таблица пуста
+        val hasAssemblyPreset = db.rawQuery("SELECT COUNT(*) FROM assembly_presets WHERE id = 1", null).use { c ->
+            c.moveToFirst() && c.getInt(0) > 0
+        }
+        if (!hasAssemblyPreset) {
+            saveAssemblyPricingToDb(db, DefaultCatalogs.defaultAssemblyPricingCatalog())
+        }
+
+        // Засеиваем каталог доп. услуг заказа, если таблица пуста (с сохранением старой цены доставки)
+        val hasOrderServices = db.rawQuery("SELECT COUNT(*) FROM order_extra_services", null).use { c ->
+            c.moveToFirst() && c.getInt(0) > 0
+        }
+        if (!hasOrderServices) {
+            val defaults = DefaultCatalogs.defaultOrderExtraServices().map { srv ->
+                if (srv.id == "ord_srv_delivery" && deliveryMigratedPrice != null) {
+                    srv.copy(defaultPrice = deliveryMigratedPrice!!)
+                } else {
+                    srv
+                }
+            }
+            saveOrderExtraServicesToDb(db, defaults)
+        }
+
+        // Переносим отметку доставки (wrk_delivery) из окон в доп. услуги заказа без потери данных
+        val existingOrders = loadOrdersFromDb(db)
+        if (existingOrders.isNotEmpty()) {
+            val migratedOrders = existingOrders.map { migrateLegacyDeliveryOnOrder(it) }
+            if (migratedOrders != existingOrders) {
+                saveOrdersToDb(db, migratedOrders)
+            }
+        }
+    }
+
+    private fun migrateLegacyDeliveryOnOrder(order: CustomerOrder): CustomerOrder {
+        var hadDelivery = false
+        val updatedWindows = order.windows.map { w ->
+            if (w.selectedWorkIds.contains("wrk_delivery")) {
+                hadDelivery = true
+                w.copy(selectedWorkIds = w.selectedWorkIds.filterNot { it == "wrk_delivery" })
+            } else {
+                w
+            }
+        }
+        if (!hadDelivery) return order
+        val updatedServices = if (order.selectedOrderServices.any { it.serviceId == "ord_srv_delivery" }) {
+            order.selectedOrderServices
+        } else {
+            order.selectedOrderServices + SelectedOrderService("ord_srv_delivery", null)
+        }
+        return order.copy(windows = updatedWindows, selectedOrderServices = updatedServices)
+    }
+
+    private fun saveAssemblyPricingToDb(db: SQLiteDatabase, pricing: AssemblyPricingCatalog) {
+        val cv = ContentValues().apply {
+            put("id", 1)
+            put("json_payload", serializeAssemblyPricing(pricing).toString())
+        }
+        db.insertWithOnConflict("assembly_presets", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    private fun loadAssemblyPricingFromDb(db: SQLiteDatabase): AssemblyPricingCatalog {
+        return try {
+            db.rawQuery("SELECT json_payload FROM assembly_presets WHERE id = 1", null).use { c ->
+                if (c.moveToFirst()) {
+                    parseAssemblyPricing(JSONObject(c.getString(0)))
+                } else {
+                    DefaultCatalogs.defaultAssemblyPricingCatalog()
+                }
+            }
+        } catch (_: Exception) {
+            DefaultCatalogs.defaultAssemblyPricingCatalog()
+        }
+    }
+
+    private fun saveOrderExtraServicesToDb(db: SQLiteDatabase, list: List<OrderExtraServiceItem>) {
+        db.delete("order_extra_services", null, null)
+        list.forEachIndexed { idx, srv ->
+            val cv = ContentValues().apply {
+                put("id", srv.id)
+                put("sort_order", idx)
+                put("name", srv.name)
+                put("default_price", srv.defaultPrice)
+                put("apply_to_whole_order", if (srv.applyToWholeOrder) 1 else 0)
+            }
+            db.insertWithOnConflict("order_extra_services", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+    }
+
+    private fun loadOrderExtraServicesFromDb(
+        db: SQLiteDatabase,
+        fallbackToDefaults: Boolean = true
+    ): List<OrderExtraServiceItem> {
+        return try {
+            val list = mutableListOf<OrderExtraServiceItem>()
+            db.rawQuery(
+                "SELECT id, name, default_price, apply_to_whole_order FROM order_extra_services ORDER BY sort_order ASC",
+                null
+            ).use { c ->
+                while (c.moveToNext()) {
+                    list.add(
+                        OrderExtraServiceItem(
+                            id = c.getString(0),
+                            name = c.getString(1),
+                            defaultPrice = c.getDouble(2),
+                            applyToWholeOrder = c.getInt(3) == 1
+                        )
+                    )
+                }
+            }
+            if (list.isEmpty() && fallbackToDefaults) {
+                DefaultCatalogs.defaultOrderExtraServices()
+            } else {
+                list
+            }
+        } catch (_: Exception) {
+            DefaultCatalogs.defaultOrderExtraServices()
+        }
+    }
+
+    private fun serializeAssemblyPricing(a: AssemblyPricingCatalog): JSONObject = JSONObject().apply {
+        put("defaultScheme", a.defaultScheme.name)
+        put("frameCornerRate", a.frameCornerRate)
+        put("sashCornerRate", a.sashCornerRate)
+        put("doorCornerRate", a.doorCornerRate)
+        put("impostRate", a.impostRate)
+        put("hwTurnRate", a.hwTurnRate)
+        put("hwTiltTurnRate", a.hwTiltTurnRate)
+        put("hwShtulpRate", a.hwShtulpRate)
+        put("hwSlidingRate", a.hwSlidingRate)
+        put("hwDoorRate", a.hwDoorRate)
+        put("beadRateMode", a.beadRateMode.name)
+        put("beadRate", a.beadRate)
+        put("rubberRateMode", a.rubberRateMode.name)
+        put("rubberRate", a.rubberRate)
+        put("floorAssemblyRate", a.floorAssemblyRate)
+        put("ratePerM2", a.ratePerM2)
+        put("ratePerMeter", a.ratePerMeter)
+    }
+
+    private fun parseAssemblyPricing(o: JSONObject): AssemblyPricingCatalog {
+        val def = DefaultCatalogs.defaultAssemblyPricingCatalog()
+        val scheme = try {
+            AssemblySchemeType.valueOf(o.optString("defaultScheme", def.defaultScheme.name))
+        } catch (_: Exception) {
+            def.defaultScheme
+        }
+        val beadMode = try {
+            BeadAssemblyRateMode.valueOf(o.optString("beadRateMode", def.beadRateMode.name))
+        } catch (_: Exception) {
+            def.beadRateMode
+        }
+        val rubberMode = try {
+            RubberAssemblyRateMode.valueOf(o.optString("rubberRateMode", def.rubberRateMode.name))
+        } catch (_: Exception) {
+            def.rubberRateMode
+        }
+        return AssemblyPricingCatalog(
+            defaultScheme = scheme,
+            frameCornerRate = o.optDouble("frameCornerRate", def.frameCornerRate),
+            sashCornerRate = o.optDouble("sashCornerRate", def.sashCornerRate),
+            doorCornerRate = o.optDouble("doorCornerRate", def.doorCornerRate),
+            impostRate = o.optDouble("impostRate", def.impostRate),
+            hwTurnRate = o.optDouble("hwTurnRate", def.hwTurnRate),
+            hwTiltTurnRate = o.optDouble("hwTiltTurnRate", def.hwTiltTurnRate),
+            hwShtulpRate = o.optDouble("hwShtulpRate", def.hwShtulpRate),
+            hwSlidingRate = o.optDouble("hwSlidingRate", def.hwSlidingRate),
+            hwDoorRate = o.optDouble("hwDoorRate", def.hwDoorRate),
+            beadRateMode = beadMode,
+            beadRate = o.optDouble("beadRate", def.beadRate),
+            rubberRateMode = rubberMode,
+            rubberRate = o.optDouble("rubberRate", def.rubberRate),
+            floorAssemblyRate = o.optDouble("floorAssemblyRate", def.floorAssemblyRate),
+            ratePerM2 = o.optDouble("ratePerM2", def.ratePerM2),
+            ratePerMeter = o.optDouble("ratePerMeter", def.ratePerMeter)
+        )
+    }
+
+    private fun serializeOrderExtraServicesArray(list: List<OrderExtraServiceItem>): JSONArray {
+        val arr = JSONArray()
+        list.forEach { s ->
+            arr.put(
+                JSONObject().apply {
+                    put("id", s.id)
+                    put("name", s.name)
+                    put("defaultPrice", s.defaultPrice)
+                    put("applyToWholeOrder", s.applyToWholeOrder)
+                }
+            )
+        }
+        return arr
+    }
+
+    private fun parseOrderExtraServicesArray(arr: JSONArray?): List<OrderExtraServiceItem> {
+        if (arr == null) return DefaultCatalogs.defaultOrderExtraServices()
+        val list = mutableListOf<OrderExtraServiceItem>()
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            list.add(
+                OrderExtraServiceItem(
+                    id = o.optString("id", "ord_srv_$i"),
+                    name = o.optString("name", "Услуга"),
+                    defaultPrice = o.optDouble("defaultPrice", 0.0),
+                    applyToWholeOrder = o.optBoolean("applyToWholeOrder", true)
+                )
+            )
+        }
+        return list
+    }
+
     private data class SettingsAndCatalogsBundle(
         val uiSettings: AppUiSettings = AppUiSettings(),
         val glazingCatalog: List<GlazingCatalogItem> = DefaultCatalogs.defaultGlazingItems(),
         val colorCatalog: List<ColorCatalogItem> = DefaultCatalogs.defaultColors(),
         val hardwareBrands: List<HardwareBrandItem> = DefaultCatalogs.defaultHardwareBrands(),
         val extraAccessories: List<ExtraAccessoryItem> = DefaultCatalogs.defaultExtraAccessories(),
-        val workServices: List<WorkServiceItem> = DefaultCatalogs.defaultWorkServices()
+        val workServices: List<WorkServiceItem> = DefaultCatalogs.defaultWorkServices(),
+        val v6CatalogsSeeded: Boolean = false
     )
 
     private fun saveSettingsBundleToDb(db: SQLiteDatabase, bundle: SettingsAndCatalogsBundle) {
@@ -869,6 +1178,7 @@ object AppStateStorage {
                 )
             }
             put("workServices", wrkArr)
+            put("v6CatalogsSeeded", bundle.v6CatalogsSeeded)
         }
         val cv = ContentValues().apply {
             put("id", 1)
@@ -1000,7 +1310,8 @@ object AppStateStorage {
                     colorCatalog = colorList,
                     hardwareBrands = hwList,
                     extraAccessories = extList,
-                    workServices = wrkList
+                    workServices = wrkList,
+                    v6CatalogsSeeded = o.optBoolean("v6CatalogsSeeded", false)
                 )
             }
         }
@@ -1293,6 +1604,19 @@ object AppStateStorage {
         put("manualOrderTotalOverride", ord.manualOrderTotalOverride ?: JSONObject.NULL)
         put("currencySymbol", ord.currencySymbol)
         put("stockDeductedForProduction", ord.stockDeductedForProduction)
+        put("floorAssemblyCount", ord.floorAssemblyCount)
+        put("extraAssemblyOpsCost", ord.extraAssemblyOpsCost)
+        put("extraAssemblyOpsNote", ord.extraAssemblyOpsNote)
+        val selSrvArr = JSONArray()
+        ord.selectedOrderServices.forEach { sel ->
+            selSrvArr.put(
+                JSONObject().apply {
+                    put("serviceId", sel.serviceId)
+                    put("customPriceOverride", sel.customPriceOverride ?: JSONObject.NULL)
+                }
+            )
+        }
+        put("selectedOrderServices", selSrvArr)
         if (ord.customCuttingAllocations != null) {
             val cutArr = JSONArray()
             ord.customCuttingAllocations.forEach { alloc ->
@@ -1353,6 +1677,7 @@ object AppStateStorage {
                     put("selectedWorkIds", JSONArray(w.selectedWorkIds))
                     put("note", w.note)
                     put("manualUnitPriceOverride", w.manualUnitPriceOverride ?: JSONObject.NULL)
+                    put("assemblySchemeOverride", w.assemblySchemeOverride?.name ?: JSONObject.NULL)
                     put("includeInstallationWork", w.includeInstallationWork)
                     put("installationPricePerM2", w.installationPricePerM2)
                     put("hasSeatProfile", w.addons.hasSeatProfile)
@@ -1390,7 +1715,8 @@ object AppStateStorage {
                     id = wo.getString("id"),
                     name = wo.getString("name"),
                     quantity = wo.optInt("quantity", 1),
-                    topology = parseTopology(wo.getJSONObject("topology")),
+                    topology = wo.optJSONObject("topology")?.let { parseTopology(it) }
+                        ?: WindowCadOperations.single1500Topology(),
                     profileSystemId = wo.optString("profileSystemId", "al_test_system"),
                     selectedShtapikId = wo.optString("selectedShtapikId", ""),
                     glazingId = wo.optString("glazingId", "sp_24"),
@@ -1410,6 +1736,15 @@ object AppStateStorage {
                     selectedWorkIds = workList,
                     note = wo.optString("note", ""),
                     manualUnitPriceOverride = manualOverride,
+                    assemblySchemeOverride = if (wo.isNull("assemblySchemeOverride") || !wo.has("assemblySchemeOverride")) {
+                        null
+                    } else {
+                        try {
+                            AssemblySchemeType.valueOf(wo.optString("assemblySchemeOverride"))
+                        } catch (_: Exception) {
+                            null
+                        }
+                    },
                     includeInstallationWork = wo.optBoolean("includeInstallationWork", false),
                     installationPricePerM2 = wo.optDouble("installationPricePerM2", 15.0),
                     addons = WindowPerimeterAddons(
@@ -1478,7 +1813,23 @@ object AppStateStorage {
                 parsedBars
             } else null
         } else null
-        return CustomerOrder(
+            val selSrvArr = o.optJSONArray("selectedOrderServices")
+            val parsedSelectedServices = mutableListOf<SelectedOrderService>()
+            if (selSrvArr != null) {
+                for (i in 0 until selSrvArr.length()) {
+                    val so = selSrvArr.getJSONObject(i)
+                    val sId = so.optString("serviceId", "")
+                    if (sId.isNotBlank()) {
+                        val ovr = if (so.isNull("customPriceOverride") || !so.has("customPriceOverride")) {
+                            null
+                        } else {
+                            so.optDouble("customPriceOverride")
+                        }
+                        parsedSelectedServices.add(SelectedOrderService(sId, ovr))
+                    }
+                }
+            }
+            return CustomerOrder(
             id = o.getString("id"),
             orderNumber = o.optString("orderNumber", "Заказ №1"),
             customerName = o.optString("customerName", ""),
@@ -1497,7 +1848,11 @@ object AppStateStorage {
             manualOrderTotalOverride = manualOrdTotal,
             currencySymbol = o.optString("currencySymbol", "доллар"),
             customCuttingAllocations = customCutting,
-            stockDeductedForProduction = o.optBoolean("stockDeductedForProduction", false)
+            stockDeductedForProduction = o.optBoolean("stockDeductedForProduction", false),
+            floorAssemblyCount = o.optInt("floorAssemblyCount", 0),
+            extraAssemblyOpsCost = o.optDouble("extraAssemblyOpsCost", 0.0),
+            extraAssemblyOpsNote = o.optString("extraAssemblyOpsNote", ""),
+            selectedOrderServices = parsedSelectedServices
         )
     }
 

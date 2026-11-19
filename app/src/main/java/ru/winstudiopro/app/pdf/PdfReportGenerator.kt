@@ -9,6 +9,7 @@ import ru.winstudiopro.app.domain.calculator.HardwareOrderItem
 import ru.winstudiopro.app.domain.calculator.OrderProcurementHelper
 import ru.winstudiopro.app.domain.calculator.ProfileSupplierOrderLine
 import ru.winstudiopro.app.domain.calculator.RubberOrderItem
+import ru.winstudiopro.app.domain.calculator.WindowBomAndCostEngine
 import ru.winstudiopro.app.domain.model.*
 import ru.winstudiopro.app.ui.i18n.normalizeCurrencyDisplay
 import java.io.File
@@ -48,7 +49,9 @@ object PdfReportGenerator {
         companyContacts: String = "",
         extraAccessoriesCatalog: List<ExtraAccessoryItem> = DefaultCatalogs.defaultExtraAccessories(),
         workServicesCatalog: List<WorkServiceItem> = DefaultCatalogs.defaultWorkServices(),
-        hardwareBrandsCatalog: List<HardwareBrandItem> = DefaultCatalogs.defaultHardwareBrands()
+        hardwareBrandsCatalog: List<HardwareBrandItem> = DefaultCatalogs.defaultHardwareBrands(),
+        assemblyPricingCatalog: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog(),
+        orderExtraServicesCatalog: List<OrderExtraServiceItem> = DefaultCatalogs.defaultOrderExtraServices()
     ): File {
         val doc = PdfDocument()
 
@@ -228,7 +231,7 @@ object PdfReportGenerator {
                 workServicesCatalog.find { it.id == id }?.name
             }
             if (selectedWorks.isNotEmpty()) {
-                drawCategoryAndItems("работы", selectedWorks)
+                drawCategoryAndItems("монтаж", selectedWorks)
             }
         }
 
@@ -435,7 +438,7 @@ object PdfReportGenerator {
         }
 
         // Итоговый блок «Весь заказ» и «Подписи» (как в эталонных PDF)
-        val neededFooterH = if (mode == ClientPdfReportMode.COMMERCIAL_PROPOSAL) 150f else 85f
+        val neededFooterH = if (mode == ClientPdfReportMode.COMMERCIAL_PROPOSAL) 185f else 85f
         if (y + neededFooterH > PAGE_H - 30f) {
             startNewPage()
         }
@@ -455,6 +458,12 @@ object PdfReportGenerator {
 
         if (mode == ClientPdfReportMode.COMMERCIAL_PROPOSAL) {
             val cur = order.currencySymbol
+            val finSummary = WindowBomAndCostEngine.calculateOrderFinancialSummary(
+                order = order,
+                windowResults = windowResults,
+                assemblyPricingCatalog = assemblyPricingCatalog,
+                orderExtraServicesCatalog = orderExtraServicesCatalog
+            )
             var sumRaw = 0.0
             var sumDiscounted = 0.0
             windowResults.forEach { res ->
@@ -467,6 +476,11 @@ object PdfReportGenerator {
                 sumRaw += unitBase * wItem.quantity + res.costCustomPainting
                 sumDiscounted += unitDisc * wItem.quantity + res.costCustomPainting
             }
+            val orderExtraAssemblyOps = finSummary.floorAssemblyCost + finSummary.extraAssemblyOpsCost
+            val orderExtraServices = finSummary.totalOrderServicesCost
+            val orderLevelTotal = orderExtraAssemblyOps + orderExtraServices
+            sumRaw += orderLevelTotal
+            sumDiscounted += orderLevelTotal * (1.0 - order.discountPercent / 100.0)
             if (order.discountPercent > 0.0 && windowResults.all { it.discountPercentApplied == 0.0 }) {
                 sumDiscounted = sumRaw * (1.0 - order.discountPercent / 100.0)
             }
@@ -475,6 +489,12 @@ object PdfReportGenerator {
             val vatAmount = sumDiscounted * (order.taxVatPercent / 100.0)
             val finalTotal = order.manualOrderTotalOverride ?: (sumDiscounted + vatAmount)
 
+            if (orderExtraAssemblyOps > 0.0) {
+                summaryRows.add("сборка на этаже и доп. операции" to "${fmtMoney2(orderExtraAssemblyOps)} $cur")
+            }
+            if (orderExtraServices > 0.0) {
+                summaryRows.add("дополнительные услуги заказа" to "${fmtMoney2(orderExtraServices)} $cur")
+            }
             summaryRows.add("общая цена" to "${fmtMoney2(sumRaw)} $cur")
             summaryRows.add("общая скидка (-${fmtPct(effDiscPct)}%)" to "-${fmtMoney2(discountAmount)} $cur")
             summaryRows.add("общая цена со скидкой" to "${fmtMoney2(sumDiscounted)} $cur")

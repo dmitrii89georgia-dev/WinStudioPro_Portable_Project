@@ -3,6 +3,7 @@ package ru.winstudiopro.app
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -211,5 +212,144 @@ class OrderStatusAndStorageRobolectricTest {
         assertEquals(1, restored.stockRubber.size)
         assertEquals(142.75, restored.stockRubber.first().metersInStock, 0.01)
         assertTrue(restored.orders.first().stockDeductedForProduction)
+    }
+
+    @Test
+    fun `sqlite v5 database upgrades non-destructively to v6 and migrates wrk_delivery to order extra services`() {
+        // Имитируем существующую пользовательскую БД версии 5 до обновления
+        context.getSharedPreferences("winstudio_local_ui_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("dev_seed_v1_applied", true)
+            .commit()
+
+        val dbFile = context.getDatabasePath("winstudio_pro_v3.db")
+        dbFile.parentFile?.mkdirs()
+        val legacyDb = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(dbFile, null)
+        legacyDb.execSQL("CREATE TABLE IF NOT EXISTS profile_systems (id TEXT PRIMARY KEY, sort_order INTEGER NOT NULL, json_payload TEXT NOT NULL)")
+        legacyDb.execSQL("CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, sort_order INTEGER NOT NULL, order_number TEXT NOT NULL, customer_name TEXT NOT NULL, status TEXT NOT NULL, json_payload TEXT NOT NULL)")
+        legacyDb.execSQL("CREATE TABLE IF NOT EXISTS stock_inventory (id TEXT PRIMARY KEY, profile_system_id TEXT NOT NULL, role TEXT NOT NULL, length_mm INTEGER NOT NULL, quantity INTEGER NOT NULL, is_full_bar INTEGER NOT NULL DEFAULT 0, color_name TEXT NOT NULL DEFAULT 'Белый', color_hex INTEGER NOT NULL DEFAULT 4294967295)")
+        legacyDb.execSQL("CREATE TABLE IF NOT EXISTS stock_rubber (id TEXT PRIMARY KEY, profile_system_id TEXT NOT NULL, rubber_type TEXT NOT NULL, wedge_variant_id TEXT, wedge_thickness_mm REAL, label TEXT NOT NULL DEFAULT '', meters_in_stock REAL NOT NULL DEFAULT 0.0)")
+        legacyDb.execSQL("CREATE TABLE IF NOT EXISTS app_settings (id INTEGER PRIMARY KEY CHECK (id = 1), json_payload TEXT NOT NULL)")
+
+        val legacyWorkServices = org.json.JSONArray().apply {
+            put(org.json.JSONObject().apply {
+                put("id", "wrk_install")
+                put("name", "Монтаж конструкции")
+                put("rateType", "PER_M2")
+                put("price", 14.0)
+            })
+            put(org.json.JSONObject().apply {
+                put("id", "wrk_delivery")
+                put("name", "Доставка")
+                put("rateType", "PER_PIECE")
+                put("price", 85.0)
+            })
+        }
+        val legacySettingsJson = org.json.JSONObject().apply {
+            put("currencySymbol", "$")
+            put("workServices", legacyWorkServices)
+        }
+        legacyDb.execSQL(
+            "INSERT INTO app_settings(id, json_payload) VALUES (1, ?)",
+            arrayOf(legacySettingsJson.toString())
+        )
+
+        val legacyTopologyJson = org.json.JSONObject().apply {
+            put("frames", org.json.JSONArray().apply {
+                put(org.json.JSONObject().apply {
+                    put("id", "f1")
+                    put("leftMm", 0.0)
+                    put("topMm", 0.0)
+                    put("rightMm", 1500.0)
+                    put("bottomMm", 1500.0)
+                    put("openings", org.json.JSONArray().apply {
+                        put(org.json.JSONObject().apply {
+                            put("id", "op1")
+                            put("frameId", "f1")
+                            put("leftMm", 0.0)
+                            put("topMm", 0.0)
+                            put("rightMm", 1500.0)
+                            put("bottomMm", 1500.0)
+                            put("openingType", "FIXED")
+                        })
+                    })
+                    put("imposts", org.json.JSONArray())
+                })
+            })
+        }
+
+        val legacyOrderJson = org.json.JSONObject().apply {
+            put("id", "legacy_ord_v5")
+            put("orderNumber", "V5-100")
+            put("customerName", "Клиент V5")
+            put("customerPhone", "+7999")
+            put("address", "ул. Базовая")
+            put("createdDate", "10.11.2026")
+            put("windows", org.json.JSONArray().apply {
+                put(org.json.JSONObject().apply {
+                    put("id", "win_v5")
+                    put("name", "Окно V5")
+                    put("quantity", 1)
+                    put("topology", legacyTopologyJson)
+                    put("selectedWorkIds", org.json.JSONArray().apply {
+                        put("wrk_install")
+                        put("wrk_delivery")
+                    })
+                })
+            })
+        }
+        legacyDb.execSQL(
+            "INSERT INTO orders(id, sort_order, order_number, customer_name, status, json_payload) VALUES (?, ?, ?, ?, ?, ?)",
+            arrayOf("legacy_ord_v5", 0, "V5-100", "Клиент V5", "DRAFT", legacyOrderJson.toString())
+        )
+        legacyDb.version = 5
+        legacyDb.close()
+
+        // Загрузка состояния запускает миграцию 5 -> 6
+        val migratedState = AppStateStorage.loadState(context)
+
+        // 1. Старые данные сохранились без потерь
+        val migratedOrder = migratedState.orders.firstOrNull { it.id == "legacy_ord_v5" }
+        assertNotNull(migratedOrder)
+        assertEquals("V5-100", migratedOrder!!.orderNumber)
+
+        // 2. Доставка удалена из Монтажа ("Работы") и перенесена в Доп. услуги заказа с сохранением цены 85.0
+        assertTrue(migratedState.workServices.none { it.id == "wrk_delivery" })
+        assertTrue(migratedState.workServices.any { it.id == "wrk_install" })
+        val deliveryService = migratedState.orderExtraServices.find { it.id == "ord_srv_delivery" }
+        assertNotNull(deliveryService)
+        assertEquals(85.0, deliveryService!!.defaultPrice, 0.001)
+
+        // 3. В заказе wrk_delivery перенесён из окна в selectedOrderServices
+        assertFalse(migratedOrder.windows.first().selectedWorkIds.contains("wrk_delivery"))
+        assertTrue(migratedOrder.windows.first().selectedWorkIds.contains("wrk_install"))
+        assertTrue(migratedOrder.selectedOrderServices.any { it.serviceId == "ord_srv_delivery" })
+        assertEquals(
+            ru.winstudiopro.app.domain.model.AssemblySchemeType.OPERATIONS,
+            migratedState.assemblyPricing.defaultScheme
+        )
+
+        // 4. Проверяем round-trip новых финансовых полей через полный бэкап v4
+        val enrichedState = migratedState.copy(
+            assemblyPricing = migratedState.assemblyPricing.copy(
+                defaultScheme = ru.winstudiopro.app.domain.model.AssemblySchemeType.PER_M2,
+                ratePerM2 = 22.5
+            ),
+            orders = migratedState.orders.map {
+                it.copy(
+                    floorAssemblyCount = 3,
+                    extraAssemblyOpsCost = 45.0,
+                    extraAssemblyOpsNote = "Нестандартные углы"
+                )
+            }
+        )
+        AppStateStorage.saveState(context, enrichedState)
+        val backupJson = AppStateStorage.exportFullBackupJsonString(context)
+        val restored = AppStateStorage.importFullBackupJsonString(context, backupJson)
+        assertEquals(ru.winstudiopro.app.domain.model.AssemblySchemeType.PER_M2, restored.assemblyPricing.defaultScheme)
+        assertEquals(22.5, restored.assemblyPricing.ratePerM2, 0.001)
+        assertEquals(3, restored.orders.first().floorAssemblyCount)
+        assertEquals(45.0, restored.orders.first().extraAssemblyOpsCost, 0.001)
+        assertEquals("Нестандартные углы", restored.orders.first().extraAssemblyOpsNote)
     }
 }

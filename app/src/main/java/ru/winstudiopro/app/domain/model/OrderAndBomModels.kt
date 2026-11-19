@@ -156,7 +156,8 @@ data class WindowItem(
     val includeInstallationWork: Boolean = false,
     val installationPricePerM2: Double = 15.0,
     val manualUnitPriceOverride: Double? = null,
-    val note: String = ""
+    val note: String = "",
+    val assemblySchemeOverride: AssemblySchemeType? = null
 )
 
 /**
@@ -249,7 +250,11 @@ data class CustomerOrder(
     val manualOrderTotalOverride: Double? = null,
     val currencySymbol: String = "доллар",
     val customCuttingAllocations: List<CutBarAllocation>? = null,
-    val stockDeductedForProduction: Boolean = false
+    val stockDeductedForProduction: Boolean = false,
+    val floorAssemblyCount: Int = 0,
+    val extraAssemblyOpsCost: Double = 0.0,
+    val extraAssemblyOpsNote: String = "",
+    val selectedOrderServices: List<SelectedOrderService> = emptyList()
 ) {
     fun computeDeadlineState(nowMillis: Long = System.currentTimeMillis()): ContractDeadlineState? {
         if (!status.showDeadlineSmiley) return null
@@ -384,7 +389,28 @@ data class WindowCalculationResult(
     val profileCuts: List<ProfileCutPiece>,
     val glazingSpecs: List<GlazingSpecItem>,
     val hardwareSpecs: List<SashHardwareSpecItem>,
-    val matchedWedgeSummary: String = ""
+    val matchedWedgeSummary: String = "",
+    val costAssembly: Double = 0.0,
+    val costInstallation: Double = 0.0,
+    val costOrderServices: Double = 0.0,
+    val unitPrimeCost: Double = 0.0
+)
+
+data class OrderFinancialSummary(
+    val totalWindowsBaseCost: Double,
+    val totalWindowsDiscountedCost: Double,
+    val totalWindowsAssemblyCost: Double,
+    val floorAssemblyCost: Double,
+    val extraAssemblyOpsCost: Double,
+    val totalAssemblyWithFloorAndOps: Double,
+    val totalInstallationCost: Double,
+    val totalOrderServicesCost: Double,
+    val orderPrimeCost: Double,
+    val orderSaleBeforeDiscountAndVat: Double,
+    val orderSaleAfterDiscountBeforeVat: Double,
+    val discountAmount: Double,
+    val vatAmount: Double,
+    val totalWithVat: Double
 )
 
 data class CutBarAllocation(

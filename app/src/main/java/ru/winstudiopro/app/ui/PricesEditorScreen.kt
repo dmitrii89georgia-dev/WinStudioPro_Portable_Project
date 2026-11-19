@@ -38,7 +38,9 @@ private enum class PriceCatalogTab(val titleRu: String) {
     GLAZING("Стеклопакеты"),
     HARDWARE("Фурнитура"),
     EXTRAS("Разное"),
-    WORKS("Работы")
+    WORKS("Монтаж"),
+    ASSEMBLY("Сборка"),
+    ORDER_SERVICES("Доп. услуги")
 }
 
 @Composable
@@ -48,13 +50,17 @@ internal fun PricesEditorScreen(
     hardwareBrands: List<HardwareBrandItem>,
     extraAccessories: List<ExtraAccessoryItem>,
     workServices: List<WorkServiceItem>,
+    assemblyPricing: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog(),
+    orderExtraServices: List<OrderExtraServiceItem> = DefaultCatalogs.defaultOrderExtraServices(),
     currencySymbol: String,
     onBack: () -> Unit,
     onSaveProfiles: (List<ProfileSystemSpec>) -> Unit,
     onSaveGlazing: (List<GlazingCatalogItem>) -> Unit,
     onSaveHardware: (List<HardwareBrandItem>) -> Unit,
     onSaveExtras: (List<ExtraAccessoryItem>) -> Unit,
-    onSaveWorks: (List<WorkServiceItem>) -> Unit
+    onSaveWorks: (List<WorkServiceItem>) -> Unit,
+    onSaveAssemblyPricing: (AssemblyPricingCatalog) -> Unit = {},
+    onSaveOrderExtraServices: (List<OrderExtraServiceItem>) -> Unit = {}
 ) {
     val palette = LocalWinStudioPalette.current
     val strings = LocalAppStrings.current
@@ -92,17 +98,20 @@ internal fun PricesEditorScreen(
                             color = if (sel) palette.accentBlue else palette.secondaryBackground,
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
+                                .heightIn(min = 40.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .clickable { activeTab = tab }
                                 .testTag("price_tab_${tab.name}")
                         ) {
-                            Text(
-                                text = tab.titleRu,
-                                color = if (sel) Color.White else palette.textPrimary,
-                                fontSize = 12.sp,
-                                fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Medium,
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-                            )
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = tab.titleRu,
+                                    color = if (sel) Color.White else palette.textPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -688,7 +697,7 @@ internal fun PricesEditorScreen(
                         ) {
                             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Text(
-                                    "Добавить услугу в раздел «Работы»",
+                                    "Добавить услугу в раздел «Монтаж»",
                                     fontWeight = FontWeight.Bold,
                                     color = palette.accentBlue
                                 )
@@ -696,7 +705,7 @@ internal fun PricesEditorScreen(
                                     OutlinedTextField(
                                         value = newWrkName,
                                         onValueChange = { newWrkName = it },
-                                        label = { Text("Название работы") },
+                                        label = { Text("Название монтажной работы") },
                                         shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1.4f),
                                         singleLine = true
@@ -769,13 +778,509 @@ internal fun PricesEditorScreen(
                             currencySymbol = "$currencySymbol/${item.rateType.labelRu}",
                             onSavePrice = { newP ->
                                 onSaveWorks(workServices.map { if (it.id == item.id) it.copy(price = newP) else it })
-                                savedToast = "Обновлена расценка работы «${item.name}»"
+                                savedToast = "Обновлена расценка монтажа «${item.name}»"
                             },
                             onDelete = { onSaveWorks(workServices.filterNot { it.id == item.id }) }
                         )
                     }
                 }
             }
+
+            PriceCatalogTab.ASSEMBLY -> {
+                AssemblyPricingTabContent(
+                    assemblyPricing = assemblyPricing,
+                    currencySymbol = currencySymbol,
+                    onSave = { updated ->
+                        onSaveAssemblyPricing(updated)
+                        savedToast = "Настройки цеховой сборки сохранены (${updated.defaultScheme.shortTitleRu})"
+                    }
+                )
+            }
+
+            PriceCatalogTab.ORDER_SERVICES -> {
+                OrderExtraServicesTabContent(
+                    services = orderExtraServices,
+                    currencySymbol = currencySymbol,
+                    onSaveServices = { updated, toastMsg ->
+                        onSaveOrderExtraServices(updated)
+                        savedToast = toastMsg
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AssemblyPricingTabContent(
+    assemblyPricing: AssemblyPricingCatalog,
+    currencySymbol: String,
+    onSave: (AssemblyPricingCatalog) -> Unit
+) {
+    val palette = LocalWinStudioPalette.current
+
+    var defaultScheme by remember(assemblyPricing) { mutableStateOf(assemblyPricing.defaultScheme) }
+    var frameCornerRate by remember(assemblyPricing) { mutableStateOf(assemblyPricing.frameCornerRate.toString()) }
+    var sashCornerRate by remember(assemblyPricing) { mutableStateOf(assemblyPricing.sashCornerRate.toString()) }
+    var doorCornerRate by remember(assemblyPricing) { mutableStateOf(assemblyPricing.doorCornerRate.toString()) }
+    var impostRate by remember(assemblyPricing) { mutableStateOf(assemblyPricing.impostRate.toString()) }
+    var hwTurnRate by remember(assemblyPricing) { mutableStateOf(assemblyPricing.hwTurnRate.toString()) }
+    var hwTiltTurnRate by remember(assemblyPricing) { mutableStateOf(assemblyPricing.hwTiltTurnRate.toString()) }
+    var hwShtulpRate by remember(assemblyPricing) { mutableStateOf(assemblyPricing.hwShtulpRate.toString()) }
+    var hwSlidingRate by remember(assemblyPricing) { mutableStateOf(assemblyPricing.hwSlidingRate.toString()) }
+    var hwDoorRate by remember(assemblyPricing) { mutableStateOf(assemblyPricing.hwDoorRate.toString()) }
+    var beadRateMode by remember(assemblyPricing) { mutableStateOf(assemblyPricing.beadRateMode) }
+    var beadRate by remember(assemblyPricing) { mutableStateOf(assemblyPricing.beadRate.toString()) }
+    var rubberRateMode by remember(assemblyPricing) { mutableStateOf(assemblyPricing.rubberRateMode) }
+    var rubberRate by remember(assemblyPricing) { mutableStateOf(assemblyPricing.rubberRate.toString()) }
+    var floorAssemblyRate by remember(assemblyPricing) { mutableStateOf(assemblyPricing.floorAssemblyRate.toString()) }
+    var ratePerM2 by remember(assemblyPricing) { mutableStateOf(assemblyPricing.ratePerM2.toString()) }
+    var ratePerMeter by remember(assemblyPricing) { mutableStateOf(assemblyPricing.ratePerMeter.toString()) }
+
+    fun parseD(raw: String, fallback: Double): Double =
+        raw.trim().replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0) ?: fallback
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(14.dp)
+            .testTag("assembly_pricing_scroll"),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Выбор схемы по умолчанию
+        Surface(
+            color = palette.cardSurface,
+            shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(0.8.dp, palette.floatingBorder),
+            shadowElevation = if (palette.isDark) 0.dp else 2.dp
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Схема расчёта сборки по умолчанию",
+                    fontWeight = FontWeight.Bold,
+                    color = palette.accentBlue
+                )
+                Text(
+                    "Используется для всех новых и существующих заказов, если в окне не выбрана индивидуальная схема:",
+                    fontSize = 11.5.sp,
+                    color = palette.textSecondary
+                )
+                AssemblySchemeType.entries.forEach { scheme ->
+                    val selected = defaultScheme == scheme
+                    Surface(
+                        color = if (selected) palette.accentBlue.copy(alpha = 0.12f) else palette.secondaryBackground,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(
+                            width = if (selected) 1.2.dp else 0.7.dp,
+                            color = if (selected) palette.accentBlue else palette.floatingBorder
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { defaultScheme = scheme }
+                            .testTag("assembly_default_scheme_${scheme.name}")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            RadioButton(
+                                selected = selected,
+                                onClick = { defaultScheme = scheme },
+                                colors = RadioButtonDefaults.colors(selectedColor = palette.accentBlue)
+                            )
+                            Text(
+                                text = scheme.titleRu,
+                                color = palette.textPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Схема 1: Калькулятор по операциям
+        Surface(
+            color = palette.cardSurface,
+            shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(0.8.dp, palette.floatingBorder),
+            shadowElevation = if (palette.isDark) 0.dp else 2.dp
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Схема 1: Калькулятор по операциям ($currencySymbol)",
+                    fontWeight = FontWeight.Bold,
+                    color = palette.accentBlue
+                )
+                Text(
+                    "Распил и обжим углов (ставка за 1 узел / угол):",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = palette.textPrimary
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = frameCornerRate,
+                        onValueChange = { frameCornerRate = it },
+                        label = { Text("Рама ($currencySymbol/узел)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f).testTag("asm_frame_corner_input"),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = sashCornerRate,
+                        onValueChange = { sashCornerRate = it },
+                        label = { Text("Створка ($currencySymbol/узел)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f).testTag("asm_sash_corner_input"),
+                        singleLine = true
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = doorCornerRate,
+                        onValueChange = { doorCornerRate = it },
+                        label = { Text("Дверь ($currencySymbol/узел)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f).testTag("asm_door_corner_input"),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = impostRate,
+                        onValueChange = { impostRate = it },
+                        label = { Text("Импост ($currencySymbol/шт)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f).testTag("asm_impost_input"),
+                        singleLine = true
+                    )
+                }
+
+                HorizontalDivider(color = palette.divider)
+                Text(
+                    "Установка фурнитуры по типам ($currencySymbol/створка):",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = palette.textPrimary
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = hwTurnRate,
+                        onValueChange = { hwTurnRate = it },
+                        label = { Text("Поворотная ($currencySymbol)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = hwTiltTurnRate,
+                        onValueChange = { hwTiltTurnRate = it },
+                        label = { Text("Повор.-отк. ($currencySymbol)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = hwShtulpRate,
+                        onValueChange = { hwShtulpRate = it },
+                        label = { Text("Штульп ($currencySymbol)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = hwSlidingRate,
+                        onValueChange = { hwSlidingRate = it },
+                        label = { Text("Сдвижная ($currencySymbol)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                }
+                OutlinedTextField(
+                    value = hwDoorRate,
+                    onValueChange = { hwDoorRate = it },
+                    label = { Text("Дверная фурнитура ($currencySymbol)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+
+                HorizontalDivider(color = palette.divider)
+                Text(
+                    "Штапики / проёмы:",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = palette.textPrimary
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    BeadAssemblyRateMode.entries.forEach { mode ->
+                        val sel = beadRateMode == mode
+                        FilterChip(
+                            selected = sel,
+                            onClick = { beadRateMode = mode },
+                            label = {
+                                Text(
+                                    text = mode.titleRu,
+                                    fontSize = 11.5.sp,
+                                    color = if (sel) Color.White else palette.textPrimary
+                                )
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = palette.accentBlue,
+                                containerColor = palette.secondaryBackground
+                            ),
+                            modifier = Modifier.testTag("asm_bead_mode_${mode.name}")
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = beadRate,
+                    onValueChange = { beadRate = it },
+                    label = { Text("Ставка за штапики (${beadRateMode.titleRu}, $currencySymbol)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+
+                HorizontalDivider(color = palette.divider)
+                Text(
+                    "Резина (уплотнитель):",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = palette.textPrimary
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RubberAssemblyRateMode.entries.forEach { mode ->
+                        val sel = rubberRateMode == mode
+                        FilterChip(
+                            selected = sel,
+                            onClick = { rubberRateMode = mode },
+                            label = {
+                                Text(
+                                    text = mode.titleRu,
+                                    fontSize = 11.sp,
+                                    color = if (sel) Color.White else palette.textPrimary
+                                )
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = palette.accentBlue,
+                                containerColor = palette.secondaryBackground
+                            ),
+                            modifier = Modifier.testTag("asm_rubber_mode_${mode.name}")
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = rubberRate,
+                    onValueChange = { rubberRate = it },
+                    label = { Text("Ставка за резину (${rubberRateMode.titleRu}, $currencySymbol)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+
+                HorizontalDivider(color = palette.divider)
+                OutlinedTextField(
+                    value = floorAssemblyRate,
+                    onValueChange = { floorAssemblyRate = it },
+                    label = { Text("Сборка на этаже (за 1 конструкцию, $currencySymbol)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("asm_floor_rate_input"),
+                    singleLine = true
+                )
+            }
+        }
+
+        // Схема 2 и Схема 3
+        Surface(
+            color = palette.cardSurface,
+            shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(0.8.dp, palette.floatingBorder),
+            shadowElevation = if (palette.isDark) 0.dp else 2.dp
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Схема 2 и Схема 3: Фиксированные ставки ($currencySymbol)",
+                    fontWeight = FontWeight.Bold,
+                    color = palette.accentBlue
+                )
+                OutlinedTextField(
+                    value = ratePerM2,
+                    onValueChange = { ratePerM2 = it },
+                    label = { Text("Схема 2: Ставка за 1 м² конструкции ($currencySymbol/м²)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("asm_rate_m2_input"),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = ratePerMeter,
+                    onValueChange = { ratePerMeter = it },
+                    label = { Text("Схема 3: Ставка за 1 м.п. периметра профиля ($currencySymbol/м.п.)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("asm_rate_meter_input"),
+                    singleLine = true
+                )
+            }
+        }
+
+        Button(
+            onClick = {
+                onSave(
+                    AssemblyPricingCatalog(
+                        defaultScheme = defaultScheme,
+                        frameCornerRate = parseD(frameCornerRate, assemblyPricing.frameCornerRate),
+                        sashCornerRate = parseD(sashCornerRate, assemblyPricing.sashCornerRate),
+                        doorCornerRate = parseD(doorCornerRate, assemblyPricing.doorCornerRate),
+                        impostRate = parseD(impostRate, assemblyPricing.impostRate),
+                        hwTurnRate = parseD(hwTurnRate, assemblyPricing.hwTurnRate),
+                        hwTiltTurnRate = parseD(hwTiltTurnRate, assemblyPricing.hwTiltTurnRate),
+                        hwShtulpRate = parseD(hwShtulpRate, assemblyPricing.hwShtulpRate),
+                        hwSlidingRate = parseD(hwSlidingRate, assemblyPricing.hwSlidingRate),
+                        hwDoorRate = parseD(hwDoorRate, assemblyPricing.hwDoorRate),
+                        beadRateMode = beadRateMode,
+                        beadRate = parseD(beadRate, assemblyPricing.beadRate),
+                        rubberRateMode = rubberRateMode,
+                        rubberRate = parseD(rubberRate, assemblyPricing.rubberRate),
+                        floorAssemblyRate = parseD(floorAssemblyRate, assemblyPricing.floorAssemblyRate),
+                        ratePerM2 = parseD(ratePerM2, assemblyPricing.ratePerM2),
+                        ratePerMeter = parseD(ratePerMeter, assemblyPricing.ratePerMeter)
+                    )
+                )
+            },
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .testTag("save_assembly_pricing_button")
+        ) {
+            Text("Сохранить настройки сборки", color = Color.White, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
+private fun OrderExtraServicesTabContent(
+    services: List<OrderExtraServiceItem>,
+    currencySymbol: String,
+    onSaveServices: (List<OrderExtraServiceItem>, String) -> Unit
+) {
+    val palette = LocalWinStudioPalette.current
+    var newSrvName by remember { mutableStateOf("") }
+    var newSrvPrice by remember { mutableStateOf("25") }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(14.dp)
+            .testTag("order_services_lazy_column"),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            Surface(
+                color = palette.cardSurface,
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(0.8.dp, palette.floatingBorder),
+                shadowElevation = if (palette.isDark) 0.dp else 2.dp
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Добавить в «Дополнительные услуги заказа»",
+                        fontWeight = FontWeight.Bold,
+                        color = palette.accentBlue
+                    )
+                    Text(
+                        "Применяется целиком ко всему заказу (доставка, подъём на этаж, автокран и др.). В конкретном заказе цену можно переопределить.",
+                        fontSize = 11.5.sp,
+                        color = palette.textSecondary
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = newSrvName,
+                            onValueChange = { newSrvName = it },
+                            label = { Text("Название услуги") },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1.4f).testTag("order_service_name_input"),
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = newSrvPrice,
+                            onValueChange = { newSrvPrice = it },
+                            label = { Text("Цена ($currencySymbol)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(0.9f).testTag("order_service_price_input"),
+                            singleLine = true
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Button(
+                            onClick = {
+                                if (newSrvName.isNotBlank()) {
+                                    val p = newSrvPrice.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+                                    val item = OrderExtraServiceItem(
+                                        id = "ord_srv_${UUID.randomUUID().toString().take(6)}",
+                                        name = newSrvName.trim(),
+                                        defaultPrice = p,
+                                        applyToWholeOrder = true
+                                    )
+                                    onSaveServices(services + item, "Добавлена услуга заказа «${item.name}»")
+                                    newSrvName = ""
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                            modifier = Modifier.heightIn(min = 48.dp).testTag("order_service_add_button")
+                        ) {
+                            Text("+ Добавить услугу", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        }
+
+        items(services, key = { it.id }) { srv ->
+            EditablePriceRowCard(
+                title = srv.name,
+                subtitle = if (srv.applyToWholeOrder) "На весь заказ • по умолчанию" else "На заказ",
+                initialPrice = srv.defaultPrice,
+                currencySymbol = currencySymbol,
+                onSavePrice = { newP ->
+                    val updated = services.map { if (it.id == srv.id) it.copy(defaultPrice = newP) else it }
+                    onSaveServices(updated, "Обновлена базовая цена услуги «${srv.name}»")
+                },
+                onDelete = {
+                    onSaveServices(services.filterNot { it.id == srv.id }, "Услуга «${srv.name}» удалена")
+                }
+            )
         }
     }
 }

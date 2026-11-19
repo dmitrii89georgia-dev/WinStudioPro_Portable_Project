@@ -112,7 +112,8 @@ object WindowBomAndCostEngine {
         workServicesCatalog: List<WorkServiceItem> = DefaultCatalogs.defaultWorkServices(),
         hardwareBrandsCatalog: List<HardwareBrandItem> = DefaultCatalogs.defaultHardwareBrands(),
         financialSchemesCatalog: List<FinancialSchemeItem> = DefaultCatalogs.defaultFinancialSchemes(),
-        windowIndexInOrder: Int = 0
+        windowIndexInOrder: Int = 0,
+        assemblyPricingCatalog: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog()
     ): WindowCalculationResult {
         val winNum = if (windowIndexInOrder > 0) {
             windowIndexInOrder
@@ -816,9 +817,33 @@ object WindowBomAndCostEngine {
         val profilesBaseCost = costFrame + costImposts + costSashesOnly + costDoorSashesOnly + costCornerConnectors + costShtapikAndRubber
         val costColorMarkup = profilesBaseCost * (color.priceMarkupPercent / 100.0)
 
-        val rawUnitCost = costFrame + costImposts + costSashesOnly + costDoorSashesOnly +
+        val materialsAndWorksCost = costFrame + costImposts + costSashesOnly + costDoorSashesOnly +
             costCornerConnectors + costShtapikAndRubber + costGlazingAndSandwich + hardwareCostTotal +
             mosquitoCostTotal + addonsCost + extrasAndWorksCost + costColorMarkup
+
+        val costAssembly = if (isNoSystemSelected) {
+            0.0
+        } else {
+            calculateWindowAssemblyCost(
+                window = window,
+                assemblyPricing = assemblyPricingCatalog,
+                framesCount = frames.size,
+                windowSashLeavesCount = windowSashLeavesTotalCount,
+                doorSashLeavesCount = doorSashLeavesTotalCount,
+                impostPiecesCount = impostPiecesCount,
+                hardwareSpecs = hardwareSpecs,
+                glazingSpecs = glazingSpecs,
+                profileCuts = profileCuts,
+                qty = qty,
+                totalAreaM2 = totalAreaM2,
+                totalProfilePerimeterM = framePerimeterM + impostsLengthM + sashPerimeterM + doorSashPerimeterM,
+                glazingPlusSandwichAreaM2 = glazingAreaM2 + sandwichAreaM2,
+                rubberPerimeterM = rubberPerimeterM
+            )
+        }
+
+        val unitPrimeCost = materialsAndWorksCost + costAssembly
+        val rawUnitCost = unitPrimeCost
 
         val discPct = finScheme?.discountPercent ?: 0.0
         val markupPct = finScheme?.markupPercent ?: 0.0
@@ -882,7 +907,147 @@ object WindowBomAndCostEngine {
             profileCuts = taggedCuts,
             glazingSpecs = glazingSpecs,
             hardwareSpecs = hardwareSpecs,
-            matchedWedgeSummary = usedWedgeLabels.distinct().joinToString(", ")
+            matchedWedgeSummary = usedWedgeLabels.distinct().joinToString(", "),
+            costAssembly = costAssembly,
+            costInstallation = costWorksOnly,
+            costOrderServices = 0.0,
+            unitPrimeCost = unitPrimeCost
+        )
+    }
+
+    private fun calculateWindowAssemblyCost(
+        window: WindowItem,
+        assemblyPricing: AssemblyPricingCatalog,
+        framesCount: Int,
+        windowSashLeavesCount: Int,
+        doorSashLeavesCount: Int,
+        impostPiecesCount: Int,
+        hardwareSpecs: List<SashHardwareSpecItem>,
+        glazingSpecs: List<GlazingSpecItem>,
+        profileCuts: List<ProfileCutPiece>,
+        qty: Int,
+        totalAreaM2: Double,
+        totalProfilePerimeterM: Double,
+        glazingPlusSandwichAreaM2: Double,
+        rubberPerimeterM: Double
+    ): Double {
+        val scheme = window.assemblySchemeOverride ?: assemblyPricing.defaultScheme
+        return when (scheme) {
+            AssemblySchemeType.OPERATIONS -> {
+                val cornersCost =
+                    (framesCount * 4) * assemblyPricing.frameCornerRate +
+                        (windowSashLeavesCount * 4) * assemblyPricing.sashCornerRate +
+                        (doorSashLeavesCount * 4) * assemblyPricing.doorCornerRate
+                val impostsCost = impostPiecesCount * assemblyPricing.impostRate
+                val hardwareOpsCost = hardwareSpecs.sumOf { spec ->
+                    when {
+                        spec.openingType == SashOpeningType.BLIND_SASH -> 0.0
+                        spec.isDoor -> assemblyPricing.hwDoorRate
+                        spec.openingType == SashOpeningType.TURN_LEFT ||
+                            spec.openingType == SashOpeningType.TURN_RIGHT ||
+                            spec.openingType == SashOpeningType.TRANSOM_BOTTOM ||
+                            spec.openingType == SashOpeningType.TRANSOM_TOP -> assemblyPricing.hwTurnRate
+                        spec.openingType == SashOpeningType.TILT_TURN_LEFT ||
+                            spec.openingType == SashOpeningType.TILT_TURN_RIGHT -> assemblyPricing.hwTiltTurnRate
+                        spec.openingType == SashOpeningType.SHTULP_TURN_TURN ||
+                            spec.openingType == SashOpeningType.SHTULP_TILTTURN_L_TURN_R ||
+                            spec.openingType == SashOpeningType.SHTULP_TURN_L_TILTTURN_R -> assemblyPricing.hwShtulpRate
+                        spec.openingType == SashOpeningType.SLIDING_LEFT ||
+                            spec.openingType == SashOpeningType.SLIDING_RIGHT ||
+                            spec.openingType == SashOpeningType.VERT_SLIDE_UP ||
+                            spec.openingType == SashOpeningType.VERT_SLIDE_BOTH -> assemblyPricing.hwSlidingRate
+                        else -> 0.0
+                    }
+                }
+                val beadsCost = when (assemblyPricing.beadRateMode) {
+                    BeadAssemblyRateMode.PER_OPENING -> {
+                        val openingsPerUnit = glazingSpecs.sumOf { (it.quantity / qty.coerceAtLeast(1)).coerceAtLeast(1) }
+                        openingsPerUnit * assemblyPricing.beadRate
+                    }
+                    BeadAssemblyRateMode.PER_PIECE -> {
+                        val beadPiecesPerUnit = profileCuts
+                            .filter { it.role == ProfileRole.SHTAPIK }
+                            .sumOf { (it.quantity / qty.coerceAtLeast(1)).coerceAtLeast(1) }
+                        beadPiecesPerUnit * assemblyPricing.beadRate
+                    }
+                }
+                val rubberCost = when (assemblyPricing.rubberRateMode) {
+                    RubberAssemblyRateMode.PER_M2_GLAZING -> glazingPlusSandwichAreaM2 * assemblyPricing.rubberRate
+                    RubberAssemblyRateMode.PER_METER_CONTOUR -> rubberPerimeterM * assemblyPricing.rubberRate
+                }
+                cornersCost + impostsCost + hardwareOpsCost + beadsCost + rubberCost
+            }
+            AssemblySchemeType.PER_M2 -> totalAreaM2 * assemblyPricing.ratePerM2
+            AssemblySchemeType.PER_METER -> totalProfilePerimeterM * assemblyPricing.ratePerMeter
+        }
+    }
+
+    fun resolveOrderServicePrice(
+        selected: SelectedOrderService,
+        catalog: List<OrderExtraServiceItem>
+    ): Double {
+        return selected.customPriceOverride
+            ?: catalog.find { it.id == selected.serviceId }?.defaultPrice
+            ?: 0.0
+    }
+
+    fun calculateOrderFinancialSummary(
+        order: CustomerOrder,
+        windowResults: List<WindowCalculationResult>,
+        assemblyPricingCatalog: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog(),
+        orderExtraServicesCatalog: List<OrderExtraServiceItem> = DefaultCatalogs.defaultOrderExtraServices()
+    ): OrderFinancialSummary {
+        var totalWindowsBaseCost = 0.0
+        var totalWindowsDiscountedCost = 0.0
+        var totalWindowsAssemblyCost = 0.0
+        var totalInstallationCost = 0.0
+        var totalWindowsPrimeCost = 0.0
+
+        windowResults.forEach { res ->
+            val w = res.windowItem
+            val qty = w.quantity.coerceAtLeast(1)
+            val unitBase = w.manualUnitPriceOverride ?: res.rawUnitCostBeforeDiscount
+            val itemDiscPct = if (res.discountPercentApplied > 0.0) res.discountPercentApplied else order.discountPercent
+            val unitDisc = unitBase * (1.0 - itemDiscPct / 100.0)
+
+            totalWindowsBaseCost += unitBase * qty + res.costCustomPainting
+            totalWindowsDiscountedCost += unitDisc * qty + res.costCustomPainting
+            totalWindowsAssemblyCost += res.costAssembly * qty
+            totalInstallationCost += res.costInstallation * qty
+            totalWindowsPrimeCost += res.unitPrimeCost * qty + res.costCustomPainting
+        }
+
+        val floorAssemblyCost = order.floorAssemblyCount.coerceAtLeast(0) * assemblyPricingCatalog.floorAssemblyRate
+        val extraOpsCost = order.extraAssemblyOpsCost.coerceAtLeast(0.0)
+        val totalAssemblyWithFloorAndOps = totalWindowsAssemblyCost + floorAssemblyCost + extraOpsCost
+        val totalOrderServicesCost = order.selectedOrderServices.sumOf {
+            resolveOrderServicePrice(it, orderExtraServicesCatalog).coerceAtLeast(0.0)
+        }
+        val orderExtrasLevelCost = floorAssemblyCost + extraOpsCost + totalOrderServicesCost
+
+        val orderPrimeCost = totalWindowsPrimeCost + orderExtrasLevelCost
+        val orderSaleBeforeDiscountAndVat = totalWindowsBaseCost + orderExtrasLevelCost
+        val orderSaleAfterDiscountBeforeVat = totalWindowsDiscountedCost +
+            orderExtrasLevelCost * (1.0 - order.discountPercent / 100.0)
+        val discountAmount = (orderSaleBeforeDiscountAndVat - orderSaleAfterDiscountBeforeVat).coerceAtLeast(0.0)
+        val vatAmount = orderSaleAfterDiscountBeforeVat * (order.taxVatPercent / 100.0)
+        val totalWithVat = order.manualOrderTotalOverride ?: (orderSaleAfterDiscountBeforeVat + vatAmount)
+
+        return OrderFinancialSummary(
+            totalWindowsBaseCost = totalWindowsBaseCost,
+            totalWindowsDiscountedCost = totalWindowsDiscountedCost,
+            totalWindowsAssemblyCost = totalWindowsAssemblyCost,
+            floorAssemblyCost = floorAssemblyCost,
+            extraAssemblyOpsCost = extraOpsCost,
+            totalAssemblyWithFloorAndOps = totalAssemblyWithFloorAndOps,
+            totalInstallationCost = totalInstallationCost,
+            totalOrderServicesCost = totalOrderServicesCost,
+            orderPrimeCost = orderPrimeCost,
+            orderSaleBeforeDiscountAndVat = orderSaleBeforeDiscountAndVat,
+            orderSaleAfterDiscountBeforeVat = orderSaleAfterDiscountBeforeVat,
+            discountAmount = discountAmount,
+            vatAmount = vatAmount,
+            totalWithVat = totalWithVat
         )
     }
 

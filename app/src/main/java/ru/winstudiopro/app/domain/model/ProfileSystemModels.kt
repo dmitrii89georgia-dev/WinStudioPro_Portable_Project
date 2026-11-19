@@ -281,6 +281,66 @@ data class WorkServiceItem(
     val rateType: UnitRateType = UnitRateType.PER_M2
 )
 
+enum class AssemblySchemeType(val titleRu: String, val shortTitleRu: String) {
+    OPERATIONS("Схема 1: Калькулятор по операциям", "Схема 1"),
+    PER_M2("Схема 2: Фикс. ставка за 1 м²", "Схема 2 (м²)"),
+    PER_METER("Схема 3: Ставка за 1 м.п. профиля", "Схема 3 (м.п.)")
+}
+
+enum class BeadAssemblyRateMode(val titleRu: String) {
+    PER_OPENING("За 1 проём"),
+    PER_PIECE("За 1 шт. штапика")
+}
+
+enum class RubberAssemblyRateMode(val titleRu: String) {
+    PER_M2_GLAZING("За 1 м² остекления"),
+    PER_METER_CONTOUR("За 1 м.п. контура")
+}
+
+/**
+ * Конфигуратор 3 схем расчёта стоимости цеховой и выездной сборки (в базовой валюте).
+ */
+data class AssemblyPricingCatalog(
+    val defaultScheme: AssemblySchemeType = AssemblySchemeType.OPERATIONS,
+    // Схема 1: По операциям
+    val frameCornerRate: Double = 2.5,
+    val sashCornerRate: Double = 2.5,
+    val doorCornerRate: Double = 3.5,
+    val impostRate: Double = 3.0,
+    val hwTurnRate: Double = 4.0,
+    val hwTiltTurnRate: Double = 6.0,
+    val hwShtulpRate: Double = 8.0,
+    val hwSlidingRate: Double = 7.0,
+    val hwDoorRate: Double = 9.0,
+    val beadRateMode: BeadAssemblyRateMode = BeadAssemblyRateMode.PER_OPENING,
+    val beadRate: Double = 1.5,
+    val rubberRateMode: RubberAssemblyRateMode = RubberAssemblyRateMode.PER_METER_CONTOUR,
+    val rubberRate: Double = 0.35,
+    val floorAssemblyRate: Double = 12.0,
+    // Схема 2: За 1 м² конструкции
+    val ratePerM2: Double = 18.0,
+    // Схема 3: За 1 м.п. профиля
+    val ratePerMeter: Double = 4.5
+)
+
+/**
+ * Позиция справочника «Дополнительные услуги заказа» (применяется ко всему заказу целиком).
+ */
+data class OrderExtraServiceItem(
+    val id: String,
+    val name: String,
+    val defaultPrice: Double,
+    val applyToWholeOrder: Boolean = true
+)
+
+/**
+ * Выбранная дополнительная услуга внутри конкретного заказа (с возможностью переопределения суммы).
+ */
+data class SelectedOrderService(
+    val serviceId: String,
+    val customPriceOverride: Double? = null
+)
+
 data class MosquitoSystemItem(
     val id: String,
     val name: String,
@@ -421,12 +481,20 @@ object DefaultCatalogs {
     fun defaultWorkServices(): List<WorkServiceItem> = listOf(
         WorkServiceItem("wrk_trash", "вынос мусора", 15.0, UnitRateType.PER_PIECE),
         WorkServiceItem("wrk_demount", "демонтаж", 10.0, UnitRateType.PER_PIECE),
-        WorkServiceItem("wrk_delivery", "доставка", 15.0, UnitRateType.PER_PIECE),
         WorkServiceItem("wrk_mount", "монтаж", 18.0, UnitRateType.PER_M2),
         WorkServiceItem("wrk_mount_al", "монтаж алюминия", 20.0, UnitRateType.PER_PIECE),
         WorkServiceItem("wrk_mount_concrete", "монтаж в бетон", 22.0, UnitRateType.PER_M2),
         WorkServiceItem("wrk_mount_sill_out", "монтаж отлива", 5.0, UnitRateType.PER_M),
         WorkServiceItem("wrk_mount_sill_in", "монтаж подоконника", 7.0, UnitRateType.PER_M)
+    )
+
+    fun defaultAssemblyPricingCatalog(): AssemblyPricingCatalog = AssemblyPricingCatalog()
+
+    fun defaultOrderExtraServices(): List<OrderExtraServiceItem> = listOf(
+        OrderExtraServiceItem("ord_srv_delivery", "Доставка", 25.0, applyToWholeOrder = true),
+        OrderExtraServiceItem("ord_srv_floor_carry", "Подъём на этаж", 15.0, applyToWholeOrder = true),
+        OrderExtraServiceItem("ord_srv_crane", "Автокран / манипулятор", 80.0, applyToWholeOrder = true),
+        OrderExtraServiceItem("ord_srv_special_demount", "Спецдемонтаж / леса", 35.0, applyToWholeOrder = true)
     )
 
     fun defaultMosquitoSystems(): List<MosquitoSystemItem> = listOf(

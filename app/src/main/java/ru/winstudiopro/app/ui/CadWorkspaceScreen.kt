@@ -75,6 +75,8 @@ internal fun CadEditorWorkspaceScreen(
     hardwareBrandsCatalog: List<HardwareBrandItem>,
     extraAccessoriesCatalog: List<ExtraAccessoryItem>,
     workServicesCatalog: List<WorkServiceItem>,
+    assemblyPricingCatalog: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog(),
+    orderExtraServicesCatalog: List<OrderExtraServiceItem> = DefaultCatalogs.defaultOrderExtraServices(),
     stockRemnants: List<StockRemnantBar> = emptyList(),
     uiSettings: AppUiSettings,
     onSelectWindowIndex: (Int) -> Unit,
@@ -109,7 +111,7 @@ internal fun CadEditorWorkspaceScreen(
         legacyColorCatalog = colorCatalog
     )
 
-    // Расчёт всех конструкций текущего заказа в реальном времени (включая сухари, разное и работы из прайса)
+    // Расчёт всех конструкций текущего заказа в реальном времени (включая сборку, сухари, разное и монтаж из прайса)
     val allWindowResults = remember(
         order,
         profileSystems,
@@ -118,7 +120,8 @@ internal fun CadEditorWorkspaceScreen(
         sillsCatalog,
         extraAccessoriesCatalog,
         workServicesCatalog,
-        hardwareBrandsCatalog
+        hardwareBrandsCatalog,
+        assemblyPricingCatalog
     ) {
         order.windows.mapIndexed { idx, win ->
             WindowBomAndCostEngine.calculateWindow(
@@ -130,11 +133,25 @@ internal fun CadEditorWorkspaceScreen(
                 extraAccessoriesCatalog = extraAccessoriesCatalog,
                 workServicesCatalog = workServicesCatalog,
                 hardwareBrandsCatalog = hardwareBrandsCatalog,
+                assemblyPricingCatalog = assemblyPricingCatalog,
                 windowIndexInOrder = idx + 1
             )
         }
     }
     val currentCalcResult = allWindowResults.getOrNull(activeWindowIndex)
+    val orderFinancialSummary = remember(
+        order,
+        allWindowResults,
+        assemblyPricingCatalog,
+        orderExtraServicesCatalog
+    ) {
+        WindowBomAndCostEngine.calculateOrderFinancialSummary(
+            order = order,
+            windowResults = allWindowResults,
+            assemblyPricingCatalog = assemblyPricingCatalog,
+            orderExtraServicesCatalog = orderExtraServicesCatalog
+        )
+    }
 
     // Диалоги и панели
     var showLeftBlueMenu by remember { mutableStateOf(false) }
@@ -221,7 +238,8 @@ internal fun CadEditorWorkspaceScreen(
         applyColors: Boolean = true,
         applyHardware: Boolean = true,
         applyFinancials: Boolean = true,
-        applyExtrasAndWorks: Boolean = true
+        applyExtrasAndWorks: Boolean = true,
+        applyAssemblyScheme: Boolean = false
     ) {
         val updatedWindows = windows.map { win ->
             win.copy(
@@ -239,7 +257,8 @@ internal fun CadEditorWorkspaceScreen(
                 mosquitoSystemId = if (applyHardware) currentWindow.mosquitoSystemId else win.mosquitoSystemId,
                 financialSchemeId = if (applyFinancials) currentWindow.financialSchemeId else win.financialSchemeId,
                 selectedExtraIds = if (applyExtrasAndWorks) currentWindow.selectedExtraIds else win.selectedExtraIds,
-                selectedWorkIds = if (applyExtrasAndWorks) currentWindow.selectedWorkIds else win.selectedWorkIds
+                selectedWorkIds = if (applyExtrasAndWorks) currentWindow.selectedWorkIds else win.selectedWorkIds,
+                assemblySchemeOverride = if (applyAssemblyScheme) currentWindow.assemblySchemeOverride else win.assemblySchemeOverride
             )
         }
         onUpdateOrder(order.copy(windows = updatedWindows, customCuttingAllocations = null))
@@ -672,6 +691,7 @@ internal fun CadEditorWorkspaceScreen(
                     currentResult = currentCalcResult,
                     allResults = allWindowResults,
                     order = order,
+                    orderFinancialSummary = orderFinancialSummary,
                     onClickTotal = { showRightSettingsDrawer = true }
                 )
             }
@@ -1018,19 +1038,23 @@ internal fun CadEditorWorkspaceScreen(
                         hardwareBrands = hardwareBrandsCatalog,
                         extraAccessories = extraAccessoriesCatalog,
                         workServices = workServicesCatalog,
+                        assemblyPricingCatalog = assemblyPricingCatalog,
+                        orderExtraServicesCatalog = orderExtraServicesCatalog,
                         onUpdateWindow = { updatedWin -> updateCurrentWindow { updatedWin } },
+                        onUpdateOrder = { updatedOrder -> onUpdateOrder(updatedOrder) },
                         onOpenManualPriceNumpad = { showManualPriceNumpad = true },
                         onUpdateOrderDiscount = { newDiscount, newVat ->
                             onUpdateOrder(order.copy(discountPercent = newDiscount, taxVatPercent = newVat))
                         },
-                        onApplyToAllWindows = { applyProf, applyGlz, applyClr, applyHw, applyFin, applyExtWrk ->
+                        onApplyToAllWindows = { applyProf, applyGlz, applyClr, applyHw, applyFin, applyExtWrk, applyAsm ->
                             applySettingsToAllWindowsInOrder(
                                 applyProfile = applyProf,
                                 applyGlazing = applyGlz,
                                 applyColors = applyClr,
                                 applyHardware = applyHw,
                                 applyFinancials = applyFin,
-                                applyExtrasAndWorks = applyExtWrk
+                                applyExtrasAndWorks = applyExtWrk,
+                                applyAssemblyScheme = applyAsm
                             )
                         },
                         onClose = { showRightSettingsDrawer = false }
@@ -1214,6 +1238,8 @@ internal fun CadEditorWorkspaceScreen(
             extraAccessoriesCatalog = extraAccessoriesCatalog,
             workServicesCatalog = workServicesCatalog,
             hardwareBrandsCatalog = hardwareBrandsCatalog,
+            assemblyPricingCatalog = assemblyPricingCatalog,
+            orderExtraServicesCatalog = orderExtraServicesCatalog,
             onSwitchMode = { previewReportMode = it },
             onDismiss = { previewReportMode = null },
             onOpenPdfFile = { file, title ->
@@ -1271,6 +1297,7 @@ private fun DynamicBottomCostScrollBar(
     currentResult: WindowCalculationResult,
     allResults: List<WindowCalculationResult>,
     order: CustomerOrder,
+    orderFinancialSummary: OrderFinancialSummary,
     onClickTotal: () -> Unit
 ) {
     val palette = LocalWinStudioPalette.current
@@ -1281,14 +1308,16 @@ private fun DynamicBottomCostScrollBar(
     fun fmt2(v: Double): String = String.format(Locale.US, "%.2f", v)
 
     data class CostColumnData(
+        val tagKey: String,
         val header: String,
         val winTop: String,
         val winBottom: String,
         val allTop: String,
-        val allBottom: String
+        val allBottom: String,
+        val emphasizeValue: Boolean = false
     )
 
-    val columns = remember(currentResult, allResults, cur, strings) {
+    val columns = remember(currentResult, allResults, orderFinancialSummary, cur, strings) {
         val winArea = currentResult.totalAreaM2 * curQty
         val allArea = allResults.sumOf { it.totalAreaM2 * it.windowItem.quantity }
 
@@ -1343,52 +1372,58 @@ private fun DynamicBottomCostScrollBar(
         val winExtCost = currentResult.costExtrasOnly * curQty
         val allExtCost = allResults.sumOf { it.costExtrasOnly * it.windowItem.quantity }
 
-        val winWrkCost = currentResult.costWorksOnly * curQty
-        val allWrkCost = allResults.sumOf { it.costWorksOnly * it.windowItem.quantity }
+        val winInstallCost = currentResult.costInstallation * curQty
+        val allInstallCost = orderFinancialSummary.totalInstallationCost
+
+        val winAssemblyCost = currentResult.costAssembly * curQty
+        val allAssemblyCost = orderFinancialSummary.totalAssemblyWithFloorAndOps
+
+        val allOrderServicesCost = orderFinancialSummary.totalOrderServicesCost
 
         val winPaintCost = currentResult.costCustomPainting
         val allPaintCost = allResults.sumOf { it.costCustomPainting }
 
+        val winPrimeCost = currentResult.unitPrimeCost * curQty + winPaintCost
+        val allPrimeCost = orderFinancialSummary.orderPrimeCost
+
         buildList {
-            add(CostColumnData(strings.colArea, "${fmt2(winArea)} m2", "", "${fmt2(allArea)} m2", ""))
-            add(CostColumnData(strings.colFrames, "${fmt2(winFrameM)} m", "${fmt2(winFrameCost)} $cur", "${fmt2(allFrameM)} m", "${fmt2(allFrameCost)} $cur"))
-            add(CostColumnData(strings.colImposts, "${fmt2(winImpM)} m", "${fmt2(winImpCost)} $cur", "${fmt2(allImpM)} m", "${fmt2(allImpCost)} $cur"))
-            add(CostColumnData(strings.colSashes, "${fmt2(winSashM)} m", "${fmt2(winSashCost)} $cur", "${fmt2(allSashM)} m", "${fmt2(allSashCost)} $cur"))
-            add(CostColumnData(strings.colDoorSashes, "${fmt2(winDoorM)} m", "${fmt2(winDoorCost)} $cur", "${fmt2(allDoorM)} m", "${fmt2(allDoorCost)} $cur"))
-            add(CostColumnData(strings.colCleats, "$winCornersCnt ${strings.setsShort}", "${fmt2(winCornersCost)} $cur", "$allCornersCnt ${strings.setsShort}", "${fmt2(allCornersCost)} $cur"))
-            add(CostColumnData(strings.colShtapik, "${fmt2(winShtM)} m", "${fmt2(winShtCost)} $cur", "${fmt2(allShtM)} m", "${fmt2(allShtCost)} $cur"))
-            add(CostColumnData(strings.colRubber, "${fmt2(winRubM)} m", "${fmt2(winRubCost)} $cur", "${fmt2(allRubM)} m", "${fmt2(allRubCost)} $cur"))
-            add(CostColumnData(strings.colGlass, "${fmt2(winGlzM2)} m2", "${fmt2(winGlzCost)} $cur", "${fmt2(allGlzM2)} m2", "${fmt2(allGlzCost)} $cur"))
-            add(CostColumnData(strings.colSandwich, "${fmt2(winSandM2)} m2", "${fmt2(winSandCost)} $cur", "${fmt2(allSandM2)} m2", "${fmt2(allSandCost)} $cur"))
-            add(CostColumnData(strings.colHardware, "${fmt2(winHwCost)} $cur", "", "${fmt2(allHwCost)} $cur", ""))
-            add(CostColumnData(strings.colExtras, "${fmt2(winExtCost)} $cur", "", "${fmt2(allExtCost)} $cur", ""))
-            add(CostColumnData(strings.colWorks, "${fmt2(winWrkCost)} $cur", "", "${fmt2(allWrkCost)} $cur", ""))
+            add(CostColumnData("area", strings.colArea, "${fmt2(winArea)} m2", "", "${fmt2(allArea)} m2", ""))
+            add(CostColumnData("frames", strings.colFrames, "${fmt2(winFrameM)} m", "${fmt2(winFrameCost)} $cur", "${fmt2(allFrameM)} m", "${fmt2(allFrameCost)} $cur"))
+            add(CostColumnData("imposts", strings.colImposts, "${fmt2(winImpM)} m", "${fmt2(winImpCost)} $cur", "${fmt2(allImpM)} m", "${fmt2(allImpCost)} $cur"))
+            add(CostColumnData("sashes", strings.colSashes, "${fmt2(winSashM)} m", "${fmt2(winSashCost)} $cur", "${fmt2(allSashM)} m", "${fmt2(allSashCost)} $cur"))
+            add(CostColumnData("doors", strings.colDoorSashes, "${fmt2(winDoorM)} m", "${fmt2(winDoorCost)} $cur", "${fmt2(allDoorM)} m", "${fmt2(allDoorCost)} $cur"))
+            add(CostColumnData("cleats", strings.colCleats, "$winCornersCnt ${strings.setsShort}", "${fmt2(winCornersCost)} $cur", "$allCornersCnt ${strings.setsShort}", "${fmt2(allCornersCost)} $cur"))
+            add(CostColumnData("shtapik", strings.colShtapik, "${fmt2(winShtM)} m", "${fmt2(winShtCost)} $cur", "${fmt2(allShtM)} m", "${fmt2(allShtCost)} $cur"))
+            add(CostColumnData("rubber", strings.colRubber, "${fmt2(winRubM)} m", "${fmt2(winRubCost)} $cur", "${fmt2(allRubM)} m", "${fmt2(allRubCost)} $cur"))
+            add(CostColumnData("glass", strings.colGlass, "${fmt2(winGlzM2)} m2", "${fmt2(winGlzCost)} $cur", "${fmt2(allGlzM2)} m2", "${fmt2(allGlzCost)} $cur"))
+            add(CostColumnData("sandwich", strings.colSandwich, "${fmt2(winSandM2)} m2", "${fmt2(winSandCost)} $cur", "${fmt2(allSandM2)} m2", "${fmt2(allSandCost)} $cur"))
+            add(CostColumnData("hardware", strings.colHardware, "${fmt2(winHwCost)} $cur", "", "${fmt2(allHwCost)} $cur", ""))
+            add(CostColumnData("extras", strings.colExtras, "${fmt2(winExtCost)} $cur", "", "${fmt2(allExtCost)} $cur", ""))
+            add(CostColumnData("works", strings.colWorks, "${fmt2(winInstallCost)} $cur", "", "${fmt2(allInstallCost)} $cur", ""))
+            add(CostColumnData("assembly", strings.colAssembly, "${fmt2(winAssemblyCost)} $cur", "", "${fmt2(allAssemblyCost)} $cur", ""))
+            add(CostColumnData("order_services", strings.colOrderServices, "—", "", "${fmt2(allOrderServicesCost)} $cur", ""))
             if (allPaintCost > 0.0 || winPaintCost > 0.0) {
-                add(CostColumnData(strings.colPainting, "${fmt2(winPaintCost)} $cur", "", "${fmt2(allPaintCost)} $cur", ""))
+                add(CostColumnData("painting", strings.colPainting, "${fmt2(winPaintCost)} $cur", "", "${fmt2(allPaintCost)} $cur", ""))
             }
+            add(CostColumnData("prime_cost", strings.colPrimeCost, "${fmt2(winPrimeCost)} $cur", "", "${fmt2(allPrimeCost)} $cur", "", emphasizeValue = true))
         }
     }
 
     val isManualPrice = currentResult.windowItem.manualUnitPriceOverride != null
     val discPct = if (currentResult.discountPercentApplied > 0.0) currentResult.discountPercentApplied else order.discountPercent
-    val winBaseTotal = (currentResult.windowItem.manualUnitPriceOverride ?: currentResult.rawUnitCostBeforeDiscount) * curQty + currentResult.costCustomPainting
-    val winFinalTotal = (currentResult.windowItem.manualUnitPriceOverride ?: currentResult.rawUnitCostBeforeDiscount) * curQty * (1.0 - discPct / 100.0) + currentResult.costCustomPainting
+    val winUnitBase = currentResult.windowItem.manualUnitPriceOverride ?: currentResult.rawUnitCostBeforeDiscount
+    val winSaleAfterDiscount = winUnitBase * curQty * (1.0 - discPct / 100.0) + currentResult.costCustomPainting
+    val winSaleWithVat = winSaleAfterDiscount * (1.0 + order.taxVatPercent / 100.0)
 
-    val orderBaseTotal = allResults.sumOf {
-        val u = it.windowItem.manualUnitPriceOverride ?: it.rawUnitCostBeforeDiscount
-        u * it.windowItem.quantity + it.costCustomPainting
-    }
-    val orderDiscountedTotal = allResults.sumOf {
-        val d = if (it.discountPercentApplied > 0.0) it.discountPercentApplied else order.discountPercent
-        val u = it.windowItem.manualUnitPriceOverride ?: it.rawUnitCostBeforeDiscount
-        u * (1.0 - d / 100.0) * it.windowItem.quantity + it.costCustomPainting
-    }
+    val orderSaleAfterDiscount = orderFinancialSummary.orderSaleAfterDiscountBeforeVat
+    val orderTotalWithVat = orderFinancialSummary.totalWithVat
 
     Surface(
         color = palette.costBarBg,
         modifier = Modifier
             .fillMaxWidth()
-            .height(60.dp)
+            .height(76.dp)
+            .testTag("cad_cost_bar")
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             HorizontalDivider(color = palette.divider, thickness = 0.7.dp)
@@ -1399,13 +1434,13 @@ private fun DynamicBottomCostScrollBar(
                 // Левая фиксированная колонка меток строк ("окно" / "все окна")
                 Column(
                     modifier = Modifier
-                        .width(60.dp)
+                        .width(64.dp)
                         .fillMaxHeight()
                         .background(palette.costBarSideBg)
-                        .padding(horizontal = 5.dp),
-                    verticalArrangement = Arrangement.SpaceEvenly
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                    verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(11.dp))
                     Text(strings.rowWindow, color = palette.textSecondary, fontSize = 9.5.sp, maxLines = 1, fontWeight = FontWeight.Medium)
                     Text(strings.rowAllWindows, color = palette.textSecondary, fontSize = 9.5.sp, maxLines = 1, fontWeight = FontWeight.Medium)
                 }
@@ -1416,33 +1451,50 @@ private fun DynamicBottomCostScrollBar(
                         .weight(1f)
                         .fillMaxHeight()
                         .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 4.dp),
+                        .padding(horizontal = 4.dp)
+                        .testTag("cad_cost_scroll_row"),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     columns.forEach { col ->
                         Column(
                             modifier = Modifier
-                                .width(80.dp)
+                                .width(84.dp)
                                 .fillMaxHeight()
-                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                                .padding(horizontal = 4.dp, vertical = 3.dp)
+                                .testTag("cad_cost_col_${col.tagKey}"),
                             horizontalAlignment = Alignment.End,
                             verticalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
                                 text = col.header,
-                                color = palette.textSecondary,
+                                color = if (col.emphasizeValue) palette.accentOrange else palette.textSecondary,
                                 fontSize = 9.sp,
+                                fontWeight = if (col.emphasizeValue) FontWeight.SemiBold else FontWeight.Normal,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                             Column(horizontalAlignment = Alignment.End) {
-                                Text(col.winTop, color = palette.textPrimary, fontSize = 8.5.sp, fontWeight = FontWeight.Medium, lineHeight = 9.5.sp, maxLines = 1)
+                                Text(
+                                    text = col.winTop,
+                                    color = if (col.emphasizeValue) palette.accentOrange else palette.textPrimary,
+                                    fontSize = 9.sp,
+                                    fontWeight = if (col.emphasizeValue) FontWeight.Bold else FontWeight.Medium,
+                                    lineHeight = 10.sp,
+                                    maxLines = 1
+                                )
                                 if (col.winBottom.isNotEmpty()) {
                                     Text(col.winBottom, color = palette.textSecondary, fontSize = 8.sp, lineHeight = 9.sp, maxLines = 1)
                                 }
                             }
                             Column(horizontalAlignment = Alignment.End) {
-                                Text(col.allTop, color = palette.textSecondary, fontSize = 8.5.sp, lineHeight = 9.5.sp, maxLines = 1)
+                                Text(
+                                    text = col.allTop,
+                                    color = if (col.emphasizeValue) palette.accentOrange.copy(alpha = 0.9f) else palette.textSecondary,
+                                    fontSize = 9.sp,
+                                    fontWeight = if (col.emphasizeValue) FontWeight.SemiBold else FontWeight.Normal,
+                                    lineHeight = 10.sp,
+                                    maxLines = 1
+                                )
                                 if (col.allBottom.isNotEmpty()) {
                                     Text(col.allBottom, color = palette.textSecondary.copy(alpha = 0.8f), fontSize = 8.sp, lineHeight = 9.sp, maxLines = 1)
                                 }
@@ -1452,10 +1504,10 @@ private fun DynamicBottomCostScrollBar(
                     }
                 }
 
-                // Правая закреплённая колонка "всего"
+                // Правая закреплённая колонка "всего" (Продажа / С НДС для окна и всего заказа)
                 Column(
                     modifier = Modifier
-                        .width(98.dp)
+                        .width(114.dp)
                         .fillMaxHeight()
                         .background(palette.costBarSideBg)
                         .clickable { onClickTotal() }
@@ -1467,39 +1519,40 @@ private fun DynamicBottomCostScrollBar(
                     Text(strings.colTotal, color = palette.accentBlue, fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
-                            text = "${fmt2(winBaseTotal)} $cur",
+                            text = "${fmt2(winSaleAfterDiscount)} $cur",
                             color = if (isManualPrice) palette.accentOrange else palette.textPrimary,
                             fontSize = 9.5.sp,
                             fontWeight = FontWeight.Bold,
-                            lineHeight = 10.sp,
+                            lineHeight = 10.5.sp,
                             maxLines = 1
                         )
-                        if (discPct > 0.0) {
+                        if (order.taxVatPercent > 0.0) {
                             Text(
-                                text = "${fmt2(winFinalTotal)} $cur",
+                                text = "с НДС ${fmt2(winSaleWithVat)} $cur",
                                 color = palette.accentGreen,
-                                fontSize = 8.5.sp,
+                                fontSize = 8.sp,
                                 fontWeight = FontWeight.Medium,
-                                lineHeight = 9.5.sp,
+                                lineHeight = 9.sp,
                                 maxLines = 1
                             )
                         }
                     }
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
-                            text = "${fmt2(orderBaseTotal)} $cur",
+                            text = "${fmt2(orderSaleAfterDiscount)} $cur",
                             color = palette.textSecondary,
                             fontSize = 9.sp,
                             fontWeight = FontWeight.SemiBold,
                             lineHeight = 10.sp,
                             maxLines = 1
                         )
-                        if (orderDiscountedTotal < orderBaseTotal - 0.01) {
+                        if (order.taxVatPercent > 0.0 || order.manualOrderTotalOverride != null) {
                             Text(
-                                text = "${fmt2(orderDiscountedTotal)} $cur",
-                                color = palette.accentGreen,
-                                fontSize = 8.5.sp,
-                                lineHeight = 9.5.sp,
+                                text = "с НДС ${fmt2(orderTotalWithVat)} $cur",
+                                color = if (order.manualOrderTotalOverride != null) palette.accentOrange else palette.accentGreen,
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                lineHeight = 9.sp,
                                 maxLines = 1
                             )
                         }
@@ -1567,7 +1620,10 @@ private fun RightWindowSettingsDrawerContent(
     hardwareBrands: List<HardwareBrandItem>,
     extraAccessories: List<ExtraAccessoryItem>,
     workServices: List<WorkServiceItem>,
+    assemblyPricingCatalog: AssemblyPricingCatalog,
+    orderExtraServicesCatalog: List<OrderExtraServiceItem>,
     onUpdateWindow: (WindowItem) -> Unit,
+    onUpdateOrder: (CustomerOrder) -> Unit,
     onOpenManualPriceNumpad: () -> Unit,
     onUpdateOrderDiscount: (Double, Double) -> Unit,
     onApplyToAllWindows: (
@@ -1576,7 +1632,8 @@ private fun RightWindowSettingsDrawerContent(
         applyColors: Boolean,
         applyHardware: Boolean,
         applyFinancials: Boolean,
-        applyExtrasAndWorks: Boolean
+        applyExtrasAndWorks: Boolean,
+        applyAssemblyScheme: Boolean
     ) -> Unit,
     onClose: () -> Unit
 ) {
@@ -1744,7 +1801,7 @@ private fun RightWindowSettingsDrawerContent(
             if (totalWindowsCount > 1) {
                 Button(
                     onClick = {
-                        onApplyToAllWindows(true, true, true, true, true, true)
+                        onApplyToAllWindows(true, true, true, true, true, true, true)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
                     shape = RoundedCornerShape(14.dp),
@@ -1765,7 +1822,7 @@ private fun RightWindowSettingsDrawerContent(
             DrawerGrayHeader(
                 title = strings.finSchemeLabel,
                 actionText = if (totalWindowsCount > 1) strings.applyShort else null,
-                onAction = { onApplyToAllWindows(false, false, false, false, true, false) }
+                onAction = { onApplyToAllWindows(false, false, false, false, true, false, false) }
             )
             financialSchemes.forEach { fin ->
                 val selected = windowItem.financialSchemeId == fin.id
@@ -1780,7 +1837,7 @@ private fun RightWindowSettingsDrawerContent(
             DrawerGrayHeader(
                 title = strings.windowSystemLabel,
                 actionText = if (totalWindowsCount > 1) strings.applyShort else null,
-                onAction = { onApplyToAllWindows(true, false, false, false, false, false) }
+                onAction = { onApplyToAllWindows(true, false, false, false, false, false, false) }
             )
             DrawerRadioOptionRow(
                 label = strings.notAccounted,
@@ -1817,7 +1874,7 @@ private fun RightWindowSettingsDrawerContent(
                 DrawerGrayHeader(
                     title = String.format(strings.shtapikLabelFormat, currentSysForShtapik.name),
                     actionText = if (totalWindowsCount > 1) strings.applyShort else null,
-                    onAction = { onApplyToAllWindows(true, false, false, false, false, false) }
+                    onAction = { onApplyToAllWindows(true, false, false, false, false, false, false) }
                 )
                 val activeGlzThickness = glazingCatalog.find { it.id == windowItem.glazingId }?.thicknessMm ?: 24
                 val effectiveShtId = windowItem.selectedShtapikId.takeIf { id ->
@@ -1871,7 +1928,7 @@ private fun RightWindowSettingsDrawerContent(
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.clickable {
-                                    onApplyToAllWindows(false, true, false, false, false, false)
+                                    onApplyToAllWindows(false, true, false, false, false, false, false)
                                 }
                             )
                         }
@@ -1917,7 +1974,7 @@ private fun RightWindowSettingsDrawerContent(
             DrawerGrayHeader(
                 title = strings.colorLabel,
                 actionText = if (totalWindowsCount > 1) strings.applyShort else null,
-                onAction = { onApplyToAllWindows(false, false, true, false, false, false) }
+                onAction = { onApplyToAllWindows(false, false, true, false, false, false, false) }
             )
             if (windowItem.profileSystemId == "none" || activeSysForColors == null) {
                 Text(
@@ -2054,7 +2111,7 @@ private fun RightWindowSettingsDrawerContent(
             DrawerGrayHeader(
                 title = strings.hardwareLabel,
                 actionText = if (totalWindowsCount > 1) strings.applyShort else null,
-                onAction = { onApplyToAllWindows(false, false, false, true, false, false) }
+                onAction = { onApplyToAllWindows(false, false, false, true, false, false, false) }
             )
             hardwareBrands.forEach { hw ->
                 val selected = windowItem.hardwareBrandId == hw.id
@@ -2070,7 +2127,7 @@ private fun RightWindowSettingsDrawerContent(
             DrawerGrayHeader(
                 title = strings.extrasLabel,
                 actionText = if (totalWindowsCount > 1) strings.applyShort else null,
-                onAction = { onApplyToAllWindows(false, false, false, false, false, true) }
+                onAction = { onApplyToAllWindows(false, false, false, false, false, true, false) }
             )
             extraAccessories.forEach { item ->
                 val checked = windowItem.selectedExtraIds.contains(item.id)
@@ -2085,11 +2142,11 @@ private fun RightWindowSettingsDrawerContent(
                 )
             }
 
-            // 10. РАБОТЫ
+            // 10. МОНТАЖ
             DrawerGrayHeader(
                 title = strings.worksLabel,
                 actionText = if (totalWindowsCount > 1) strings.applyShort else null,
-                onAction = { onApplyToAllWindows(false, false, false, false, false, true) }
+                onAction = { onApplyToAllWindows(false, false, false, false, false, true, false) }
             )
             workServices.forEach { item ->
                 val checked = windowItem.selectedWorkIds.contains(item.id)
@@ -2102,6 +2159,207 @@ private fun RightWindowSettingsDrawerContent(
                         onUpdateWindow(windowItem.copy(selectedWorkIds = next))
                     }
                 )
+            }
+
+            // 11. СБОРКА В ЦЕХУ (схема на окно + сборка на этаже и доп. операции на весь заказ)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("drawer_assembly_section"),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                DrawerGrayHeader(
+                    title = strings.assemblyLabel,
+                    actionText = if (totalWindowsCount > 1) strings.applyShort else null,
+                    onAction = { onApplyToAllWindows(false, false, false, false, false, false, true) }
+                )
+                DrawerRadioOptionRow(
+                    label = "По умолчанию (${assemblyPricingCatalog.defaultScheme.titleRu})",
+                    subtitle = "Активная схема каталога «Прайсы»",
+                    selected = windowItem.assemblySchemeOverride == null,
+                    modifier = Modifier.testTag("drawer_assembly_scheme_DEFAULT"),
+                    onClick = { onUpdateWindow(windowItem.copy(assemblySchemeOverride = null)) }
+                )
+                DrawerRadioOptionRow(
+                    label = AssemblySchemeType.OPERATIONS.titleRu,
+                    subtitle = "По операциям в $displayCurrency",
+                    selected = windowItem.assemblySchemeOverride == AssemblySchemeType.OPERATIONS,
+                    modifier = Modifier.testTag("drawer_assembly_scheme_OPERATIONS"),
+                    onClick = { onUpdateWindow(windowItem.copy(assemblySchemeOverride = AssemblySchemeType.OPERATIONS)) }
+                )
+                DrawerRadioOptionRow(
+                    label = AssemblySchemeType.PER_M2.titleRu,
+                    subtitle = "${String.format(Locale.US, "%.2f", assemblyPricingCatalog.ratePerM2)} $displayCurrency/м²",
+                    selected = windowItem.assemblySchemeOverride == AssemblySchemeType.PER_M2,
+                    modifier = Modifier.testTag("drawer_assembly_scheme_PER_M2"),
+                    onClick = { onUpdateWindow(windowItem.copy(assemblySchemeOverride = AssemblySchemeType.PER_M2)) }
+                )
+                DrawerRadioOptionRow(
+                    label = AssemblySchemeType.PER_METER.titleRu,
+                    subtitle = "${String.format(Locale.US, "%.2f", assemblyPricingCatalog.ratePerMeter)} $displayCurrency/м.п.",
+                    selected = windowItem.assemblySchemeOverride == AssemblySchemeType.PER_METER,
+                    modifier = Modifier.testTag("drawer_assembly_scheme_PER_METER"),
+                    onClick = { onUpdateWindow(windowItem.copy(assemblySchemeOverride = AssemblySchemeType.PER_METER)) }
+                )
+
+                Surface(
+                    color = palette.secondaryBackground.copy(alpha = 0.7f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "${strings.floorAssemblyLabel} (на весь заказ)",
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = palette.textPrimary
+                        )
+                        var floorCountText by remember(order.id, order.floorAssemblyCount) {
+                            mutableStateOf(if (order.floorAssemblyCount == 0) "" else order.floorAssemblyCount.toString())
+                        }
+                        OutlinedTextField(
+                            value = floorCountText,
+                            onValueChange = { raw ->
+                                floorCountText = raw.filter { it.isDigit() }
+                                val cnt = floorCountText.toIntOrNull()?.coerceAtLeast(0) ?: 0
+                                onUpdateOrder(order.copy(floorAssemblyCount = cnt))
+                            },
+                            label = { Text("Кол-во конструкций на этаже", fontSize = 11.sp) },
+                            placeholder = { Text("0") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            shape = RoundedCornerShape(10.dp),
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("drawer_floor_assembly_input")
+                        )
+                        val floorTotal = order.floorAssemblyCount.coerceAtLeast(0) * assemblyPricingCatalog.floorAssemblyRate
+                        Text(
+                            text = "Ставка: ${String.format(Locale.US, "%.2f", assemblyPricingCatalog.floorAssemblyRate)} $displayCurrency/шт • Итого: ${String.format(Locale.US, "%.2f", floorTotal)} $displayCurrency",
+                            fontSize = 10.5.sp,
+                            color = palette.textSecondary
+                        )
+
+                        var extraOpsText by remember(order.id) {
+                            mutableStateOf(if (order.extraAssemblyOpsCost == 0.0) "" else order.extraAssemblyOpsCost.toString().removeSuffix(".0"))
+                        }
+                        LaunchedEffect(order.extraAssemblyOpsCost) {
+                            val parsed = extraOpsText.replace(',', '.').toDoubleOrNull() ?: 0.0
+                            if (kotlin.math.abs(parsed - order.extraAssemblyOpsCost) > 0.001) {
+                                extraOpsText = if (order.extraAssemblyOpsCost == 0.0) "" else order.extraAssemblyOpsCost.toString().removeSuffix(".0")
+                            }
+                        }
+                        OutlinedTextField(
+                            value = extraOpsText,
+                            onValueChange = { raw ->
+                                extraOpsText = raw
+                                val parsed = raw.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+                                onUpdateOrder(order.copy(extraAssemblyOpsCost = parsed))
+                            },
+                            label = { Text("${strings.extraOpsCostLabel} ($displayCurrency)", fontSize = 11.sp) },
+                            placeholder = { Text("0.00") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            shape = RoundedCornerShape(10.dp),
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("drawer_extra_ops_cost_input")
+                        )
+                        OutlinedTextField(
+                            value = order.extraAssemblyOpsNote,
+                            onValueChange = { note ->
+                                onUpdateOrder(order.copy(extraAssemblyOpsNote = note))
+                            },
+                            label = { Text(strings.extraOpsNoteLabel, fontSize = 11.sp) },
+                            placeholder = { Text("Напр. нестандартный узел / усиление") },
+                            shape = RoundedCornerShape(10.dp),
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("drawer_extra_ops_note_input")
+                        )
+                    }
+                }
+            }
+
+            // 12. ДОПОЛНИТЕЛЬНЫЕ УСЛУГИ ЗАКАЗА (применяются ко всему заказу)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("drawer_order_services_section"),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                DrawerGrayHeader(title = strings.orderServicesLabel)
+                Text(
+                    text = "Выбранные услуги прибавляются ко всему заказу. Для любой отмеченной услуги можно задать сумму вручную.",
+                    fontSize = 10.5.sp,
+                    color = palette.textSecondary,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+                orderExtraServicesCatalog.forEach { service ->
+                    val existing = order.selectedOrderServices.find { it.serviceId == service.id }
+                    val isChecked = existing != null
+                    val effectivePrice = existing?.customPriceOverride ?: service.defaultPrice
+                    DrawerCheckboxOptionRow(
+                        label = service.name,
+                        subtitle = if (existing?.customPriceOverride != null) {
+                            "Сумма в заказе: ${String.format(Locale.US, "%.2f", effectivePrice)} $displayCurrency (в прайсе ${String.format(Locale.US, "%.2f", service.defaultPrice)})"
+                        } else {
+                            "${String.format(Locale.US, "%.2f", service.defaultPrice)} $displayCurrency (на весь заказ)"
+                        },
+                        checked = isChecked,
+                        modifier = Modifier.testTag("drawer_order_service_check_${service.id}"),
+                        onToggle = {
+                            val nextList = if (isChecked) {
+                                order.selectedOrderServices.filterNot { it.serviceId == service.id }
+                            } else {
+                                order.selectedOrderServices + SelectedOrderService(
+                                    serviceId = service.id,
+                                    customPriceOverride = null
+                                )
+                            }
+                            onUpdateOrder(order.copy(selectedOrderServices = nextList))
+                        }
+                    )
+                    if (isChecked) {
+                        var overrideText by remember(order.id, service.id, isChecked) {
+                            mutableStateOf(
+                                existing?.customPriceOverride?.toString()?.removeSuffix(".0") ?: ""
+                            )
+                        }
+                        OutlinedTextField(
+                            value = overrideText,
+                            onValueChange = { raw ->
+                                overrideText = raw
+                                val parsed = if (raw.isBlank()) {
+                                    null
+                                } else {
+                                    raw.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0)
+                                }
+                                val nextList = order.selectedOrderServices.map { sel ->
+                                    if (sel.serviceId == service.id) {
+                                        sel.copy(customPriceOverride = parsed)
+                                    } else {
+                                        sel
+                                    }
+                                }
+                                onUpdateOrder(order.copy(selectedOrderServices = nextList))
+                            },
+                            label = { Text("Инд. цена: ${service.name} ($displayCurrency)", fontSize = 10.5.sp) },
+                            placeholder = { Text("По прайсу: ${String.format(Locale.US, "%.2f", service.defaultPrice)}") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            shape = RoundedCornerShape(10.dp),
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 12.dp, bottom = 4.dp)
+                                .testTag("drawer_order_service_price_${service.id}")
+                        )
+                    }
+                }
             }
 
             // Общий НДС и скидка заказа
@@ -2214,11 +2472,12 @@ private fun DrawerRadioOptionRow(
     label: String,
     subtitle: String? = null,
     selected: Boolean,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val palette = LocalWinStudioPalette.current
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .clickable { onClick() }
@@ -2254,11 +2513,12 @@ private fun DrawerCheckboxOptionRow(
     label: String,
     subtitle: String? = null,
     checked: Boolean,
+    modifier: Modifier = Modifier,
     onToggle: () -> Unit
 ) {
     val palette = LocalWinStudioPalette.current
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .clickable { onToggle() }
@@ -2737,6 +2997,8 @@ private fun InAppReportPreviewDialog(
     extraAccessoriesCatalog: List<ExtraAccessoryItem>,
     workServicesCatalog: List<WorkServiceItem>,
     hardwareBrandsCatalog: List<HardwareBrandItem>,
+    assemblyPricingCatalog: AssemblyPricingCatalog,
+    orderExtraServicesCatalog: List<OrderExtraServiceItem>,
     onSwitchMode: (ClientPdfReportMode) -> Unit,
     onDismiss: () -> Unit,
     onOpenPdfFile: (File, String) -> Unit,
@@ -2747,7 +3009,17 @@ private fun InAppReportPreviewDialog(
     val strings = LocalAppStrings.current
 
     // Генерируем реальный PDF-файл выбранного режима и рендерим его страницы через Android PdfRenderer
-    val generatedPdfFile = remember(order, windowResults, mode, uiSettings, extraAccessoriesCatalog, workServicesCatalog, hardwareBrandsCatalog) {
+    val generatedPdfFile = remember(
+        order,
+        windowResults,
+        mode,
+        uiSettings,
+        extraAccessoriesCatalog,
+        workServicesCatalog,
+        hardwareBrandsCatalog,
+        assemblyPricingCatalog,
+        orderExtraServicesCatalog
+    ) {
         PdfReportGenerator.generateClientOrderPdf(
             context = context,
             order = order,
@@ -2757,7 +3029,9 @@ private fun InAppReportPreviewDialog(
             companyContacts = uiSettings.companyPhone,
             extraAccessoriesCatalog = extraAccessoriesCatalog,
             workServicesCatalog = workServicesCatalog,
-            hardwareBrandsCatalog = hardwareBrandsCatalog
+            hardwareBrandsCatalog = hardwareBrandsCatalog,
+            assemblyPricingCatalog = assemblyPricingCatalog,
+            orderExtraServicesCatalog = orderExtraServicesCatalog
         )
     }
 

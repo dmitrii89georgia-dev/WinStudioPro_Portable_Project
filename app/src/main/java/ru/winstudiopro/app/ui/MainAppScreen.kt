@@ -25,12 +25,14 @@ import ru.winstudiopro.app.data.AppStateStorage
 import ru.winstudiopro.app.data.PersistedAppState
 import ru.winstudiopro.app.domain.calculator.WarehouseInventoryHelper
 import ru.winstudiopro.app.domain.model.AppUiSettings
+import ru.winstudiopro.app.domain.model.AssemblyPricingCatalog
 import ru.winstudiopro.app.domain.model.ColorCatalogItem
 import ru.winstudiopro.app.domain.model.CustomerOrder
 import ru.winstudiopro.app.domain.model.DefaultCatalogs
 import ru.winstudiopro.app.domain.model.ExtraAccessoryItem
 import ru.winstudiopro.app.domain.model.GlazingCatalogItem
 import ru.winstudiopro.app.domain.model.HardwareBrandItem
+import ru.winstudiopro.app.domain.model.OrderExtraServiceItem
 import ru.winstudiopro.app.domain.model.OrderStatus
 import ru.winstudiopro.app.domain.model.ProfileSystemSpec
 import ru.winstudiopro.app.domain.model.StockRemnantBar
@@ -132,6 +134,8 @@ fun WinStudioProMainApp(
     var hardwareBrands by remember { mutableStateOf(initialPersisted.hardwareBrands) }
     var extraAccessories by remember { mutableStateOf(initialPersisted.extraAccessories) }
     var workServices by remember { mutableStateOf(initialPersisted.workServices) }
+    var assemblyPricing by remember { mutableStateOf(initialPersisted.assemblyPricing) }
+    var orderExtraServices by remember { mutableStateOf(initialPersisted.orderExtraServices) }
     val sillsCatalog = remember { DefaultCatalogs.defaultSills() }
 
     var screenMode by remember { mutableStateOf(AppScreenMode.METRO_HOME) }
@@ -163,7 +167,9 @@ fun WinStudioProMainApp(
                             colorCatalog = colorCatalog,
                             hardwareBrands = hardwareBrands,
                             extraAccessories = extraAccessories,
-                            workServices = workServices
+                            workServices = workServices,
+                            assemblyPricing = assemblyPricing,
+                            orderExtraServices = orderExtraServices
                         )
                     )
                     activeOrderId = importedOrder.id
@@ -196,6 +202,8 @@ fun WinStudioProMainApp(
                     hardwareBrands = newState.hardwareBrands
                     extraAccessories = newState.extraAccessories
                     workServices = newState.workServices
+                    assemblyPricing = newState.assemblyPricing
+                    orderExtraServices = newState.orderExtraServices
                     if (orders.isNotEmpty()) {
                         activeOrderId = orders.first().id
                         activeWindowIndex = 0
@@ -219,7 +227,9 @@ fun WinStudioProMainApp(
         newColors: List<ColorCatalogItem> = colorCatalog,
         newHardwareBrands: List<HardwareBrandItem> = hardwareBrands,
         newExtras: List<ExtraAccessoryItem> = extraAccessories,
-        newWorks: List<WorkServiceItem> = workServices
+        newWorks: List<WorkServiceItem> = workServices,
+        newAssemblyPricing: AssemblyPricingCatalog = assemblyPricing,
+        newOrderExtraServices: List<OrderExtraServiceItem> = orderExtraServices
     ) {
         profileSystems = newProfiles
         orders = newOrders
@@ -231,6 +241,8 @@ fun WinStudioProMainApp(
         hardwareBrands = newHardwareBrands
         extraAccessories = newExtras
         workServices = newWorks
+        assemblyPricing = newAssemblyPricing
+        orderExtraServices = newOrderExtraServices
         AppStateStorage.saveState(
             context = context,
             state = PersistedAppState(
@@ -243,7 +255,9 @@ fun WinStudioProMainApp(
                 colorCatalog = newColors,
                 hardwareBrands = newHardwareBrands,
                 extraAccessories = newExtras,
-                workServices = newWorks
+                workServices = newWorks,
+                assemblyPricing = newAssemblyPricing,
+                orderExtraServices = newOrderExtraServices
             )
         )
     }
@@ -407,6 +421,8 @@ fun WinStudioProMainApp(
                                 hardwareBrandsCatalog = hardwareBrands,
                                 extraAccessoriesCatalog = extraAccessories,
                                 workServicesCatalog = workServices,
+                                assemblyPricingCatalog = assemblyPricing,
+                                orderExtraServicesCatalog = orderExtraServices,
                                 stockRemnants = stockRemnants,
                                 uiSettings = uiSettings,
                                 onSelectWindowIndex = { idx -> activeWindowIndex = idx },
@@ -459,13 +475,17 @@ fun WinStudioProMainApp(
                             hardwareBrands = hardwareBrands,
                             extraAccessories = extraAccessories,
                             workServices = workServices,
+                            assemblyPricing = assemblyPricing,
+                            orderExtraServices = orderExtraServices,
                             currencySymbol = normalizeCurrencyDisplay(uiSettings.currencySymbol),
                             onBack = { screenMode = AppScreenMode.METRO_HOME },
                             onSaveProfiles = { updated -> persistAll(newProfiles = updated) },
                             onSaveGlazing = { updated -> persistAll(newGlazing = updated) },
                             onSaveHardware = { updated -> persistAll(newHardwareBrands = updated) },
                             onSaveExtras = { updated -> persistAll(newExtras = updated) },
-                            onSaveWorks = { updated -> persistAll(newWorks = updated) }
+                            onSaveWorks = { updated -> persistAll(newWorks = updated) },
+                            onSaveAssemblyPricing = { updated -> persistAll(newAssemblyPricing = updated) },
+                            onSaveOrderExtraServices = { updated -> persistAll(newOrderExtraServices = updated) }
                         )
                     }
 
