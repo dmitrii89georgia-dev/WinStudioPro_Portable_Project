@@ -40,7 +40,8 @@ private enum class PriceCatalogTab(val titleRu: String) {
     EXTRAS("Разное"),
     WORKS("Монтаж"),
     ASSEMBLY("Сборка"),
-    ORDER_SERVICES("Доп. услуги")
+    ORDER_SERVICES("Доп. услуги"),
+    FIN_SCHEME("Фин схема")
 }
 
 @Composable
@@ -52,6 +53,7 @@ internal fun PricesEditorScreen(
     workServices: List<WorkServiceItem>,
     assemblyPricing: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog(),
     orderExtraServices: List<OrderExtraServiceItem> = DefaultCatalogs.defaultOrderExtraServices(),
+    finSchemeSettings: FinSchemeSettings = FinSchemeSettings(),
     currencySymbol: String,
     onBack: () -> Unit,
     onSaveProfiles: (List<ProfileSystemSpec>) -> Unit,
@@ -60,7 +62,8 @@ internal fun PricesEditorScreen(
     onSaveExtras: (List<ExtraAccessoryItem>) -> Unit,
     onSaveWorks: (List<WorkServiceItem>) -> Unit,
     onSaveAssemblyPricing: (AssemblyPricingCatalog) -> Unit = {},
-    onSaveOrderExtraServices: (List<OrderExtraServiceItem>) -> Unit = {}
+    onSaveOrderExtraServices: (List<OrderExtraServiceItem>) -> Unit = {},
+    onSaveFinSchemeSettings: (FinSchemeSettings) -> Unit = {}
 ) {
     val palette = LocalWinStudioPalette.current
     val strings = LocalAppStrings.current
@@ -807,6 +810,17 @@ internal fun PricesEditorScreen(
                     }
                 )
             }
+
+            PriceCatalogTab.FIN_SCHEME -> {
+                FinSchemeTabContent(
+                    finSchemeSettings = finSchemeSettings,
+                    currencySymbol = currencySymbol,
+                    onSave = { updated ->
+                        onSaveFinSchemeSettings(updated)
+                        savedToast = "Настройки «Фин схема» сохранены (коэфф. ×${String.format(java.util.Locale.US, "%.2f", updated.baseMarkupMultiplier)})"
+                    }
+                )
+            }
         }
     }
 }
@@ -1344,3 +1358,360 @@ private fun EditablePriceRowCard(
         }
     }
 }
+
+@Composable
+private fun FinSchemeTabContent(
+    finSchemeSettings: FinSchemeSettings,
+    currencySymbol: String,
+    onSave: (FinSchemeSettings) -> Unit
+) {
+    val palette = LocalWinStudioPalette.current
+    var markupText by remember(finSchemeSettings) {
+        mutableStateOf(String.format(java.util.Locale.US, "%.2f", finSchemeSettings.baseMarkupMultiplier))
+    }
+    var markupPresets by remember(finSchemeSettings) {
+        mutableStateOf(finSchemeSettings.markupPresets)
+    }
+    var discountPresets by remember(finSchemeSettings) {
+        mutableStateOf(finSchemeSettings.discountPresets)
+    }
+    var defaultVatText by remember(finSchemeSettings) {
+        mutableStateOf(
+            if (finSchemeSettings.defaultVatPercent % 1.0 == 0.0) {
+                finSchemeSettings.defaultVatPercent.toInt().toString()
+            } else {
+                finSchemeSettings.defaultVatPercent.toString()
+            }
+        )
+    }
+    var warnBelowPrimeCost by remember(finSchemeSettings) {
+        mutableStateOf(finSchemeSettings.warnBelowPrimeCost)
+    }
+
+    var newDiscName by remember { mutableStateOf("") }
+    var newDiscPct by remember { mutableStateOf("") }
+    var newDiscDealer by remember { mutableStateOf(false) }
+
+    val parsedMarkup = markupText.replace(',', '.').toDoubleOrNull()?.coerceIn(1.0, 10.0)
+        ?: finSchemeSettings.baseMarkupMultiplier
+    val markupPct = ((parsedMarkup - 1.0) * 100.0).coerceAtLeast(0.0)
+    val parsedVat = defaultVatText.replace(',', '.').toDoubleOrNull()?.coerceIn(0.0, 50.0)
+        ?: finSchemeSettings.defaultVatPercent
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(14.dp)
+            .testTag("fin_scheme_scroll"),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // 1. Коэффициент наценки базовой цены
+        Surface(
+            color = palette.cardSurface,
+            shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(0.8.dp, palette.floatingBorder),
+            shadowElevation = if (palette.isDark) 0.dp else 2.dp
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Коэффициент наценки базовой цены",
+                    fontWeight = FontWeight.Bold,
+                    color = palette.accentBlue
+                )
+                Text(
+                    text = "Применяется ко всей себестоимости заказа (материалы + сборка + монтаж + услуги заказа). При 1.40 базовая цена продажи = Себестоимость × 1.40 (+40%).",
+                    fontSize = 11.5.sp,
+                    color = palette.textSecondary
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = markupText,
+                        onValueChange = { markupText = it },
+                        label = { Text("Коэффициент (напр. 1.40)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("fin_markup_multiplier_input"),
+                        singleLine = true
+                    )
+                    Surface(
+                        color = palette.accentBlue.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(0.8.dp, palette.accentBlue.copy(alpha = 0.35f))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text("Наценка", fontSize = 10.sp, color = palette.textSecondary)
+                            Text(
+                                text = "+${String.format(java.util.Locale.US, "%.0f", markupPct)}%",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = palette.accentBlue
+                            )
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    markupPresets.forEach { preset ->
+                        val isSel = kotlin.math.abs(parsedMarkup - preset) < 0.005
+                        FilterChip(
+                            selected = isSel,
+                            onClick = { markupText = String.format(java.util.Locale.US, "%.2f", preset) },
+                            label = {
+                                Text(
+                                    text = "×${String.format(java.util.Locale.US, "%.2f", preset)}",
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isSel) Color.White else palette.textPrimary
+                                )
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = palette.accentBlue,
+                                containerColor = palette.secondaryBackground
+                            ),
+                            modifier = Modifier.testTag("fin_markup_chip_${String.format(java.util.Locale.US, "%.2f", preset)}")
+                        )
+                    }
+                }
+                Surface(
+                    color = palette.secondaryBackground.copy(alpha = 0.75f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    val samplePrime = 100.0
+                    val sampleBase = samplePrime * parsedMarkup
+                    Text(
+                        text = "Пример: себестоимость 100.00 $currencySymbol → базовая цена для клиента ${String.format(java.util.Locale.US, "%.2f", sampleBase)} $currencySymbol",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = palette.textPrimary,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+            }
+        }
+
+        // 2. Пресеты скидок для быстрого выбора в заказе
+        Surface(
+            color = palette.cardSurface,
+            shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(0.8.dp, palette.floatingBorder),
+            shadowElevation = if (palette.isDark) 0.dp else 2.dp
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Пресеты скидок клиентам (быстрый выбор в шторке заказа)",
+                    fontWeight = FontWeight.Bold,
+                    color = palette.accentBlue
+                )
+                discountPresets.forEach { preset ->
+                    Surface(
+                        color = palette.secondaryBackground.copy(alpha = 0.65f),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = preset.name,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = palette.textPrimary
+                                )
+                                val tag = if (preset.isDealer) " • Дилер" else ""
+                                Text(
+                                    text = "Скидка ${preset.discountPercent.toInt()}%$tag",
+                                    fontSize = 11.sp,
+                                    color = if (preset.isDealer) palette.accentOrange else palette.textSecondary
+                                )
+                            }
+                            if (discountPresets.size > 1) {
+                                IconButton(
+                                    onClick = {
+                                        discountPresets = discountPresets.filterNot { it.id == preset.id }
+                                    },
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.DeleteOutline,
+                                        contentDescription = "Удалить пресет",
+                                        tint = palette.accentRed
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = palette.divider)
+                Text("Добавить пресет скидки", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = newDiscName,
+                        onValueChange = { newDiscName = it },
+                        label = { Text("Название (напр. Постоянный)") },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1.4f).testTag("fin_new_discount_name_input"),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = newDiscPct,
+                        onValueChange = { newDiscPct = it },
+                        label = { Text("%") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(0.7f).testTag("fin_new_discount_pct_input"),
+                        singleLine = true
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = newDiscDealer, onCheckedChange = { newDiscDealer = it })
+                        Text("Дилерская цена", fontSize = 12.sp, color = palette.textPrimary)
+                    }
+                    Button(
+                        onClick = {
+                            val pct = newDiscPct.replace(',', '.').toDoubleOrNull()?.coerceIn(0.0, 90.0) ?: return@Button
+                            val title = newDiscName.trim().ifBlank { "Скидка ${pct.toInt()}%" }
+                            discountPresets = discountPresets + DiscountPresetItem(
+                                id = "disc_${UUID.randomUUID().toString().take(6)}",
+                                name = title,
+                                discountPercent = pct,
+                                isDealer = newDiscDealer
+                            )
+                            newDiscName = ""
+                            newDiscPct = ""
+                            newDiscDealer = false
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                        modifier = Modifier.heightIn(min = 44.dp).testTag("fin_add_discount_button")
+                    ) {
+                        Text("+ Добавить", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+
+        // 3. НДС по умолчанию и контроль минимальной цены
+        Surface(
+            color = palette.cardSurface,
+            shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(0.8.dp, palette.floatingBorder),
+            shadowElevation = if (palette.isDark) 0.dp else 2.dp
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "НДС по умолчанию и контроль маржинальности",
+                    fontWeight = FontWeight.Bold,
+                    color = palette.accentBlue
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilterChip(
+                        selected = kotlin.math.abs(parsedVat - 0.0) < 0.01,
+                        onClick = { defaultVatText = "0" },
+                        label = { Text("Без НДС (0%)") },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.testTag("fin_vat_0_chip")
+                    )
+                    FilterChip(
+                        selected = kotlin.math.abs(parsedVat - 18.0) < 0.01,
+                        onClick = { defaultVatText = "18" },
+                        label = { Text("НДС 18%") },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.testTag("fin_vat_18_chip")
+                    )
+                    OutlinedTextField(
+                        value = defaultVatText,
+                        onValueChange = { defaultVatText = it },
+                        label = { Text("НДС %") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                }
+
+                HorizontalDivider(color = palette.divider)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Контроль минимальной цены",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = palette.textPrimary
+                        )
+                        Text(
+                            text = "Подсвечивать предупреждение в заказе, если цена после скидки опустилась ниже себестоимости",
+                            fontSize = 11.5.sp,
+                            color = palette.textSecondary
+                        )
+                    }
+                    Switch(
+                        checked = warnBelowPrimeCost,
+                        onCheckedChange = { warnBelowPrimeCost = it },
+                        modifier = Modifier.testTag("fin_warn_below_prime_switch"),
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = palette.accentGreen
+                        )
+                    )
+                }
+            }
+        }
+
+        Button(
+            onClick = {
+                val updatedPresets = (markupPresets + parsedMarkup).distinct().sorted()
+                onSave(
+                    finSchemeSettings.copy(
+                        baseMarkupMultiplier = parsedMarkup,
+                        markupPresets = updatedPresets,
+                        discountPresets = discountPresets,
+                        defaultVatPercent = parsedVat,
+                        warnBelowPrimeCost = warnBelowPrimeCost
+                    )
+                )
+            },
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .testTag("save_fin_scheme_button")
+        ) {
+            Text("Сохранить финансовую схему", color = Color.White, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+

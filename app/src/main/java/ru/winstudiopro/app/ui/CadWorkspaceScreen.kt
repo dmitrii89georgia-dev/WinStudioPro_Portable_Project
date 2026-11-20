@@ -77,6 +77,7 @@ internal fun CadEditorWorkspaceScreen(
     workServicesCatalog: List<WorkServiceItem>,
     assemblyPricingCatalog: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog(),
     orderExtraServicesCatalog: List<OrderExtraServiceItem> = DefaultCatalogs.defaultOrderExtraServices(),
+    finSchemeSettings: FinSchemeSettings = FinSchemeSettings(),
     stockRemnants: List<StockRemnantBar> = emptyList(),
     uiSettings: AppUiSettings,
     onSelectWindowIndex: (Int) -> Unit,
@@ -143,13 +144,15 @@ internal fun CadEditorWorkspaceScreen(
         order,
         allWindowResults,
         assemblyPricingCatalog,
-        orderExtraServicesCatalog
+        orderExtraServicesCatalog,
+        finSchemeSettings
     ) {
         WindowBomAndCostEngine.calculateOrderFinancialSummary(
             order = order,
             windowResults = allWindowResults,
             assemblyPricingCatalog = assemblyPricingCatalog,
-            orderExtraServicesCatalog = orderExtraServicesCatalog
+            orderExtraServicesCatalog = orderExtraServicesCatalog,
+            finSchemeSettings = finSchemeSettings
         )
     }
 
@@ -1040,6 +1043,8 @@ internal fun CadEditorWorkspaceScreen(
                         workServices = workServicesCatalog,
                         assemblyPricingCatalog = assemblyPricingCatalog,
                         orderExtraServicesCatalog = orderExtraServicesCatalog,
+                        finSchemeSettings = finSchemeSettings,
+                        orderFinancialSummary = orderFinancialSummary,
                         onUpdateWindow = { updatedWin -> updateCurrentWindow { updatedWin } },
                         onUpdateOrder = { updatedOrder -> onUpdateOrder(updatedOrder) },
                         onOpenManualPriceNumpad = { showManualPriceNumpad = true },
@@ -1240,6 +1245,7 @@ internal fun CadEditorWorkspaceScreen(
             hardwareBrandsCatalog = hardwareBrandsCatalog,
             assemblyPricingCatalog = assemblyPricingCatalog,
             orderExtraServicesCatalog = orderExtraServicesCatalog,
+            finSchemeSettings = finSchemeSettings,
             onSwitchMode = { previewReportMode = it },
             onDismiss = { previewReportMode = null },
             onOpenPdfFile = { file, title ->
@@ -1410,13 +1416,16 @@ private fun DynamicBottomCostScrollBar(
     }
 
     val isManualPrice = currentResult.windowItem.manualUnitPriceOverride != null
-    val discPct = if (currentResult.discountPercentApplied > 0.0) currentResult.discountPercentApplied else order.discountPercent
-    val winUnitBase = currentResult.windowItem.manualUnitPriceOverride ?: currentResult.rawUnitCostBeforeDiscount
-    val winSaleAfterDiscount = winUnitBase * curQty * (1.0 - discPct / 100.0) + currentResult.costCustomPainting
+    val winBreakdown = orderFinancialSummary.windowBreakdownFor(currentResult.windowItem.id)
+    val winSaleAfterDiscount = winBreakdown?.lineDiscountedSale
+        ?: ((currentResult.windowItem.manualUnitPriceOverride ?: currentResult.rawUnitCostBeforeDiscount) *
+            curQty * (1.0 - (if (currentResult.discountPercentApplied > 0.0) currentResult.discountPercentApplied else order.discountPercent) / 100.0) +
+            currentResult.costCustomPainting)
     val winSaleWithVat = winSaleAfterDiscount * (1.0 + order.taxVatPercent / 100.0)
 
     val orderSaleAfterDiscount = orderFinancialSummary.orderSaleAfterDiscountBeforeVat
     val orderTotalWithVat = orderFinancialSummary.totalWithVat
+    val isBelowPrime = orderFinancialSummary.isBelowPrimeCost
 
     Surface(
         color = palette.costBarBg,
@@ -1509,14 +1518,30 @@ private fun DynamicBottomCostScrollBar(
                     modifier = Modifier
                         .width(114.dp)
                         .fillMaxHeight()
-                        .background(palette.costBarSideBg)
+                        .background(
+                            if (isBelowPrime) palette.accentRed.copy(alpha = 0.14f) else palette.costBarSideBg
+                        )
                         .clickable { onClickTotal() }
                         .padding(horizontal = 7.dp, vertical = 3.dp)
                         .testTag("cad_cost_total_box"),
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(strings.colTotal, color = palette.accentBlue, fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        if (isBelowPrime) {
+                            Text(
+                                text = "ниже себест.!",
+                                color = palette.accentRed,
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.testTag("cad_below_prime_badge")
+                            )
+                        }
+                        Text(strings.colTotal, color = palette.accentBlue, fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
+                    }
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
                             text = "${fmt2(winSaleAfterDiscount)} $cur",
@@ -1540,7 +1565,7 @@ private fun DynamicBottomCostScrollBar(
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
                             text = "${fmt2(orderSaleAfterDiscount)} $cur",
-                            color = palette.textSecondary,
+                            color = if (isBelowPrime) palette.accentRed else palette.textSecondary,
                             fontSize = 9.sp,
                             fontWeight = FontWeight.SemiBold,
                             lineHeight = 10.sp,
@@ -1549,7 +1574,11 @@ private fun DynamicBottomCostScrollBar(
                         if (order.taxVatPercent > 0.0 || order.manualOrderTotalOverride != null) {
                             Text(
                                 text = "с НДС ${fmt2(orderTotalWithVat)} $cur",
-                                color = if (order.manualOrderTotalOverride != null) palette.accentOrange else palette.accentGreen,
+                                color = when {
+                                    isBelowPrime -> palette.accentRed
+                                    order.manualOrderTotalOverride != null -> palette.accentOrange
+                                    else -> palette.accentGreen
+                                },
                                 fontSize = 8.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 lineHeight = 9.sp,
@@ -1622,6 +1651,8 @@ private fun RightWindowSettingsDrawerContent(
     workServices: List<WorkServiceItem>,
     assemblyPricingCatalog: AssemblyPricingCatalog,
     orderExtraServicesCatalog: List<OrderExtraServiceItem>,
+    finSchemeSettings: FinSchemeSettings = FinSchemeSettings(),
+    orderFinancialSummary: OrderFinancialSummary,
     onUpdateWindow: (WindowItem) -> Unit,
     onUpdateOrder: (CustomerOrder) -> Unit,
     onOpenManualPriceNumpad: () -> Unit,
@@ -2364,6 +2395,35 @@ private fun RightWindowSettingsDrawerContent(
 
             // Общий НДС и скидка заказа
             DrawerGrayHeader(strings.vatAndDiscountLabel)
+            if (finSchemeSettings.discountPresets.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    finSchemeSettings.discountPresets.forEach { preset ->
+                        val isSel = kotlin.math.abs(order.discountPercent - preset.discountPercent) < 0.01
+                        FilterChip(
+                            selected = isSel,
+                            onClick = { onUpdateOrderDiscount(preset.discountPercent, order.taxVatPercent) },
+                            label = {
+                                Text(
+                                    text = if (preset.isDealer) "${preset.name} (${preset.discountPercent.toInt()}%)" else preset.name,
+                                    fontSize = 11.sp,
+                                    color = if (isSel) Color.White else palette.textPrimary
+                                )
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = if (preset.isDealer) palette.accentOrange else palette.accentBlue,
+                                containerColor = palette.secondaryBackground
+                            ),
+                            modifier = Modifier.testTag("drawer_discount_preset_${preset.discountPercent.toInt()}")
+                        )
+                    }
+                }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2392,6 +2452,43 @@ private fun RightWindowSettingsDrawerContent(
                     modifier = Modifier.weight(1f),
                     singleLine = true
                 )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = kotlin.math.abs(order.taxVatPercent - 0.0) < 0.01,
+                    onClick = { onUpdateOrderDiscount(order.discountPercent, 0.0) },
+                    label = { Text("Без НДС 0%", fontSize = 11.sp) },
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.testTag("drawer_vat_0_chip")
+                )
+                FilterChip(
+                    selected = kotlin.math.abs(order.taxVatPercent - 18.0) < 0.01,
+                    onClick = { onUpdateOrderDiscount(order.discountPercent, 18.0) },
+                    label = { Text("НДС 18%", fontSize = 11.sp) },
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.testTag("drawer_vat_18_chip")
+                )
+            }
+            if (orderFinancialSummary.isBelowPrimeCost) {
+                Surface(
+                    color = palette.accentRed.copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, palette.accentRed.copy(alpha = 0.55f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("drawer_below_prime_warning")
+                ) {
+                    Text(
+                        text = "⚠ Внимание: цена со скидкой (${String.format(Locale.US, "%.2f", orderFinancialSummary.orderSaleAfterDiscountBeforeVat)} $displayCurrency) ниже себестоимости заказа (${String.format(Locale.US, "%.2f", orderFinancialSummary.orderPrimeCost)} $displayCurrency)!",
+                        color = palette.accentRed,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
             }
         }
 
@@ -2999,6 +3096,7 @@ private fun InAppReportPreviewDialog(
     hardwareBrandsCatalog: List<HardwareBrandItem>,
     assemblyPricingCatalog: AssemblyPricingCatalog,
     orderExtraServicesCatalog: List<OrderExtraServiceItem>,
+    finSchemeSettings: FinSchemeSettings = FinSchemeSettings(),
     onSwitchMode: (ClientPdfReportMode) -> Unit,
     onDismiss: () -> Unit,
     onOpenPdfFile: (File, String) -> Unit,
@@ -3018,7 +3116,8 @@ private fun InAppReportPreviewDialog(
         workServicesCatalog,
         hardwareBrandsCatalog,
         assemblyPricingCatalog,
-        orderExtraServicesCatalog
+        orderExtraServicesCatalog,
+        finSchemeSettings
     ) {
         PdfReportGenerator.generateClientOrderPdf(
             context = context,
@@ -3027,11 +3126,13 @@ private fun InAppReportPreviewDialog(
             mode = mode,
             companyHeader = uiSettings.companyName,
             companyContacts = uiSettings.companyPhone,
+            companyAddress = uiSettings.companyAddress,
             extraAccessoriesCatalog = extraAccessoriesCatalog,
             workServicesCatalog = workServicesCatalog,
             hardwareBrandsCatalog = hardwareBrandsCatalog,
             assemblyPricingCatalog = assemblyPricingCatalog,
-            orderExtraServicesCatalog = orderExtraServicesCatalog
+            orderExtraServicesCatalog = orderExtraServicesCatalog,
+            finSchemeSettings = finSchemeSettings
         )
     }
 

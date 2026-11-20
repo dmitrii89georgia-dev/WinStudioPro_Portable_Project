@@ -26,10 +26,14 @@ import ru.winstudiopro.app.data.PersistedAppState
 import ru.winstudiopro.app.domain.calculator.WarehouseInventoryHelper
 import ru.winstudiopro.app.domain.model.AppUiSettings
 import ru.winstudiopro.app.domain.model.AssemblyPricingCatalog
+import ru.winstudiopro.app.domain.model.CashAccount
+import ru.winstudiopro.app.domain.model.CashExpenseCategory
+import ru.winstudiopro.app.domain.model.CashTransaction
 import ru.winstudiopro.app.domain.model.ColorCatalogItem
 import ru.winstudiopro.app.domain.model.CustomerOrder
 import ru.winstudiopro.app.domain.model.DefaultCatalogs
 import ru.winstudiopro.app.domain.model.ExtraAccessoryItem
+import ru.winstudiopro.app.domain.model.FinSchemeSettings
 import ru.winstudiopro.app.domain.model.GlazingCatalogItem
 import ru.winstudiopro.app.domain.model.HardwareBrandItem
 import ru.winstudiopro.app.domain.model.OrderExtraServiceItem
@@ -60,8 +64,10 @@ enum class AppScreenMode {
     CAD_WORKSPACE,       // 2D-редактор конструкций заказа
     ORDERS_LIST,         // Список всех заказов (от нового к старому, с поиском и миниатюрами)
     PROFILE_CONSTRUCTOR, // Конструктор профильных систем (геометрия в мм, допуски, формулы)
-    PRICES_SCREEN,       // Прайсы на системы, сухари, стеклопакеты, фурнитуру, разное и работы
+    PRICES_SCREEN,       // Прайсы на системы, сухари, стеклопакеты, фурнитуру, разное, работы и фин. схему
     WAREHOUSE_STOCK,     // Склад: папки по профильным системам (целые хлысты + деловые остатки)
+    CASH_MANAGER,        // Касса и счета (мультивалюта, история, категории расходов, зарплаты)
+    ANALYTICS_PULSE,     // Аналитика: пульс производства, графики выручки и маржи, KPI
     UI_SETTINGS,         // Настройки интерфейса и реквизитов компании для PDF
     WORKSHOP_CUTTING,    // Модуль задания в цех и линейного 1D-раскроя профилей
     GLAZING_ORDER_EDITOR,// Редактор «Заказ стеклопакетов» перед генерацией PDF
@@ -136,9 +142,14 @@ fun WinStudioProMainApp(
     var workServices by remember { mutableStateOf(initialPersisted.workServices) }
     var assemblyPricing by remember { mutableStateOf(initialPersisted.assemblyPricing) }
     var orderExtraServices by remember { mutableStateOf(initialPersisted.orderExtraServices) }
+    var finSchemeSettings by remember { mutableStateOf(initialPersisted.finSchemeSettings) }
+    var cashAccounts by remember { mutableStateOf(initialPersisted.cashAccounts) }
+    var cashTransactions by remember { mutableStateOf(initialPersisted.cashTransactions) }
+    var cashExpenseCategories by remember { mutableStateOf(initialPersisted.cashExpenseCategories) }
     val sillsCatalog = remember { DefaultCatalogs.defaultSills() }
 
     var screenMode by remember { mutableStateOf(AppScreenMode.METRO_HOME) }
+    var homeQuickOpMode by remember { mutableStateOf<CashQuickOpMode?>(null) }
     var activeOrderId by remember {
         mutableStateOf(orders.firstOrNull()?.id ?: "")
     }
@@ -169,7 +180,11 @@ fun WinStudioProMainApp(
                             extraAccessories = extraAccessories,
                             workServices = workServices,
                             assemblyPricing = assemblyPricing,
-                            orderExtraServices = orderExtraServices
+                            orderExtraServices = orderExtraServices,
+                            finSchemeSettings = finSchemeSettings,
+                            cashAccounts = cashAccounts,
+                            cashTransactions = cashTransactions,
+                            cashExpenseCategories = cashExpenseCategories
                         )
                     )
                     activeOrderId = importedOrder.id
@@ -204,6 +219,10 @@ fun WinStudioProMainApp(
                     workServices = newState.workServices
                     assemblyPricing = newState.assemblyPricing
                     orderExtraServices = newState.orderExtraServices
+                    finSchemeSettings = newState.finSchemeSettings
+                    cashAccounts = newState.cashAccounts
+                    cashTransactions = newState.cashTransactions
+                    cashExpenseCategories = newState.cashExpenseCategories
                     if (orders.isNotEmpty()) {
                         activeOrderId = orders.first().id
                         activeWindowIndex = 0
@@ -229,7 +248,11 @@ fun WinStudioProMainApp(
         newExtras: List<ExtraAccessoryItem> = extraAccessories,
         newWorks: List<WorkServiceItem> = workServices,
         newAssemblyPricing: AssemblyPricingCatalog = assemblyPricing,
-        newOrderExtraServices: List<OrderExtraServiceItem> = orderExtraServices
+        newOrderExtraServices: List<OrderExtraServiceItem> = orderExtraServices,
+        newFinSchemeSettings: FinSchemeSettings = finSchemeSettings,
+        newCashAccounts: List<CashAccount> = cashAccounts,
+        newCashTransactions: List<CashTransaction> = cashTransactions,
+        newCashExpenseCategories: List<CashExpenseCategory> = cashExpenseCategories
     ) {
         profileSystems = newProfiles
         orders = newOrders
@@ -243,6 +266,10 @@ fun WinStudioProMainApp(
         workServices = newWorks
         assemblyPricing = newAssemblyPricing
         orderExtraServices = newOrderExtraServices
+        finSchemeSettings = newFinSchemeSettings
+        cashAccounts = newCashAccounts
+        cashTransactions = newCashTransactions
+        cashExpenseCategories = newCashExpenseCategories
         AppStateStorage.saveState(
             context = context,
             state = PersistedAppState(
@@ -257,7 +284,11 @@ fun WinStudioProMainApp(
                 extraAccessories = newExtras,
                 workServices = newWorks,
                 assemblyPricing = newAssemblyPricing,
-                orderExtraServices = newOrderExtraServices
+                orderExtraServices = newOrderExtraServices,
+                finSchemeSettings = newFinSchemeSettings,
+                cashAccounts = newCashAccounts,
+                cashTransactions = newCashTransactions,
+                cashExpenseCategories = newCashExpenseCategories
             )
         )
     }
@@ -350,6 +381,7 @@ fun WinStudioProMainApp(
             createdDate = todayStr,
             currencySymbol = normalizeCurrencyDisplay(uiSettings.currencySymbol),
             status = OrderStatus.DRAFT,
+            taxVatPercent = finSchemeSettings.defaultVatPercent,
             windows = listOf(firstWindow)
         )
 
@@ -403,8 +435,73 @@ fun WinStudioProMainApp(
                             onOpenProfileConstructor = { screenMode = AppScreenMode.PROFILE_CONSTRUCTOR },
                             onOpenPrices = { screenMode = AppScreenMode.PRICES_SCREEN },
                             onOpenWarehouse = { screenMode = AppScreenMode.WAREHOUSE_STOCK },
-                            onOpenSettings = { screenMode = AppScreenMode.UI_SETTINGS }
+                            onOpenSettings = { screenMode = AppScreenMode.UI_SETTINGS },
+                            onOpenCash = { screenMode = AppScreenMode.CASH_MANAGER },
+                            onOpenAnalytics = { screenMode = AppScreenMode.ANALYTICS_PULSE },
+                            onQuickIncome = { homeQuickOpMode = CashQuickOpMode.INCOME },
+                            onQuickExpense = { homeQuickOpMode = CashQuickOpMode.EXPENSE },
+                            onQuickTransfer = { homeQuickOpMode = CashQuickOpMode.TRANSFER }
                         )
+
+                        when (homeQuickOpMode) {
+                            CashQuickOpMode.INCOME -> {
+                                val snapshots = rememberOrderLedgerSnapshots(
+                                    orders = orders,
+                                    profileSystems = profileSystems,
+                                    glazingCatalog = glazingCatalog,
+                                    colorCatalog = colorCatalog,
+                                    sillsCatalog = sillsCatalog,
+                                    extraAccessoriesCatalog = extraAccessories,
+                                    workServicesCatalog = workServices,
+                                    hardwareBrandsCatalog = hardwareBrands,
+                                    assemblyPricingCatalog = assemblyPricing,
+                                    orderExtraServicesCatalog = orderExtraServices,
+                                    finSchemeSettings = finSchemeSettings,
+                                    cashAccounts = cashAccounts,
+                                    cashTransactions = cashTransactions
+                                )
+                                QuickIncomeDialog(
+                                    cashAccounts = cashAccounts,
+                                    orderSnapshots = snapshots,
+                                    finSchemeSettings = finSchemeSettings,
+                                    onDismiss = { homeQuickOpMode = null },
+                                    onConfirmTransaction = { tx ->
+                                        persistAll(newCashTransactions = listOf(tx) + cashTransactions)
+                                        homeQuickOpMode = null
+                                        Toast.makeText(context, "Приход проведён", Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+                            }
+
+                            CashQuickOpMode.EXPENSE -> {
+                                QuickExpenseDialog(
+                                    cashAccounts = cashAccounts,
+                                    expenseCategories = cashExpenseCategories,
+                                    orders = orders,
+                                    onDismiss = { homeQuickOpMode = null },
+                                    onConfirmTransaction = { tx ->
+                                        persistAll(newCashTransactions = listOf(tx) + cashTransactions)
+                                        homeQuickOpMode = null
+                                        Toast.makeText(context, "Расход списан", Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+                            }
+
+                            CashQuickOpMode.TRANSFER -> {
+                                QuickTransferDialog(
+                                    cashAccounts = cashAccounts,
+                                    finSchemeSettings = finSchemeSettings,
+                                    onDismiss = { homeQuickOpMode = null },
+                                    onConfirmTransaction = { tx ->
+                                        persistAll(newCashTransactions = listOf(tx) + cashTransactions)
+                                        homeQuickOpMode = null
+                                        Toast.makeText(context, "Перевод выполнен", Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+                            }
+
+                            null -> Unit
+                        }
                     }
 
                     AppScreenMode.CAD_WORKSPACE -> {
@@ -423,6 +520,7 @@ fun WinStudioProMainApp(
                                 workServicesCatalog = workServices,
                                 assemblyPricingCatalog = assemblyPricing,
                                 orderExtraServicesCatalog = orderExtraServices,
+                                finSchemeSettings = finSchemeSettings,
                                 stockRemnants = stockRemnants,
                                 uiSettings = uiSettings,
                                 onSelectWindowIndex = { idx -> activeWindowIndex = idx },
@@ -477,6 +575,7 @@ fun WinStudioProMainApp(
                             workServices = workServices,
                             assemblyPricing = assemblyPricing,
                             orderExtraServices = orderExtraServices,
+                            finSchemeSettings = finSchemeSettings,
                             currencySymbol = normalizeCurrencyDisplay(uiSettings.currencySymbol),
                             onBack = { screenMode = AppScreenMode.METRO_HOME },
                             onSaveProfiles = { updated -> persistAll(newProfiles = updated) },
@@ -485,7 +584,8 @@ fun WinStudioProMainApp(
                             onSaveExtras = { updated -> persistAll(newExtras = updated) },
                             onSaveWorks = { updated -> persistAll(newWorks = updated) },
                             onSaveAssemblyPricing = { updated -> persistAll(newAssemblyPricing = updated) },
-                            onSaveOrderExtraServices = { updated -> persistAll(newOrderExtraServices = updated) }
+                            onSaveOrderExtraServices = { updated -> persistAll(newOrderExtraServices = updated) },
+                            onSaveFinSchemeSettings = { updated -> persistAll(newFinSchemeSettings = updated) }
                         )
                     }
 
@@ -497,6 +597,51 @@ fun WinStudioProMainApp(
                             onBack = { screenMode = AppScreenMode.METRO_HOME },
                             onSaveStock = { updated -> persistAll(newStock = updated) },
                             onSaveRubberStock = { updatedRubber -> persistAll(newStockRubber = updatedRubber) }
+                        )
+                    }
+
+                    AppScreenMode.CASH_MANAGER -> {
+                        CashManagerScreen(
+                            orders = orders,
+                            profileSystems = profileSystems,
+                            glazingCatalog = glazingCatalog,
+                            colorCatalog = colorCatalog,
+                            sillsCatalog = sillsCatalog,
+                            extraAccessoriesCatalog = extraAccessories,
+                            workServicesCatalog = workServices,
+                            hardwareBrandsCatalog = hardwareBrands,
+                            assemblyPricingCatalog = assemblyPricing,
+                            orderExtraServicesCatalog = orderExtraServices,
+                            finSchemeSettings = finSchemeSettings,
+                            cashAccounts = cashAccounts,
+                            cashTransactions = cashTransactions,
+                            cashExpenseCategories = cashExpenseCategories,
+                            onSaveFinSchemeSettings = { updated -> persistAll(newFinSchemeSettings = updated) },
+                            onSaveCashAccounts = { updated -> persistAll(newCashAccounts = updated) },
+                            onSaveCashTransactions = { updated -> persistAll(newCashTransactions = updated) },
+                            onSaveCashExpenseCategories = { updated -> persistAll(newCashExpenseCategories = updated) },
+                            onBack = { screenMode = AppScreenMode.METRO_HOME }
+                        )
+                    }
+
+                    AppScreenMode.ANALYTICS_PULSE -> {
+                        AnalyticsScreen(
+                            orders = orders,
+                            profileSystems = profileSystems,
+                            glazingCatalog = glazingCatalog,
+                            colorCatalog = colorCatalog,
+                            sillsCatalog = sillsCatalog,
+                            extraAccessoriesCatalog = extraAccessories,
+                            workServicesCatalog = workServices,
+                            hardwareBrandsCatalog = hardwareBrands,
+                            assemblyPricingCatalog = assemblyPricing,
+                            orderExtraServicesCatalog = orderExtraServices,
+                            finSchemeSettings = finSchemeSettings,
+                            cashAccounts = cashAccounts,
+                            cashTransactions = cashTransactions,
+                            onOpenOrdersList = { screenMode = AppScreenMode.ORDERS_LIST },
+                            onOpenCash = { screenMode = AppScreenMode.CASH_MANAGER },
+                            onBack = { screenMode = AppScreenMode.METRO_HOME }
                         )
                     }
 

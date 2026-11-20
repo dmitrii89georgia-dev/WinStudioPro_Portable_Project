@@ -47,11 +47,13 @@ object PdfReportGenerator {
         mode: ClientPdfReportMode = ClientPdfReportMode.COMMERCIAL_PROPOSAL,
         companyHeader: String = "WinStudio Pro",
         companyContacts: String = "",
+        companyAddress: String = "",
         extraAccessoriesCatalog: List<ExtraAccessoryItem> = DefaultCatalogs.defaultExtraAccessories(),
         workServicesCatalog: List<WorkServiceItem> = DefaultCatalogs.defaultWorkServices(),
         hardwareBrandsCatalog: List<HardwareBrandItem> = DefaultCatalogs.defaultHardwareBrands(),
         assemblyPricingCatalog: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog(),
-        orderExtraServicesCatalog: List<OrderExtraServiceItem> = DefaultCatalogs.defaultOrderExtraServices()
+        orderExtraServicesCatalog: List<OrderExtraServiceItem> = DefaultCatalogs.defaultOrderExtraServices(),
+        finSchemeSettings: FinSchemeSettings = FinSchemeSettings()
     ): File {
         val doc = PdfDocument()
 
@@ -132,12 +134,17 @@ object PdfReportGenerator {
         val halfW = contentW / 2f
 
         // Блок компании и номера заказа
-        val topBoxH = 38f
+        val topBoxH = if (companyAddress.isNotBlank() && companyContacts.isNotBlank()) 48f else 38f
         canvas.drawRect(RectF(MARGIN, y, MARGIN + halfW, y + topBoxH), thinLinePaint)
         canvas.drawRect(RectF(MARGIN + halfW, y, PAGE_W - MARGIN, y + topBoxH), thinLinePaint)
         canvas.drawText(companyHeader.ifBlank { "WinStudio Pro" }, MARGIN + 6f, y + 13f, boldPaint)
+        var compY = y + 25f
         if (companyContacts.isNotBlank()) {
-            canvas.drawText(companyContacts, MARGIN + 6f, y + 26f, smallPaint)
+            canvas.drawText("Тел: $companyContacts", MARGIN + 6f, compY, smallPaint)
+            compY += 11f
+        }
+        if (companyAddress.isNotBlank()) {
+            canvas.drawText("Адрес: $companyAddress".take(42), MARGIN + 6f, compY, smallPaint)
         }
         val ordTitle = "${order.orderNumber} (от ${order.createdDate})"
         canvas.drawText(
@@ -326,118 +333,117 @@ object PdfReportGenerator {
             }
 
             ClientPdfReportMode.COMMERCIAL_PROPOSAL -> {
-                // Коммерческое предложение: крупные блоки (по 2 на страницу) с чертежом, спецификацией и таблицей цен
-                windowResults.forEachIndexed { idx, res ->
-                    val wItem = res.windowItem
-                    val hasCustomPaint = res.costCustomPainting > 0.0
-                    val blockH = if (hasCustomPaint) 305.5f else 292f
-                    if (y + blockH > PAGE_H - 42f) {
+                // Лаконичное Коммерческое предложение: сетка 2 конструкции в ряд (без себестоимости, раскроя и лишних заголовков)
+                val finSummary = WindowBomAndCostEngine.calculateOrderFinancialSummary(
+                    order = order,
+                    windowResults = windowResults,
+                    assemblyPricingCatalog = assemblyPricingCatalog,
+                    orderExtraServicesCatalog = orderExtraServicesCatalog,
+                    finSchemeSettings = finSchemeSettings
+                )
+                val cur = normalizeCurrencyDisplay(order.currencySymbol)
+                val colGap = 8f
+                val colW = (contentW - colGap) / 2f
+                val cellH = 294f
+                val rowGap = 8f
+                val pairs = windowResults.chunked(2)
+
+                pairs.forEachIndexed { pairIdx, pair ->
+                    if (y + cellH > PAGE_H - 36f) {
                         startNewPage()
                     }
 
-                    val blockLeft = MARGIN
-                    val blockRight = PAGE_W - MARGIN
-                    val blockTop = y
-                    val blockBot = y + blockH
+                    pair.forEachIndexed { colIdx, res ->
+                        val globalIdx = pairIdx * 2 + colIdx + 1
+                        val wItem = res.windowItem
+                        val cellLeft = MARGIN + colIdx * (colW + colGap)
+                        val cellRight = cellLeft + colW
+                        val cellTop = y
+                        val cellBot = y + cellH
 
-                    canvas.drawRect(RectF(blockLeft, blockTop, blockRight, blockBot), borderPaint)
+                        canvas.drawRect(RectF(cellLeft, cellTop, cellRight, cellBot), borderPaint)
 
-                    // Верхняя полоса изделия: №1 слева | заметка справа
-                    val hdrH = 15f
-                    canvas.drawRect(RectF(blockLeft + 0.5f, blockTop + 0.5f, blockRight - 0.5f, blockTop + hdrH), cellHeaderBgPaint)
-                    canvas.drawLine(blockLeft, blockTop + hdrH, blockRight, blockTop + hdrH, thinLinePaint)
-                    canvas.drawText("№${idx + 1}", blockLeft + 6f, blockTop + 11f, boldPaint)
-                    if (wItem.note.isNotBlank()) {
-                        val noteStr = wItem.note.take(55)
-                        canvas.drawText(
-                            noteStr,
-                            blockRight - 6f - bodyPaint.measureText(noteStr),
-                            blockTop + 11f,
-                            bodyPaint
+                        val cellModel = buildCompactProposalCellModel(
+                            indexOneBased = globalIdx,
+                            order = order,
+                            res = res,
+                            finSummary = finSummary,
+                            extraAccessoriesCatalog = extraAccessoriesCatalog,
+                            hardwareBrandsCatalog = hardwareBrandsCatalog
                         )
-                    }
+                        // Шапка ячейки: только порядковый номер (№1, №2...) слева, габариты и кол-во справа
+                        val hdrH = 15f
+                        canvas.drawRect(
+                            RectF(cellLeft + 0.5f, cellTop + 0.5f, cellRight - 0.5f, cellTop + hdrH),
+                            cellHeaderBgPaint
+                        )
+                        canvas.drawLine(cellLeft, cellTop + hdrH, cellRight, cellTop + hdrH, thinLinePaint)
+                        canvas.drawText(cellModel.headerNumber, cellLeft + 5f, cellTop + 10.5f, boldPaint)
 
-                    val tableRowsCount = if (hasCustomPaint) 7 else 6
-                    val rowH = 13.5f
-                    val tableH = tableRowsCount * rowH
-                    val tableTop = blockBot - tableH
-                    val upperAreaBot = tableTop - 3f
+                        canvas.drawText(
+                            cellModel.headerDimsQty,
+                            cellRight - 5f - smallPaint.measureText(cellModel.headerDimsQty),
+                            cellTop + 10.5f,
+                            smallPaint
+                        )
 
-                    // Левая часть верхнего блока: векторный чертёж с цепочками размеров
-                    val sketchRight = blockLeft + contentW * 0.58f
-                    val sketchBox = RectF(
-                        blockLeft + 8f,
-                        blockTop + hdrH + 4f,
-                        sketchRight - 6f,
-                        upperAreaBot
-                    )
-                    val profColorHex = if (wItem.colorId == "none") 0xFFFFFFFFL else res.color.hexColor
-                    drawWindowTopologyVector(
-                        canvas = canvas,
-                        box = sketchBox,
-                        topology = wItem.topology,
-                        profile = res.profileSystem,
-                        profileColorHex = profColorHex,
-                        showClearOpeningSizes = false
-                    )
+                        // Миниатюра с общими и промежуточными размерами секций
+                        val sketchTop = cellTop + hdrH + 4f
+                        val sketchBot = sketchTop + 140f
+                        val sketchBox = RectF(
+                            cellLeft + 6f,
+                            sketchTop,
+                            cellRight - 6f,
+                            sketchBot
+                        )
+                        val profColorHex = if (wItem.colorId == "none") 0xFFFFFFFFL else res.color.hexColor
+                        drawWindowTopologyVector(
+                            canvas = canvas,
+                            box = sketchBox,
+                            topology = wItem.topology,
+                            profile = res.profileSystem,
+                            profileColorHex = profColorHex,
+                            showClearOpeningSizes = true
+                        )
 
-                    // Правая часть верхнего блока: спецификация с ●
-                    drawRightSpecsColumn(
-                        res = res,
-                        colLeft = sketchRight + 10f,
-                        colRight = blockRight - 6f,
-                        startY = blockTop + hdrH + 4f,
-                        maxBottomY = upperAreaBot,
-                        drawNoteInside = false
-                    )
+                        var infoY = sketchBot + 4f
+                        canvas.drawLine(cellLeft, infoY, cellRight, infoY, thinLinePaint)
+                        infoY += 10f
 
-                    // Таблица расчёта изделия
-                    val itemDiscPct = if (res.discountPercentApplied > 0.0) res.discountPercentApplied else order.discountPercent
-                    val unitBase = if (wItem.manualUnitPriceOverride != null) {
-                        wItem.manualUnitPriceOverride
-                    } else {
-                        (if (res.rawUnitCostBeforeDiscount > 0.0) res.rawUnitCostBeforeDiscount else res.unitTotalCost) *
-                            (1.0 + order.markupPercent / 100.0)
-                    }
-                    val unitDiscounted = unitBase * (1.0 - itemDiscPct / 100.0)
-                    val totalBase = unitBase * wItem.quantity + res.costCustomPainting
-                    val totalDiscounted = unitDiscounted * wItem.quantity + res.costCustomPainting
-                    val cur = order.currencySymbol
-
-                    val kpRows = buildList {
-                        add("площадь изделия" to "${fmt(res.totalAreaM2)} m2")
-                        add("цена" to "${fmtMoney2(unitBase)} $cur")
-                        add("цена со скидкой (-${fmtPct(itemDiscPct)}%)" to "${fmtMoney2(unitDiscounted)} $cur")
-                        add("количество конструкций" to "${wItem.quantity}")
-                        if (hasCustomPaint) {
-                            add("индивидуальная покраска профиля" to "${fmtMoney2(res.costCustomPainting)} $cur")
+                        // Информация о применённых материалах (сразу после миниатюры)
+                        cellModel.materialLines.take(3).forEach { matLine ->
+                            canvas.drawText(matLine.take(40), cellLeft + 6f, infoY, bodyPaint)
+                            infoY += 11f
                         }
-                        add("стоимость" to "${fmtMoney2(totalBase)} $cur")
-                        add("стоимость со скидкой" to "${fmtMoney2(totalDiscounted)} $cur")
-                    }
-
-                    val midColX = blockLeft + contentW * 0.65f
-                    kpRows.forEachIndexed { rIdx, (label, valStr) ->
-                        val rTop = tableTop + rIdx * rowH
-                        val rBot = rTop + rowH
-                        if (rIdx % 2 == 0) {
-                            canvas.drawRect(RectF(blockLeft + 0.5f, rTop, blockRight - 0.5f, rBot), cellHeaderBgPaint)
+                        cellModel.extraLines.forEach { exLine ->
+                            canvas.drawText(exLine.take(40), cellLeft + 6f, infoY, smallPaint)
+                            infoY += 10.5f
                         }
-                        canvas.drawLine(blockLeft, rTop, blockRight, rTop, thinLinePaint)
-                        canvas.drawLine(midColX, rTop, midColX, rBot, thinLinePaint)
 
-                        val isBoldRow = rIdx == kpRows.lastIndex
-                        val p = if (isBoldRow) boldPaint else bodyPaint
-                        canvas.drawText(label, midColX - 6f - bodyPaint.measureText(label), rTop + 10f, bodyPaint)
-                        canvas.drawText(valStr, blockRight - 6f - p.measureText(valStr), rTop + 10f, p)
+                        // Блок итоговых цифр «под ключ» в нижней части ячейки
+                        val pRowH = 14.5f
+                        val pTableTop = cellBot - cellModel.priceRows.size * pRowH
+                        val rowsList = cellModel.priceRows
+
+                        rowsList.forEachIndexed { rIdx, (lbl, vStr) ->
+                            val rTop = pTableTop + rIdx * pRowH
+                            val isLast = rIdx == rowsList.lastIndex
+                            if (isLast) {
+                                canvas.drawRect(RectF(cellLeft + 0.5f, rTop, cellRight - 0.5f, cellBot - 0.5f), grayBarPaint)
+                            }
+                            canvas.drawLine(cellLeft, rTop, cellRight, rTop, thinLinePaint)
+                            val lblP = if (isLast) boldPaint else smallPaint
+                            val valP = if (isLast) boldPaint else bodyPaint
+                            canvas.drawText(lbl, cellLeft + 6f, rTop + 10.5f, lblP)
+                            canvas.drawText(vStr, cellRight - 6f - valP.measureText(vStr), rTop + 10.5f, valP)
+                        }
                     }
-
-                    y += blockH + 8f
+                    y += cellH + rowGap
                 }
             }
         }
 
-        // Итоговый блок «Весь заказ» и «Подписи» (как в эталонных PDF)
+        // Итоговый блок «Весь заказ» и «Подписи»
         val neededFooterH = if (mode == ClientPdfReportMode.COMMERCIAL_PROPOSAL) 185f else 85f
         if (y + neededFooterH > PAGE_H - 30f) {
             startNewPage()
@@ -453,56 +459,22 @@ object PdfReportGenerator {
         y += 14f
 
         val summaryRows = mutableListOf<Pair<String, String>>()
-        summaryRows.add("количество конструкций" to "$totalConstructions")
-        summaryRows.add("общая квадратура конструкций" to "${fmt(totalArea)} m2")
-
         if (mode == ClientPdfReportMode.COMMERCIAL_PROPOSAL) {
-            val cur = order.currencySymbol
-            val finSummary = WindowBomAndCostEngine.calculateOrderFinancialSummary(
-                order = order,
-                windowResults = windowResults,
-                assemblyPricingCatalog = assemblyPricingCatalog,
-                orderExtraServicesCatalog = orderExtraServicesCatalog
+            summaryRows.addAll(
+                buildCompactProposalSummaryRows(
+                    order = order,
+                    windowResults = windowResults,
+                    assemblyPricingCatalog = assemblyPricingCatalog,
+                    orderExtraServicesCatalog = orderExtraServicesCatalog,
+                    finSchemeSettings = finSchemeSettings
+                )
             )
-            var sumRaw = 0.0
-            var sumDiscounted = 0.0
-            windowResults.forEach { res ->
-                val wItem = res.windowItem
-                val itemDiscPct = if (res.discountPercentApplied > 0.0) res.discountPercentApplied else order.discountPercent
-                val unitBase = wItem.manualUnitPriceOverride
-                    ?: ((if (res.rawUnitCostBeforeDiscount > 0.0) res.rawUnitCostBeforeDiscount else res.unitTotalCost) *
-                        (1.0 + order.markupPercent / 100.0))
-                val unitDisc = unitBase * (1.0 - itemDiscPct / 100.0)
-                sumRaw += unitBase * wItem.quantity + res.costCustomPainting
-                sumDiscounted += unitDisc * wItem.quantity + res.costCustomPainting
-            }
-            val orderExtraAssemblyOps = finSummary.floorAssemblyCost + finSummary.extraAssemblyOpsCost
-            val orderExtraServices = finSummary.totalOrderServicesCost
-            val orderLevelTotal = orderExtraAssemblyOps + orderExtraServices
-            sumRaw += orderLevelTotal
-            sumDiscounted += orderLevelTotal * (1.0 - order.discountPercent / 100.0)
-            if (order.discountPercent > 0.0 && windowResults.all { it.discountPercentApplied == 0.0 }) {
-                sumDiscounted = sumRaw * (1.0 - order.discountPercent / 100.0)
-            }
-            val discountAmount = (sumRaw - sumDiscounted).coerceAtLeast(0.0)
-            val effDiscPct = if (sumRaw > 0.0) (discountAmount / sumRaw) * 100.0 else 0.0
-            val vatAmount = sumDiscounted * (order.taxVatPercent / 100.0)
-            val finalTotal = order.manualOrderTotalOverride ?: (sumDiscounted + vatAmount)
-
-            if (orderExtraAssemblyOps > 0.0) {
-                summaryRows.add("сборка на этаже и доп. операции" to "${fmtMoney2(orderExtraAssemblyOps)} $cur")
-            }
-            if (orderExtraServices > 0.0) {
-                summaryRows.add("дополнительные услуги заказа" to "${fmtMoney2(orderExtraServices)} $cur")
-            }
-            summaryRows.add("общая цена" to "${fmtMoney2(sumRaw)} $cur")
-            summaryRows.add("общая скидка (-${fmtPct(effDiscPct)}%)" to "-${fmtMoney2(discountAmount)} $cur")
-            summaryRows.add("общая цена со скидкой" to "${fmtMoney2(sumDiscounted)} $cur")
-            summaryRows.add("НДС (${fmtPct(order.taxVatPercent)}%)" to "${fmtMoney2(vatAmount)} $cur")
-            summaryRows.add("ИТОГО (С НДС)" to "${fmtMoney2(finalTotal)} $cur")
+        } else {
+            summaryRows.add("Всего изделий (шт)" to "$totalConstructions")
+            summaryRows.add("Общая площадь (м²)" to "${fmt(totalArea)} м²")
         }
 
-        val sumRowH = 14f
+        val sumRowH = 15f
         val midX = MARGIN + contentW * 0.65f
         summaryRows.forEachIndexed { idx, (label, valStr) ->
             val rTop = y + idx * sumRowH
@@ -514,10 +486,18 @@ object PdfReportGenerator {
             canvas.drawLine(midX, rTop, midX, rBot, thinLinePaint)
             val isLast = idx == summaryRows.lastIndex && mode == ClientPdfReportMode.COMMERCIAL_PROPOSAL
             val p = if (isLast) boldPaint else bodyPaint
-            canvas.drawText(label, midX - 6f - p.measureText(label), rTop + 10f, p)
-            canvas.drawText(valStr, PAGE_W - MARGIN - 6f - p.measureText(valStr), rTop + 10f, p)
+            canvas.drawText(label, midX - 6f - p.measureText(label), rTop + 10.5f, p)
+            canvas.drawText(valStr, PAGE_W - MARGIN - 6f - p.measureText(valStr), rTop + 10.5f, p)
         }
-        y += summaryRows.size * sumRowH + 14f
+        y += summaryRows.size * sumRowH + 10f
+
+        if (mode == ClientPdfReportMode.COMMERCIAL_PROPOSAL) {
+            val payNote = "Ориентировочные условия оплаты: аванс 70%, окончательный расчёт после монтажа (30%)"
+            canvas.drawText(payNote, MARGIN, y + 8f, smallPaint)
+            y += 18f
+        } else {
+            y += 4f
+        }
 
         // Блок «Подписи»
         val sigTitle = "Подписи"
@@ -2089,6 +2069,109 @@ object PdfReportGenerator {
 
         val timeTag = SimpleDateFormat("HHmmss", Locale.US).format(Date()) + "_" + (System.currentTimeMillis() % 1000)
         return File(dir, "${prefix}_${safeNum}_${timeTag}.pdf")
+    }
+
+    data class CompactProposalCellModel(
+        val headerNumber: String,
+        val headerDimsQty: String,
+        val materialLines: List<String>,
+        val extraLines: List<String>,
+        val priceRows: List<Pair<String, String>>
+    )
+
+    fun buildCompactProposalCellModel(
+        indexOneBased: Int,
+        order: CustomerOrder,
+        res: WindowCalculationResult,
+        finSummary: OrderFinancialSummary,
+        extraAccessoriesCatalog: List<ExtraAccessoryItem> = DefaultCatalogs.defaultExtraAccessories(),
+        hardwareBrandsCatalog: List<HardwareBrandItem> = DefaultCatalogs.defaultHardwareBrands()
+    ): CompactProposalCellModel {
+        val cur = normalizeCurrencyDisplay(order.currencySymbol)
+        val wItem = res.windowItem
+        val headerNumber = "№$indexOneBased"
+        val headerDimsQty = "${wItem.topology.totalWidthMm.roundToInt()}×${wItem.topology.totalHeightMm.roundToInt()} мм • ${wItem.quantity} шт"
+
+        val profColor = if (wItem.colorId == "none") "" else " • ${res.color.name}"
+        val profLine = if (wItem.profileSystemId != "none") {
+            "Профиль: ${res.profileSystem.name}$profColor"
+        } else {
+            "Профиль: —"
+        }
+        val glzLine = "Заполнение: ${res.glazing.name}"
+        val hwBrand = hardwareBrandsCatalog.find { it.id == wItem.hardwareBrandId }
+        val hwLine = if (hwBrand != null && hwBrand.id != "hw_none") {
+            "Фурнитура: ${hwBrand.name}"
+        } else {
+            "Фурнитура: стандарт"
+        }
+
+        val extras = mutableListOf<String>()
+        val selectedExtrasNames = wItem.selectedExtraIds.mapNotNull { id ->
+            extraAccessoriesCatalog.find { it.id == id }?.name
+        }
+        if (selectedExtrasNames.isNotEmpty()) {
+            extras.add("Доп.: ${selectedExtrasNames.joinToString(", ")}")
+        }
+        if (wItem.note.isNotBlank()) {
+            extras.add("Прим.: ${wItem.note}")
+        }
+
+        val breakdown = finSummary.windowBreakdownFor(wItem.id)
+        val lineBase = breakdown?.lineBaseSale ?: (res.unitTotalCost * wItem.quantity + res.costCustomPainting)
+        val lineDisc = breakdown?.lineDiscountedSale ?: lineBase
+        val discPct = breakdown?.discountPercent ?: order.discountPercent
+        val hasDiscount = discPct > 0.0 && (lineBase - lineDisc) > 0.005
+
+        val areaText = "${fmt(res.totalAreaM2 * wItem.quantity)} м²"
+        val priceRows = buildList {
+            add("Площадь" to areaText)
+            add("Базовая цена" to "${fmtMoney2(lineBase)} $cur")
+            if (hasDiscount) {
+                add("Скидка (-${fmtPct(discPct)}%)" to "-${fmtMoney2(lineBase - lineDisc)} $cur")
+            }
+            add("Итого" to "${fmtMoney2(lineDisc)} $cur")
+        }
+
+        return CompactProposalCellModel(
+            headerNumber = headerNumber,
+            headerDimsQty = headerDimsQty,
+            materialLines = listOf(profLine, glzLine, hwLine),
+            extraLines = extras,
+            priceRows = priceRows
+        )
+    }
+
+    fun buildCompactProposalSummaryRows(
+        order: CustomerOrder,
+        windowResults: List<WindowCalculationResult>,
+        assemblyPricingCatalog: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog(),
+        orderExtraServicesCatalog: List<OrderExtraServiceItem> = DefaultCatalogs.defaultOrderExtraServices(),
+        finSchemeSettings: FinSchemeSettings = FinSchemeSettings()
+    ): List<Pair<String, String>> {
+        val totalConstructions = windowResults.sumOf { it.windowItem.quantity }
+        val totalArea = windowResults.sumOf { it.totalAreaM2 * it.windowItem.quantity }
+        val cur = normalizeCurrencyDisplay(order.currencySymbol)
+        val finSummary = WindowBomAndCostEngine.calculateOrderFinancialSummary(
+            order = order,
+            windowResults = windowResults,
+            assemblyPricingCatalog = assemblyPricingCatalog,
+            orderExtraServicesCatalog = orderExtraServicesCatalog,
+            finSchemeSettings = finSchemeSettings
+        )
+        return buildList {
+            add("Всего изделий (шт)" to "$totalConstructions")
+            add("Общая площадь (м²)" to "${fmt(totalArea)} м²")
+            if (finSummary.discountAmount > 0.005) {
+                add("Базовая стоимость" to "${fmtMoney2(finSummary.orderSaleBeforeDiscountAndVat)} $cur")
+                add("Скидка" to "-${fmtMoney2(finSummary.discountAmount)} $cur")
+            }
+            add("Итоговая сумма без НДС" to "${fmtMoney2(finSummary.orderSaleAfterDiscountBeforeVat)} $cur")
+            if (order.taxVatPercent > 0.0) {
+                add("НДС (${fmtPct(order.taxVatPercent)}%)" to "${fmtMoney2(finSummary.vatAmount)} $cur")
+            }
+            add("ИТОГО К ОПЛАТЕ С НДС" to "${fmtMoney2(finSummary.totalWithVat)} $cur")
+        }
     }
 
     private fun fmt(v: Double): String = String.format(Locale.US, "%.2f", v).trimEnd('0').trimEnd('.')

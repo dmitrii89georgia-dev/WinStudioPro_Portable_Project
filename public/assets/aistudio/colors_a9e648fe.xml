@@ -1,0 +1,5 @@
+<resources>
+    <color name="ic_launcher_bg">#222224</color>
+    <color name="ic_launcher_fg">#FFFFFF</color>
+    <color name="ic_launcher_shadow">#40000000</color>
+</resources>

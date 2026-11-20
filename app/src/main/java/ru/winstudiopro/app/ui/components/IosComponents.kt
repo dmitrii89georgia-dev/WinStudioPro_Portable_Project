@@ -220,7 +220,12 @@ fun IosHomeDashboard(
     onOpenProfileConstructor: () -> Unit,
     onOpenPrices: () -> Unit,
     onOpenWarehouse: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onOpenCash: () -> Unit = {},
+    onOpenAnalytics: () -> Unit = {},
+    onQuickIncome: () -> Unit = {},
+    onQuickExpense: () -> Unit = {},
+    onQuickTransfer: () -> Unit = {}
 ) {
     val p = LocalWinStudioPalette.current
     val s = LocalAppStrings.current
@@ -410,6 +415,31 @@ fun IosHomeDashboard(
             )
         }
 
+        // Разделы «Касса» (только кнопка, без показа сумм) и «Аналитика»
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            IosDashboardTileCard(
+                modifier = Modifier.weight(1f),
+                icon = Icons.Rounded.AccountBalanceWallet,
+                iconBg = Color(0xFF1E88E5),
+                title = s.cashTitle,
+                subtitle = s.cashSubtitle,
+                testTag = "dashboard_cash_card",
+                onClick = onOpenCash
+            )
+            IosDashboardTileCard(
+                modifier = Modifier.weight(1f),
+                icon = Icons.Rounded.BarChart,
+                iconBg = Color(0xFF8E24AA),
+                title = s.analyticsTitle,
+                subtitle = s.analyticsSubtitle,
+                testTag = "dashboard_analytics_card",
+                onClick = onOpenAnalytics
+            )
+        }
+
         val themeChip = if (uiSettings.themeMode == AppThemeMode.DARK) s.themeDark else s.themeLight
         val curDisp = normalizeCurrencyDisplay(uiSettings.currencySymbol)
         IosGroupedCard(
@@ -464,6 +494,69 @@ fun IosHomeDashboard(
                     imageVector = Icons.Rounded.ChevronRight,
                     contentDescription = null,
                     tint = p.textSecondary.copy(alpha = 0.6f)
+                )
+            }
+        }
+
+        // Три быстрые кнопки операций кассы внизу главного экрана (без показа балансов)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 2.dp, bottom = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(
+                onClick = onQuickIncome,
+                colors = ButtonDefaults.buttonColors(containerColor = p.accentGreen),
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .testTag("dashboard_quick_income_btn")
+            ) {
+                Text(
+                    text = "+ Приход",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
+                )
+            }
+            Button(
+                onClick = onQuickExpense,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .testTag("dashboard_quick_expense_btn")
+            ) {
+                Text(
+                    text = "− Расход",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
+                )
+            }
+            Button(
+                onClick = onQuickTransfer,
+                colors = ButtonDefaults.buttonColors(containerColor = p.accentBlue),
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .testTag("dashboard_quick_transfer_btn")
+            ) {
+                Text(
+                    text = "⇄ Перевод",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
                 )
             }
         }
@@ -679,6 +772,7 @@ fun IosSettingsScreen(
 
     var companyName by remember(settings.companyName) { mutableStateOf(settings.companyName) }
     var companyPhone by remember(settings.companyPhone) { mutableStateOf(settings.companyPhone) }
+    var companyAddress by remember(settings.companyAddress) { mutableStateOf(settings.companyAddress) }
     var statusBanner by remember { mutableStateOf<String?>(null) }
 
     val activeCurrency = normalizeCurrencyDisplay(settings.currencySymbol)
@@ -871,7 +965,20 @@ fun IosSettingsScreen(
                     onValueChange = { companyPhone = it },
                     label = { Text(s.companyPhoneLabel) },
                     shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("settings_company_phone_field"),
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = companyAddress,
+                    onValueChange = { companyAddress = it },
+                    label = { Text(s.companyAddressLabel) },
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("settings_company_address_field"),
                     singleLine = true
                 )
                 Spacer(modifier = Modifier.height(14.dp))
@@ -880,7 +987,8 @@ fun IosSettingsScreen(
                         onUpdateSettingsLive(
                             settings.copy(
                                 companyName = companyName.trim().ifBlank { "WinStudio Pro" },
-                                companyPhone = companyPhone.trim()
+                                companyPhone = companyPhone.trim(),
+                                companyAddress = companyAddress.trim()
                             )
                         )
                         statusBanner = s.settingsSavedToast

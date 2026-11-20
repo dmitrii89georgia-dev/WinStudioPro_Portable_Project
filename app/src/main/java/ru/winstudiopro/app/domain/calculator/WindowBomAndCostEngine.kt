@@ -995,10 +995,10 @@ object WindowBomAndCostEngine {
         order: CustomerOrder,
         windowResults: List<WindowCalculationResult>,
         assemblyPricingCatalog: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog(),
-        orderExtraServicesCatalog: List<OrderExtraServiceItem> = DefaultCatalogs.defaultOrderExtraServices()
+        orderExtraServicesCatalog: List<OrderExtraServiceItem> = DefaultCatalogs.defaultOrderExtraServices(),
+        finSchemeSettings: FinSchemeSettings = FinSchemeSettings()
     ): OrderFinancialSummary {
-        var totalWindowsBaseCost = 0.0
-        var totalWindowsDiscountedCost = 0.0
+        var totalMaterialsCost = 0.0
         var totalWindowsAssemblyCost = 0.0
         var totalInstallationCost = 0.0
         var totalWindowsPrimeCost = 0.0
@@ -1006,12 +1006,8 @@ object WindowBomAndCostEngine {
         windowResults.forEach { res ->
             val w = res.windowItem
             val qty = w.quantity.coerceAtLeast(1)
-            val unitBase = w.manualUnitPriceOverride ?: res.rawUnitCostBeforeDiscount
-            val itemDiscPct = if (res.discountPercentApplied > 0.0) res.discountPercentApplied else order.discountPercent
-            val unitDisc = unitBase * (1.0 - itemDiscPct / 100.0)
-
-            totalWindowsBaseCost += unitBase * qty + res.costCustomPainting
-            totalWindowsDiscountedCost += unitDisc * qty + res.costCustomPainting
+            val matPerUnit = (res.unitPrimeCost - res.costAssembly - res.costInstallation).coerceAtLeast(0.0)
+            totalMaterialsCost += matPerUnit * qty + res.costCustomPainting
             totalWindowsAssemblyCost += res.costAssembly * qty
             totalInstallationCost += res.costInstallation * qty
             totalWindowsPrimeCost += res.unitPrimeCost * qty + res.costCustomPainting
@@ -1026,12 +1022,76 @@ object WindowBomAndCostEngine {
         val orderExtrasLevelCost = floorAssemblyCost + extraOpsCost + totalOrderServicesCost
 
         val orderPrimeCost = totalWindowsPrimeCost + orderExtrasLevelCost
-        val orderSaleBeforeDiscountAndVat = totalWindowsBaseCost + orderExtrasLevelCost
-        val orderSaleAfterDiscountBeforeVat = totalWindowsDiscountedCost +
-            orderExtrasLevelCost * (1.0 - order.discountPercent / 100.0)
+        val effectiveMarkupMultiplier =
+            (finSchemeSettings.baseMarkupMultiplier * (1.0 + order.markupPercent / 100.0)).coerceAtLeast(0.0)
+
+        var totalWindowsBaseCost = 0.0
+        var totalWindowsDiscountedCost = 0.0
+        val breakdowns = mutableListOf<WindowTurnkeyPriceBreakdown>()
+        val winCountSafe = windowResults.size.coerceAtLeast(1)
+
+        windowResults.forEach { res ->
+            val w = res.windowItem
+            val qty = w.quantity.coerceAtLeast(1)
+            val winDirectPrimeLine = res.unitPrimeCost * qty + res.costCustomPainting
+            val share = if (totalWindowsPrimeCost > 0.0) {
+                winDirectPrimeLine / totalWindowsPrimeCost
+            } else {
+                1.0 / winCountSafe
+            }
+            val winFullPrimeLine = winDirectPrimeLine + orderExtrasLevelCost * share
+            val itemDiscPct = if (res.discountPercentApplied > 0.0) {
+                res.discountPercentApplied
+            } else {
+                order.discountPercent
+            }.coerceIn(0.0, 99.0)
+
+            val lineBaseSale = if (w.manualUnitPriceOverride != null) {
+                w.manualUnitPriceOverride * qty + res.costCustomPainting
+            } else {
+                winFullPrimeLine * effectiveMarkupMultiplier
+            }
+            val lineDiscountedSale = lineBaseSale * (1.0 - itemDiscPct / 100.0)
+
+            totalWindowsBaseCost += lineBaseSale
+            totalWindowsDiscountedCost += lineDiscountedSale
+            breakdowns.add(
+                WindowTurnkeyPriceBreakdown(
+                    windowId = w.id,
+                    quantity = qty,
+                    primeCostLine = winFullPrimeLine,
+                    unitBaseSale = lineBaseSale / qty,
+                    lineBaseSale = lineBaseSale,
+                    discountPercent = itemDiscPct,
+                    unitDiscountedSale = lineDiscountedSale / qty,
+                    lineDiscountedSale = lineDiscountedSale
+                )
+            )
+        }
+
+        val orderSaleBeforeDiscountAndVat = if (windowResults.isEmpty()) {
+            orderPrimeCost * effectiveMarkupMultiplier
+        } else {
+            totalWindowsBaseCost
+        }
+        val orderSaleAfterDiscountBeforeVat = if (windowResults.isEmpty()) {
+            orderSaleBeforeDiscountAndVat * (1.0 - order.discountPercent.coerceIn(0.0, 99.0) / 100.0)
+        } else {
+            totalWindowsDiscountedCost
+        }
         val discountAmount = (orderSaleBeforeDiscountAndVat - orderSaleAfterDiscountBeforeVat).coerceAtLeast(0.0)
         val vatAmount = orderSaleAfterDiscountBeforeVat * (order.taxVatPercent / 100.0)
         val totalWithVat = order.manualOrderTotalOverride ?: (orderSaleAfterDiscountBeforeVat + vatAmount)
+
+        val effectiveNetAfterDiscount = if (order.manualOrderTotalOverride != null) {
+            val vatDivisor = 1.0 + order.taxVatPercent / 100.0
+            if (vatDivisor > 0.0) order.manualOrderTotalOverride / vatDivisor else order.manualOrderTotalOverride
+        } else {
+            orderSaleAfterDiscountBeforeVat
+        }
+        val isBelowPrimeCost = finSchemeSettings.warnBelowPrimeCost &&
+            orderPrimeCost > 0.0 &&
+            effectiveNetAfterDiscount < (orderPrimeCost - 0.005)
 
         return OrderFinancialSummary(
             totalWindowsBaseCost = totalWindowsBaseCost,
@@ -1047,7 +1107,11 @@ object WindowBomAndCostEngine {
             orderSaleAfterDiscountBeforeVat = orderSaleAfterDiscountBeforeVat,
             discountAmount = discountAmount,
             vatAmount = vatAmount,
-            totalWithVat = totalWithVat
+            totalWithVat = totalWithVat,
+            totalMaterialsCost = totalMaterialsCost,
+            markupMultiplierApplied = effectiveMarkupMultiplier,
+            isBelowPrimeCost = isBelowPrimeCost,
+            windowBreakdowns = breakdowns
         )
     }
 

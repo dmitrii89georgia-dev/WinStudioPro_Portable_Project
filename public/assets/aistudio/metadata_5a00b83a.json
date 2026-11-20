@@ -1,0 +1,6 @@
+{
+  "name": "Цифровые конверты",
+  "description": "Минималистичное мультивалютное приложение для личного учёта финансов по методу цифровых конвертов (Android Kotlin + интерактивное превью)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <rect width="100" height="100" rx="22" fill="#222224" />
+  <g fill="#FFFFFF">
+    <!-- Top folded cap -->
+    <path d="M50,12 L68,22.4 L50,32.8 L32,22.4 Z" />
+    <!-- Top-right wing -->
+    <path d="M72,24.7 L83,31 L83,54 L59,40.4 Z" />
+    <!-- Central S diagonal ribbon -->
+    <path d="M17,31 L26,25.8 L83,58.5 L83,69 L74,74.2 L17,41.5 Z" />
+    <!-- Bottom-left wing -->
+    <path d="M17,46 L41,59.6 L28,75.3 L17,69 Z" />
+    <!-- Bottom folded cap -->
+    <path d="M50,88 L32,77.6 L50,67.2 L68,77.6 Z" />
+  </g>
+  <g fill="#222224" fill-opacity="0.35">
+    <path d="M50,32.8 L68,22.4 L54.5,35.4 Z" />
+    <path d="M50,67.2 L32,77.6 L45.5,64.6 Z" />
+  </g>
+</svg>

@@ -10,6 +10,7 @@ import ru.winstudiopro.app.domain.model.AssemblySchemeType
 import ru.winstudiopro.app.domain.model.BeadAssemblyRateMode
 import ru.winstudiopro.app.domain.model.CustomerOrder
 import ru.winstudiopro.app.domain.model.DefaultCatalogs
+import ru.winstudiopro.app.domain.model.FinSchemeSettings
 import ru.winstudiopro.app.domain.model.ImpostDirection
 import ru.winstudiopro.app.domain.model.OpeningProperties
 import ru.winstudiopro.app.domain.model.OrderExtraServiceItem
@@ -220,7 +221,8 @@ class AssemblyAndFinancialUnitTest {
             order = order,
             windowResults = listOf(res),
             assemblyPricingCatalog = asmCatalog,
-            orderExtraServicesCatalog = serviceCatalog
+            orderExtraServicesCatalog = serviceCatalog,
+            finSchemeSettings = FinSchemeSettings(baseMarkupMultiplier = 1.0)
         )
 
         // Сборка на окна (2 * 22.5) + сборка на этаже (2 * 15) + доп. операции (25)
@@ -248,8 +250,77 @@ class AssemblyAndFinancialUnitTest {
             order = order,
             windowResults = listOf(res),
             assemblyPricingCatalog = asmCatalog,
-            orderExtraServicesCatalog = updatedCatalog
+            orderExtraServicesCatalog = updatedCatalog,
+            finSchemeSettings = FinSchemeSettings(baseMarkupMultiplier = 1.0)
         )
         assertEquals(210.0, updatedSummary.totalOrderServicesCost, 0.001)
+    }
+
+    @Test
+    fun `fin scheme applies 1_40 multiplier proportionally across windows and warns when discounted below prime cost`() {
+        val profiles = DefaultCatalogs.defaultProfileSystems()
+        val glazing = DefaultCatalogs.defaultGlazingItems()
+        val colors = DefaultCatalogs.defaultColors()
+        val sills = DefaultCatalogs.defaultSills()
+        val asmCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog()
+        val serviceCatalog = listOf(
+            OrderExtraServiceItem(id = "ord_srv_delivery", name = "Доставка", defaultPrice = 100.0)
+        )
+
+        val win = buildSampleTwoSashWindow().copy(quantity = 1)
+        val res = WindowBomAndCostEngine.calculateWindow(
+            window = win,
+            profileSystems = profiles,
+            glazingCatalog = glazing,
+            colorCatalog = colors,
+            sillsCatalog = sills,
+            assemblyPricingCatalog = asmCatalog
+        )
+
+        val normalOrder = CustomerOrder(
+            id = "ord_fin_markup",
+            orderNumber = "FIN-140",
+            customerName = "Тест",
+            customerPhone = "",
+            address = "",
+            createdDate = "19.11.2026",
+            windows = listOf(win),
+            discountPercent = 10.0,
+            taxVatPercent = 18.0,
+            selectedOrderServices = listOf(SelectedOrderService("ord_srv_delivery"))
+        )
+
+        val finDefault = FinSchemeSettings() // 1.40 по умолчанию
+        val summary = WindowBomAndCostEngine.calculateOrderFinancialSummary(
+            order = normalOrder,
+            windowResults = listOf(res),
+            assemblyPricingCatalog = asmCatalog,
+            orderExtraServicesCatalog = serviceCatalog,
+            finSchemeSettings = finDefault
+        )
+
+        val expectedPrime = res.unitPrimeCost + 100.0
+        val expectedBaseSale = expectedPrime * 1.40
+        val expectedAfterDisc = expectedBaseSale * 0.90
+        assertEquals(expectedPrime, summary.orderPrimeCost, 0.01)
+        assertEquals(expectedBaseSale, summary.orderSaleBeforeDiscountAndVat, 0.01)
+        assertEquals(expectedAfterDisc, summary.orderSaleAfterDiscountBeforeVat, 0.01)
+        assertEquals(expectedAfterDisc * 1.18, summary.totalWithVat, 0.01)
+        assertFalse(summary.isBelowPrimeCost)
+
+        val breakdown = summary.windowBreakdownFor(win.id)!!
+        assertEquals(expectedBaseSale, breakdown.unitBaseSale, 0.01)
+        assertEquals(expectedAfterDisc, breakdown.unitDiscountedSale, 0.01)
+
+        // Скидка 35% при наценке 1.40 даёт 1.40 * 0.65 = 0.91 < 1.0 -> предупреждение ниже себестоимости!
+        val dumpingOrder = normalOrder.copy(discountPercent = 35.0)
+        val dumpingSummary = WindowBomAndCostEngine.calculateOrderFinancialSummary(
+            order = dumpingOrder,
+            windowResults = listOf(res),
+            assemblyPricingCatalog = asmCatalog,
+            orderExtraServicesCatalog = serviceCatalog,
+            finSchemeSettings = finDefault
+        )
+        assertTrue(dumpingSummary.isBelowPrimeCost)
     }
 }

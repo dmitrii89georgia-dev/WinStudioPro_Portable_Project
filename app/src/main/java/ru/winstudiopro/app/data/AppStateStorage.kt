@@ -27,11 +27,15 @@ data class PersistedAppState(
     val extraAccessories: List<ExtraAccessoryItem> = DefaultCatalogs.defaultExtraAccessories(),
     val workServices: List<WorkServiceItem> = DefaultCatalogs.defaultWorkServices(),
     val assemblyPricing: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog(),
-    val orderExtraServices: List<OrderExtraServiceItem> = DefaultCatalogs.defaultOrderExtraServices()
+    val orderExtraServices: List<OrderExtraServiceItem> = DefaultCatalogs.defaultOrderExtraServices(),
+    val finSchemeSettings: FinSchemeSettings = FinSchemeSettings(),
+    val cashAccounts: List<CashAccount> = DefaultCashCatalogs.defaultCashAccounts(),
+    val cashTransactions: List<CashTransaction> = emptyList(),
+    val cashExpenseCategories: List<CashExpenseCategory> = DefaultCashCatalogs.defaultExpenseCategories()
 )
 
 private class WinStudioSqliteHelper(context: Context) :
-    SQLiteOpenHelper(context, "winstudio_pro_v3.db", null, 6) {
+    SQLiteOpenHelper(context, "winstudio_pro_v3.db", null, 7) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -109,6 +113,44 @@ private class WinStudioSqliteHelper(context: Context) :
             )
             """.trimIndent()
         )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS cash_accounts (
+                id TEXT PRIMARY KEY,
+                sort_order INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                currency_code TEXT NOT NULL,
+                kind TEXT NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS cash_expense_categories (
+                id TEXT PRIMARY KEY,
+                sort_order INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                is_system_payroll INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS cash_transactions (
+                id TEXT PRIMARY KEY,
+                date_millis INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                from_account_id TEXT,
+                to_account_id TEXT,
+                amount_from REAL NOT NULL,
+                amount_to REAL NOT NULL,
+                category_id TEXT,
+                order_id TEXT,
+                payroll_kind TEXT NOT NULL DEFAULT 'NONE',
+                comment TEXT NOT NULL DEFAULT ''
+            )
+            """.trimIndent()
+        )
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -129,6 +171,9 @@ private class WinStudioSqliteHelper(context: Context) :
             }
             if (oldVersion < 6) {
                 AppStateStorage.migrateDatabaseV5ToV6(db)
+            }
+            if (oldVersion < 7) {
+                AppStateStorage.migrateDatabaseV6ToV7(db)
             }
         } catch (e: Exception) {
             Log.e("WinStudioSqliteHelper", "Database upgrade error", e)
@@ -213,10 +258,17 @@ object AppStateStorage {
             if (!settingsBundle.v6CatalogsSeeded) {
                 migrateDatabaseV5ToV6(dbHelper.writableDatabase)
             }
+            val postV6Bundle = loadSettingsBundleFromDb(dbHelper.readableDatabase)
+            if (!postV6Bundle.v7CashSeeded) {
+                migrateDatabaseV6ToV7(dbHelper.writableDatabase)
+            }
             val finalBundle = loadSettingsBundleFromDb(dbHelper.readableDatabase)
             val finalOrders = loadOrdersFromDb(dbHelper.readableDatabase).ifEmpty { orders }
             val assemblyPricing = loadAssemblyPricingFromDb(dbHelper.readableDatabase)
             val orderExtraServices = loadOrderExtraServicesFromDb(dbHelper.readableDatabase, fallbackToDefaults = !finalBundle.v6CatalogsSeeded)
+            val cashAccounts = loadCashAccountsFromDb(dbHelper.readableDatabase)
+            val cashTransactions = loadCashTransactionsFromDb(dbHelper.readableDatabase)
+            val cashExpenseCategories = loadCashExpenseCategoriesFromDb(dbHelper.readableDatabase)
 
             PersistedAppState(
                 profileSystems = profiles,
@@ -230,7 +282,11 @@ object AppStateStorage {
                 extraAccessories = finalBundle.extraAccessories,
                 workServices = finalBundle.workServices,
                 assemblyPricing = assemblyPricing,
-                orderExtraServices = orderExtraServices
+                orderExtraServices = orderExtraServices,
+                finSchemeSettings = finalBundle.finSchemeSettings,
+                cashAccounts = cashAccounts,
+                cashTransactions = cashTransactions,
+                cashExpenseCategories = cashExpenseCategories
             )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load persisted state, falling back to defaults", e)
@@ -347,6 +403,7 @@ object AppStateStorage {
                     saveOrderExtraServicesToDb(db, parseOrderExtraServicesArray(root.getJSONArray("orderExtraServices")))
                 }
                 migrateDatabaseV5ToV6Internal(db)
+                migrateDatabaseV6ToV7Internal(db)
                 db.setTransactionSuccessful()
             } finally {
                 db.endTransaction()
@@ -357,6 +414,9 @@ object AppStateStorage {
             val migratedOrders = loadOrdersFromDb(db).ifEmpty { finalOrders }
             val assemblyPricing = loadAssemblyPricingFromDb(db)
             val orderExtraServices = loadOrderExtraServicesFromDb(db)
+            val cashAccounts = loadCashAccountsFromDb(db)
+            val cashTransactions = loadCashTransactionsFromDb(db)
+            val cashExpenseCategories = loadCashExpenseCategoriesFromDb(db)
             Log.i(TAG, "Applied dev seed ($DEV_SEED_ASSET_NAME): ${migratedOrders.size} orders, ${finalProfiles.size} profiles")
             PersistedAppState(
                 profileSystems = finalProfiles,
@@ -370,7 +430,11 @@ object AppStateStorage {
                 extraAccessories = settingsBundle.extraAccessories,
                 workServices = settingsBundle.workServices,
                 assemblyPricing = assemblyPricing,
-                orderExtraServices = orderExtraServices
+                orderExtraServices = orderExtraServices,
+                finSchemeSettings = settingsBundle.finSchemeSettings,
+                cashAccounts = cashAccounts,
+                cashTransactions = cashTransactions,
+                cashExpenseCategories = cashExpenseCategories
             )
         } catch (_: FileNotFoundException) {
             null
@@ -392,6 +456,9 @@ object AppStateStorage {
                 saveStockRubberToDb(db, state.stockRubber)
                 saveAssemblyPricingToDb(db, state.assemblyPricing)
                 saveOrderExtraServicesToDb(db, state.orderExtraServices)
+                saveCashAccountsToDb(db, state.cashAccounts)
+                saveCashTransactionsToDb(db, state.cashTransactions)
+                saveCashExpenseCategoriesToDb(db, state.cashExpenseCategories)
                 saveSettingsBundleToDb(
                     db,
                     SettingsAndCatalogsBundle(
@@ -401,7 +468,9 @@ object AppStateStorage {
                         hardwareBrands = state.hardwareBrands,
                         extraAccessories = state.extraAccessories,
                         workServices = state.workServices,
-                        v6CatalogsSeeded = true
+                        v6CatalogsSeeded = true,
+                        finSchemeSettings = state.finSchemeSettings,
+                        v7CashSeeded = true
                     )
                 )
                 db.setTransactionSuccessful()
@@ -450,10 +519,14 @@ object AppStateStorage {
         val stockRubber = loadStockRubberFromDb(db)
         val assemblyPricing = loadAssemblyPricingFromDb(db)
         val orderExtraServices = loadOrderExtraServicesFromDb(db)
+        val settingsBundle = loadSettingsBundleFromDb(db)
+        val cashAccounts = loadCashAccountsFromDb(db)
+        val cashTransactions = loadCashTransactionsFromDb(db)
+        val cashExpenseCategories = loadCashExpenseCategoriesFromDb(db)
 
         val root = JSONObject().apply {
             put("app", "WinStudioPro")
-            put("backupVersion", 4)
+            put("backupVersion", 5)
             put("timestamp", System.currentTimeMillis())
             put("exportDate", SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()).format(Date()))
 
@@ -484,6 +557,10 @@ object AppStateStorage {
             put("stockRubber", serializeStockRubberArray(stockRubber))
             put("assemblyPricing", serializeAssemblyPricing(assemblyPricing))
             put("orderExtraServices", serializeOrderExtraServicesArray(orderExtraServices))
+            put("finSchemeSettings", serializeFinSchemeSettings(settingsBundle.finSchemeSettings))
+            put("cashAccounts", serializeCashAccountsArray(cashAccounts))
+            put("cashTransactions", serializeCashTransactionsArray(cashTransactions))
+            put("cashExpenseCategories", serializeCashExpenseCategoriesArray(cashExpenseCategories))
         }
 
         db.rawQuery("SELECT json_payload FROM app_settings WHERE id = 1", null).use { c ->
@@ -568,6 +645,26 @@ object AppStateStorage {
         } else {
             current.orderExtraServices
         }
+        val importedFinScheme = if (root.has("finSchemeSettings") && !root.isNull("finSchemeSettings")) {
+            parseFinSchemeSettings(root.getJSONObject("finSchemeSettings"))
+        } else {
+            current.finSchemeSettings
+        }
+        val importedCashAccounts = if (root.has("cashAccounts") && !root.isNull("cashAccounts")) {
+            parseCashAccountsArray(root.getJSONArray("cashAccounts")).ifEmpty { current.cashAccounts }
+        } else {
+            current.cashAccounts
+        }
+        val importedCashTransactions = if (root.has("cashTransactions") && !root.isNull("cashTransactions")) {
+            parseCashTransactionsArray(root.getJSONArray("cashTransactions"))
+        } else {
+            current.cashTransactions
+        }
+        val importedExpenseCategories = if (root.has("cashExpenseCategories") && !root.isNull("cashExpenseCategories")) {
+            parseCashExpenseCategoriesArray(root.getJSONArray("cashExpenseCategories")).ifEmpty { current.cashExpenseCategories }
+        } else {
+            current.cashExpenseCategories
+        }
 
         val normalizedImportedOrders = importedOrders.map { migrateLegacyDeliveryOnOrder(it) }
         val mergedOrders = (normalizedImportedOrders + current.orders).distinctBy { it.id }
@@ -582,6 +679,8 @@ object AppStateStorage {
         } else {
             current.stockRubber
         }
+        val mergedCashTransactions = (importedCashTransactions + current.cashTransactions).distinctBy { it.id }
+            .sortedByDescending { it.dateMillis }
 
         val reloadedSettings = loadState(context)
         val cleanedWorkServices = reloadedSettings.workServices.filterNot {
@@ -595,7 +694,11 @@ object AppStateStorage {
             stockRubber = mergedRubber,
             workServices = cleanedWorkServices,
             assemblyPricing = importedAssembly,
-            orderExtraServices = importedOrderServices
+            orderExtraServices = importedOrderServices,
+            finSchemeSettings = if (root.has("finSchemeSettings")) importedFinScheme else reloadedSettings.finSchemeSettings,
+            cashAccounts = importedCashAccounts,
+            cashTransactions = mergedCashTransactions,
+            cashExpenseCategories = importedExpenseCategories
         )
         saveState(context, newState)
         return newState
@@ -864,6 +967,90 @@ object AppStateStorage {
         }
     }
 
+    internal fun migrateDatabaseV6ToV7(db: SQLiteDatabase) {
+        db.beginTransaction()
+        try {
+            migrateDatabaseV6ToV7Internal(db)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    private fun migrateDatabaseV6ToV7Internal(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                json_payload TEXT NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS cash_accounts (
+                id TEXT PRIMARY KEY,
+                sort_order INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                currency_code TEXT NOT NULL,
+                kind TEXT NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS cash_expense_categories (
+                id TEXT PRIMARY KEY,
+                sort_order INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                is_system_payroll INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS cash_transactions (
+                id TEXT PRIMARY KEY,
+                date_millis INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                from_account_id TEXT,
+                to_account_id TEXT,
+                amount_from REAL NOT NULL,
+                amount_to REAL NOT NULL,
+                category_id TEXT,
+                order_id TEXT,
+                payroll_kind TEXT NOT NULL DEFAULT 'NONE',
+                comment TEXT NOT NULL DEFAULT ''
+            )
+            """.trimIndent()
+        )
+
+        val hasCashAccounts = db.rawQuery("SELECT COUNT(*) FROM cash_accounts", null).use { c ->
+            c.moveToFirst() && c.getInt(0) > 0
+        }
+        if (!hasCashAccounts) {
+            saveCashAccountsToDb(db, DefaultCashCatalogs.defaultCashAccounts())
+        }
+
+        val hasExpenseCategories = db.rawQuery("SELECT COUNT(*) FROM cash_expense_categories", null).use { c ->
+            c.moveToFirst() && c.getInt(0) > 0
+        }
+        if (!hasExpenseCategories) {
+            saveCashExpenseCategoriesToDb(db, DefaultCashCatalogs.defaultExpenseCategories())
+        }
+
+        val currentBundle = loadSettingsBundleFromDb(db)
+        if (!currentBundle.v7CashSeeded) {
+            saveSettingsBundleToDb(
+                db,
+                currentBundle.copy(
+                    finSchemeSettings = FinSchemeSettings(),
+                    v7CashSeeded = true
+                )
+            )
+        }
+    }
+
     private fun migrateDatabaseV5ToV6Internal(db: SQLiteDatabase) {
         val currentBundle = loadSettingsBundleFromDb(db)
         var deliveryMigratedPrice: Double? = null
@@ -1090,6 +1277,305 @@ object AppStateStorage {
         return list
     }
 
+    private fun saveCashAccountsToDb(db: SQLiteDatabase, list: List<CashAccount>) {
+        db.delete("cash_accounts", null, null)
+        list.forEachIndexed { idx, acc ->
+            val cv = ContentValues().apply {
+                put("id", acc.id)
+                put("sort_order", idx)
+                put("name", acc.name)
+                put("currency_code", acc.currency.code)
+                put("kind", acc.kind.name)
+            }
+            db.insertWithOnConflict("cash_accounts", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+    }
+
+    private fun loadCashAccountsFromDb(db: SQLiteDatabase): List<CashAccount> {
+        return try {
+            val list = mutableListOf<CashAccount>()
+            db.rawQuery(
+                "SELECT id, sort_order, name, currency_code, kind FROM cash_accounts ORDER BY sort_order ASC",
+                null
+            ).use { c ->
+                while (c.moveToNext()) {
+                    list.add(
+                        CashAccount(
+                            id = c.getString(0),
+                            sortOrder = c.getInt(1),
+                            name = c.getString(2),
+                            currency = CashCurrency.fromCode(c.getString(3)),
+                            kind = CashAccountKind.fromStorage(c.getString(4))
+                        )
+                    )
+                }
+            }
+            list.ifEmpty { DefaultCashCatalogs.defaultCashAccounts() }
+        } catch (_: Exception) {
+            DefaultCashCatalogs.defaultCashAccounts()
+        }
+    }
+
+    private fun saveCashExpenseCategoriesToDb(db: SQLiteDatabase, list: List<CashExpenseCategory>) {
+        db.delete("cash_expense_categories", null, null)
+        list.forEachIndexed { idx, cat ->
+            val cv = ContentValues().apply {
+                put("id", cat.id)
+                put("sort_order", idx)
+                put("name", cat.name)
+                put("is_system_payroll", if (cat.isSystemPayroll) 1 else 0)
+            }
+            db.insertWithOnConflict("cash_expense_categories", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+    }
+
+    private fun loadCashExpenseCategoriesFromDb(db: SQLiteDatabase): List<CashExpenseCategory> {
+        return try {
+            val list = mutableListOf<CashExpenseCategory>()
+            db.rawQuery(
+                "SELECT id, sort_order, name, is_system_payroll FROM cash_expense_categories ORDER BY sort_order ASC",
+                null
+            ).use { c ->
+                while (c.moveToNext()) {
+                    list.add(
+                        CashExpenseCategory(
+                            id = c.getString(0),
+                            sortOrder = c.getInt(1),
+                            name = c.getString(2),
+                            isSystemPayroll = c.getInt(3) == 1
+                        )
+                    )
+                }
+            }
+            list.ifEmpty { DefaultCashCatalogs.defaultExpenseCategories() }
+        } catch (_: Exception) {
+            DefaultCashCatalogs.defaultExpenseCategories()
+        }
+    }
+
+    private fun saveCashTransactionsToDb(db: SQLiteDatabase, list: List<CashTransaction>) {
+        db.delete("cash_transactions", null, null)
+        list.forEach { tx ->
+            val cv = ContentValues().apply {
+                put("id", tx.id)
+                put("date_millis", tx.dateMillis)
+                put("type", tx.type.name)
+                if (tx.fromAccountId != null) put("from_account_id", tx.fromAccountId) else putNull("from_account_id")
+                if (tx.toAccountId != null) put("to_account_id", tx.toAccountId) else putNull("to_account_id")
+                put("amount_from", tx.amountFrom)
+                put("amount_to", tx.amountTo)
+                if (tx.categoryId != null) put("category_id", tx.categoryId) else putNull("category_id")
+                if (tx.orderId != null) put("order_id", tx.orderId) else putNull("order_id")
+                put("payroll_kind", tx.payrollKind.name)
+                put("comment", tx.comment)
+            }
+            db.insertWithOnConflict("cash_transactions", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+    }
+
+    private fun loadCashTransactionsFromDb(db: SQLiteDatabase): List<CashTransaction> {
+        return try {
+            val list = mutableListOf<CashTransaction>()
+            db.rawQuery(
+                "SELECT id, date_millis, type, from_account_id, to_account_id, amount_from, amount_to, category_id, order_id, payroll_kind, comment FROM cash_transactions ORDER BY date_millis DESC",
+                null
+            ).use { c ->
+                while (c.moveToNext()) {
+                    list.add(
+                        CashTransaction(
+                            id = c.getString(0),
+                            dateMillis = c.getLong(1),
+                            type = CashTransactionType.fromStorage(c.getString(2)),
+                            fromAccountId = if (c.isNull(3)) null else c.getString(3),
+                            toAccountId = if (c.isNull(4)) null else c.getString(4),
+                            amountFrom = c.getDouble(5),
+                            amountTo = c.getDouble(6),
+                            categoryId = if (c.isNull(7)) null else c.getString(7),
+                            orderId = if (c.isNull(8)) null else c.getString(8),
+                            payrollKind = CashPayrollKind.fromStorage(c.getString(9)),
+                            comment = if (c.isNull(10)) "" else c.getString(10)
+                        )
+                    )
+                }
+            }
+            list
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun serializeFinSchemeSettings(f: FinSchemeSettings): JSONObject = JSONObject().apply {
+        put("baseMarkupMultiplier", f.baseMarkupMultiplier)
+        val mArr = JSONArray()
+        f.markupPresets.forEach { mArr.put(it) }
+        put("markupPresets", mArr)
+        val dArr = JSONArray()
+        f.discountPresets.forEach { d ->
+            dArr.put(
+                JSONObject().apply {
+                    put("id", d.id)
+                    put("name", d.name)
+                    put("discountPercent", d.discountPercent)
+                    put("isDealer", d.isDealer)
+                }
+            )
+        }
+        put("discountPresets", dArr)
+        put("defaultVatPercent", f.defaultVatPercent)
+        put("warnBelowPrimeCost", f.warnBelowPrimeCost)
+        put("gelPerUsdRate", f.gelPerUsdRate)
+    }
+
+    private fun parseFinSchemeSettings(o: JSONObject?): FinSchemeSettings {
+        if (o == null) return FinSchemeSettings()
+        val mArr = o.optJSONArray("markupPresets")
+        val mList = if (mArr != null) {
+            (0 until mArr.length()).map { mArr.optDouble(it, 1.40) }.filter { it > 0.0 }
+        } else {
+            emptyList()
+        }.ifEmpty { listOf(1.25, 1.35, 1.40, 1.50, 1.65) }
+
+        val dArr = o.optJSONArray("discountPresets")
+        val dList = if (dArr != null) {
+            val list = mutableListOf<DiscountPresetItem>()
+            for (i in 0 until dArr.length()) {
+                val item = dArr.getJSONObject(i)
+                list.add(
+                    DiscountPresetItem(
+                        id = item.optString("id", "disc_$i"),
+                        name = item.optString("name", "Скидка"),
+                        discountPercent = item.optDouble("discountPercent", 0.0).coerceIn(0.0, 99.0),
+                        isDealer = item.optBoolean("isDealer", false)
+                    )
+                )
+            }
+            list.ifEmpty { DefaultCashCatalogs.defaultDiscountPresets() }
+        } else {
+            DefaultCashCatalogs.defaultDiscountPresets()
+        }
+
+        return FinSchemeSettings(
+            baseMarkupMultiplier = o.optDouble("baseMarkupMultiplier", 1.40).coerceAtLeast(0.1),
+            markupPresets = mList,
+            discountPresets = dList,
+            defaultVatPercent = o.optDouble("defaultVatPercent", 18.0).coerceIn(0.0, 50.0),
+            warnBelowPrimeCost = o.optBoolean("warnBelowPrimeCost", true),
+            gelPerUsdRate = o.optDouble("gelPerUsdRate", 2.70).coerceAtLeast(0.01)
+        )
+    }
+
+    private fun serializeCashAccountsArray(list: List<CashAccount>): JSONArray {
+        val arr = JSONArray()
+        list.forEach { acc ->
+            arr.put(
+                JSONObject().apply {
+                    put("id", acc.id)
+                    put("name", acc.name)
+                    put("currency", acc.currency.code)
+                    put("kind", acc.kind.name)
+                    put("sortOrder", acc.sortOrder)
+                }
+            )
+        }
+        return arr
+    }
+
+    private fun parseCashAccountsArray(arr: JSONArray?): List<CashAccount> {
+        if (arr == null) return emptyList()
+        val list = mutableListOf<CashAccount>()
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            list.add(
+                CashAccount(
+                    id = o.optString("id", "acc_$i"),
+                    name = o.optString("name", "Счёт"),
+                    currency = CashCurrency.fromCode(o.optString("currency", "USD")),
+                    kind = CashAccountKind.fromStorage(o.optString("kind", "CASH")),
+                    sortOrder = o.optInt("sortOrder", i)
+                )
+            )
+        }
+        return list
+    }
+
+    private fun serializeCashExpenseCategoriesArray(list: List<CashExpenseCategory>): JSONArray {
+        val arr = JSONArray()
+        list.forEach { cat ->
+            arr.put(
+                JSONObject().apply {
+                    put("id", cat.id)
+                    put("name", cat.name)
+                    put("isSystemPayroll", cat.isSystemPayroll)
+                    put("sortOrder", cat.sortOrder)
+                }
+            )
+        }
+        return arr
+    }
+
+    private fun parseCashExpenseCategoriesArray(arr: JSONArray?): List<CashExpenseCategory> {
+        if (arr == null) return emptyList()
+        val list = mutableListOf<CashExpenseCategory>()
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            list.add(
+                CashExpenseCategory(
+                    id = o.optString("id", "cat_$i"),
+                    name = o.optString("name", "Категория"),
+                    isSystemPayroll = o.optBoolean("isSystemPayroll", false),
+                    sortOrder = o.optInt("sortOrder", i)
+                )
+            )
+        }
+        return list
+    }
+
+    private fun serializeCashTransactionsArray(list: List<CashTransaction>): JSONArray {
+        val arr = JSONArray()
+        list.forEach { tx ->
+            arr.put(
+                JSONObject().apply {
+                    put("id", tx.id)
+                    put("dateMillis", tx.dateMillis)
+                    put("type", tx.type.name)
+                    put("fromAccountId", tx.fromAccountId ?: JSONObject.NULL)
+                    put("toAccountId", tx.toAccountId ?: JSONObject.NULL)
+                    put("amountFrom", tx.amountFrom)
+                    put("amountTo", tx.amountTo)
+                    put("categoryId", tx.categoryId ?: JSONObject.NULL)
+                    put("orderId", tx.orderId ?: JSONObject.NULL)
+                    put("payrollKind", tx.payrollKind.name)
+                    put("comment", tx.comment)
+                }
+            )
+        }
+        return arr
+    }
+
+    private fun parseCashTransactionsArray(arr: JSONArray?): List<CashTransaction> {
+        if (arr == null) return emptyList()
+        val list = mutableListOf<CashTransaction>()
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            list.add(
+                CashTransaction(
+                    id = o.optString("id", "tx_$i"),
+                    dateMillis = o.optLong("dateMillis", System.currentTimeMillis()),
+                    type = CashTransactionType.fromStorage(o.optString("type", "EXPENSE")),
+                    fromAccountId = if (o.isNull("fromAccountId")) null else o.optString("fromAccountId").takeIf { it.isNotBlank() },
+                    toAccountId = if (o.isNull("toAccountId")) null else o.optString("toAccountId").takeIf { it.isNotBlank() },
+                    amountFrom = o.optDouble("amountFrom", 0.0),
+                    amountTo = o.optDouble("amountTo", 0.0),
+                    categoryId = if (o.isNull("categoryId")) null else o.optString("categoryId").takeIf { it.isNotBlank() },
+                    orderId = if (o.isNull("orderId")) null else o.optString("orderId").takeIf { it.isNotBlank() },
+                    payrollKind = CashPayrollKind.fromStorage(o.optString("payrollKind", "NONE")),
+                    comment = o.optString("comment", "")
+                )
+            )
+        }
+        return list
+    }
+
     private data class SettingsAndCatalogsBundle(
         val uiSettings: AppUiSettings = AppUiSettings(),
         val glazingCatalog: List<GlazingCatalogItem> = DefaultCatalogs.defaultGlazingItems(),
@@ -1097,7 +1583,9 @@ object AppStateStorage {
         val hardwareBrands: List<HardwareBrandItem> = DefaultCatalogs.defaultHardwareBrands(),
         val extraAccessories: List<ExtraAccessoryItem> = DefaultCatalogs.defaultExtraAccessories(),
         val workServices: List<WorkServiceItem> = DefaultCatalogs.defaultWorkServices(),
-        val v6CatalogsSeeded: Boolean = false
+        val v6CatalogsSeeded: Boolean = false,
+        val finSchemeSettings: FinSchemeSettings = FinSchemeSettings(),
+        val v7CashSeeded: Boolean = false
     )
 
     private fun saveSettingsBundleToDb(db: SQLiteDatabase, bundle: SettingsAndCatalogsBundle) {
@@ -1179,6 +1667,8 @@ object AppStateStorage {
             }
             put("workServices", wrkArr)
             put("v6CatalogsSeeded", bundle.v6CatalogsSeeded)
+            put("finSchemeSettings", serializeFinSchemeSettings(bundle.finSchemeSettings))
+            put("v7CashSeeded", bundle.v7CashSeeded)
         }
         val cv = ContentValues().apply {
             put("id", 1)
@@ -1311,7 +1801,9 @@ object AppStateStorage {
                     hardwareBrands = hwList,
                     extraAccessories = extList,
                     workServices = wrkList,
-                    v6CatalogsSeeded = o.optBoolean("v6CatalogsSeeded", false)
+                    v6CatalogsSeeded = o.optBoolean("v6CatalogsSeeded", false),
+                    finSchemeSettings = parseFinSchemeSettings(o.optJSONObject("finSchemeSettings")),
+                    v7CashSeeded = o.optBoolean("v7CashSeeded", false)
                 )
             }
         }

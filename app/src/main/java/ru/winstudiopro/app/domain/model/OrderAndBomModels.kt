@@ -396,6 +396,17 @@ data class WindowCalculationResult(
     val unitPrimeCost: Double = 0.0
 )
 
+data class WindowTurnkeyPriceBreakdown(
+    val windowId: String,
+    val quantity: Int,
+    val primeCostLine: Double,
+    val unitBaseSale: Double,
+    val lineBaseSale: Double,
+    val discountPercent: Double,
+    val unitDiscountedSale: Double,
+    val lineDiscountedSale: Double
+)
+
 data class OrderFinancialSummary(
     val totalWindowsBaseCost: Double,
     val totalWindowsDiscountedCost: Double,
@@ -410,8 +421,16 @@ data class OrderFinancialSummary(
     val orderSaleAfterDiscountBeforeVat: Double,
     val discountAmount: Double,
     val vatAmount: Double,
-    val totalWithVat: Double
-)
+    val totalWithVat: Double,
+    val totalMaterialsCost: Double = 0.0,
+    val markupMultiplierApplied: Double = 1.40,
+    val isBelowPrimeCost: Boolean = false,
+    val windowBreakdowns: List<WindowTurnkeyPriceBreakdown> = emptyList()
+) {
+    fun windowBreakdownFor(windowId: String): WindowTurnkeyPriceBreakdown? {
+        return windowBreakdowns.find { it.windowId == windowId }
+    }
+}
 
 data class CutBarAllocation(
     val barNumber: Int,
