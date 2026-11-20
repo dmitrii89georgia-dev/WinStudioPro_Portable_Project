@@ -57,6 +57,8 @@ private enum class ProfileAccordionSection(val letterBadge: String, val titleRu:
 internal fun ProfileConstructorScreen(
     profileSystems: List<ProfileSystemSpec>,
     currencySymbol: String,
+    defaultProfileSystemId: String = "",
+    onSetDefaultProfileSystem: (String) -> Unit = {},
     onBack: () -> Unit,
     onSaveProfiles: (List<ProfileSystemSpec>) -> Unit
 ) {
@@ -124,6 +126,7 @@ internal fun ProfileConstructorScreen(
             var matType by remember(activeSys.id) { mutableStateOf(activeSys.materialType) }
             var stockBarLen by remember(activeSys.id) { mutableStateOf(fmtMm(activeSys.stockBarLengthMm)) }
             var weldAllow by remember(activeSys.id) { mutableStateOf(fmtMm(activeSys.weldAllowancePerCornerMm)) }
+            var sawKerfMmText by remember(activeSys.id) { mutableStateOf(fmtMm(activeSys.sawKerfMm)) }
             var glzClearanceTotal by remember(activeSys.id) { mutableStateOf(fmtMm(activeSys.glazingClearanceTotalMm)) }
 
             // A. Рама (A1, A2, A3, A4 + цена за м)
@@ -199,6 +202,7 @@ internal fun ProfileConstructorScreen(
                     materialType = matType,
                     stockBarLengthMm = parseMmOrNull(stockBarLen) ?: activeSys.stockBarLengthMm,
                     weldAllowancePerCornerMm = parseMmOrNull(weldAllow) ?: activeSys.weldAllowancePerCornerMm,
+                    sawKerfMm = (parseMmOrNull(sawKerfMmText) ?: activeSys.sawKerfMm).coerceIn(0f, 15f),
                     glazingClearanceTotalMm = parseMmOrNull(glzClearanceTotal) ?: activeSys.glazingClearanceTotalMm,
                     // A. Рама
                     frameWidthMm = parseMmOrNull(a1InnerW) ?: activeSys.frameWidthMm,
@@ -358,16 +362,46 @@ internal fun ProfileConstructorScreen(
                                         }
                                         Spacer(modifier = Modifier.height(2.dp))
                                         Text(
-                                            text = "Рама A1=${fmtMm(sys.frameWidthMm)} мм (${sys.priceFramePerM} $currencySymbol/м) • Импост B1=${fmtMm(sys.impostWidthMm)} мм • Створка C1=${fmtMm(sys.sashWidthMm)} мм • Зазор СП=${fmtMm(sys.glazingClearanceTotalMm)} мм",
+                                            text = "Рама A1=${fmtMm(sys.frameWidthMm)} мм (${sys.priceFramePerM} $currencySymbol/м) • Импост B1=${fmtMm(sys.impostWidthMm)} мм • Створка C1=${fmtMm(sys.sashWidthMm)} мм • Рез пилы=${fmtMm(sys.sawKerfMm)} мм • Зазор СП=${fmtMm(sys.glazingClearanceTotalMm)} мм",
                                             fontSize = 11.sp,
                                             color = palette.textSecondary
                                         )
                                     }
 
                                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        val isDefault = sys.id == defaultProfileSystemId
+                                        Surface(
+                                            color = if (isDefault) palette.accentGreen.copy(alpha = 0.16f) else palette.secondaryBackground,
+                                            shape = RoundedCornerShape(10.dp),
+                                            border = BorderStroke(
+                                                0.8.dp,
+                                                if (isDefault) palette.accentGreen else palette.floatingBorder
+                                            ),
+                                            modifier = Modifier
+                                                .heightIn(min = 48.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .clickable {
+                                                    onSetDefaultProfileSystem(sys.id)
+                                                    savedBannerText = "Система «${sys.name}» назначена по умолчанию для новых заказов"
+                                                }
+                                                .testTag("profile_set_default_${sys.id}")
+                                        ) {
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            ) {
+                                                Text(
+                                                    text = if (isDefault) "★ По умолч." else "По умолч.",
+                                                    color = if (isDefault) palette.accentGreen else palette.textSecondary,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                        }
                                         TextButton(
                                             onClick = { selectedId = sys.id },
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                            modifier = Modifier.heightIn(min = 48.dp)
                                         ) {
                                             Text(
                                                 if (isSelected) "✓ Выбрана" else "Редакт.",
@@ -385,7 +419,7 @@ internal fun ProfileConstructorScreen(
                                                         selectedId = rest.first().id
                                                     }
                                                 },
-                                                modifier = Modifier.size(32.dp)
+                                                modifier = Modifier.size(48.dp)
                                             ) {
                                                 Icon(
                                                     imageVector = Icons.Rounded.DeleteOutline,
@@ -610,6 +644,23 @@ internal fun ProfileConstructorScreen(
                                 singleLine = true
                             )
                         }
+                        OutlinedTextField(
+                            value = sawKerfMmText,
+                            onValueChange = { sawKerfMmText = it },
+                            label = { Text("Толщина диска пилы / рез (мм)") },
+                            supportingText = {
+                                Text(
+                                    "Учитывается при 1D-раскрое профилей между соседними заготовками (напр. 4 или 5 мм)",
+                                    fontSize = 11.sp
+                                )
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("profile_saw_kerf_input"),
+                            singleLine = true
+                        )
 
                         // Поле "Зазор на стеклопакет (мм)" + живой расчёт вычетов по проёмам
                         val clrMm = parseMmOrNull(glzClearanceTotal) ?: 10f

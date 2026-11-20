@@ -31,6 +31,7 @@ import kotlin.math.roundToInt
 private data class CircleHotspot(
     val center: Offset,
     val radius: Float,
+    val hitRadius: Float = radius * 1.25f,
     val action: () -> Unit
 )
 
@@ -41,7 +42,7 @@ private data class RectHotspot(
 
 /**
  * Интерактивный 2D САПР-холст с правильным порядком слоёв (Z-Order),
- * честной шириной дверного профиля, внутренним импостом двери/створки и его внутренней размерной линией.
+ * честной шириной дверного профиля, 5 вариантами внутренних импостов, штульпом и размерными цепочками.
  */
 @Composable
 fun InteractiveWindowCadCanvas(
@@ -59,6 +60,7 @@ fun InteractiveWindowCadCanvas(
     onEqualizeChain: (Boolean) -> Unit,
     onEditDoorImpostHeight: (String, Float) -> Unit = { _, _ -> },
     onToggleDoorBottomSandwich: (String) -> Unit = {},
+    onEditShtulpLeafWidth: (frameId: String, openingId: String, isLeftLeaf: Boolean, currentMm: Float) -> Unit = { _, _, _, _ -> },
     topSafeInsetPx: Float = 0f,
     rightSafeInsetPx: Float = 0f,
     bottomSafeInsetPx: Float = 0f,
@@ -77,6 +79,7 @@ fun InteractiveWindowCadCanvas(
     val latestOnEqualizeChain by rememberUpdatedState(onEqualizeChain)
     val latestOnEditDoorImpostHeight by rememberUpdatedState(onEditDoorImpostHeight)
     val latestOnToggleDoorBottomSandwich by rememberUpdatedState(onToggleDoorBottomSandwich)
+    val latestOnEditShtulpLeafWidth by rememberUpdatedState(onEditShtulpLeafWidth)
     val palette = LocalWinStudioPalette.current
 
     Canvas(
@@ -85,10 +88,9 @@ fun InteractiveWindowCadCanvas(
             .background(palette.canvasBg)
             .pointerInput(topology, showControls) {
                 detectTapGestures { tap ->
-                    // 1. Сначала проверяем прямоугольные капсулы размеров (включая внутренний размер импоста двери),
-                    //    приоритет у последних добавленных (верхних по Z-порядку)
+                    // Проверяем кружки (priorityCircles идут ПОСЛЕ centerOpeningCircles -> срабатывают первыми)
                     val hitCircle = circleHotspots.lastOrNull { c ->
-                        hypot(tap.x - c.center.x, tap.y - c.center.y) <= c.radius * 1.25f
+                        hypot(tap.x - c.center.x, tap.y - c.center.y) <= c.hitRadius
                     }
                     if (hitCircle != null) {
                         hitCircle.action()
@@ -118,9 +120,10 @@ fun InteractiveWindowCadCanvas(
         val yCoords = latestTopology.yGridCoords
         val hasMultiX = xCoords.size > 2
         val hasMultiY = yCoords.size > 2
+        val hasAnyShtulp = latestTopology.allOpenings.any { it.properties.openingType.isShtulp }
 
         // Адаптивные отступы: чертёж занимает всю область между панелями с комфортными полями ~12–14 dp
-        val dimOverhangBottom = if (hasMultiX) 114f + 12.dp.toPx() else 70f + 12.dp.toPx()
+        val dimOverhangBottom = if (hasMultiX || hasAnyShtulp) 114f + 12.dp.toPx() else 70f + 12.dp.toPx()
         val padLeft = if (hasMultiY) 192f else 108f
         val padRight = max(14.dp.toPx(), rightSafeInsetPx)
         val rawPadTop = max(14.dp.toPx(), topSafeInsetPx + 12.dp.toPx())
@@ -143,7 +146,8 @@ fun InteractiveWindowCadCanvas(
         val originX = padLeft + (availW - drawW) / 2f
         val originY = padTop + (availH - drawH) / 2f
 
-        val newCircles = mutableListOf<CircleHotspot>()
+        val centerOpeningCircles = mutableListOf<CircleHotspot>()
+        val priorityCircles = mutableListOf<CircleHotspot>()
         val newRects = mutableListOf<RectHotspot>()
 
         val frameFillColor = Color(colorItem.hexColor)
@@ -451,12 +455,6 @@ fun InteractiveWindowCadCanvas(
 
                 drawClearOpeningSizeLabel(frame, op, glassLeft, glassTop, glassRight, glassBottom)
 
-                newRects.add(
-                    RectHotspot(Rect(glassLeft, glassTop, glassRight, glassBottom)) {
-                        latestOnOpenCellDialog(op)
-                    }
-                )
-
                 if (showControls) {
                     val centerRadius = min(glassRight - glassLeft, glassBottom - glassTop).coerceIn(28f, 52f) * 0.45f
                     drawCircle(
@@ -464,10 +462,11 @@ fun InteractiveWindowCadCanvas(
                         radius = centerRadius,
                         center = Offset(cx, cy)
                     )
-                    newCircles.add(
+                    centerOpeningCircles.add(
                         CircleHotspot(
                             center = Offset(cx, cy),
                             radius = centerRadius,
+                            hitRadius = centerRadius * 2f,
                             action = { latestOnOpenCellDialog(op) }
                         )
                     )
@@ -482,7 +481,7 @@ fun InteractiveWindowCadCanvas(
                         drawCircle(Color(0x553B8EEA), cornerR, tlCenter)
                         drawLine(iconColor, Offset(tlCenter.x - 5.5f, tlCenter.y - 11f), Offset(tlCenter.x - 5.5f, tlCenter.y + 11f), 3.4f)
                         drawLine(iconColor, Offset(tlCenter.x + 5.5f, tlCenter.y - 11f), Offset(tlCenter.x + 5.5f, tlCenter.y + 11f), 3.4f)
-                        newCircles.add(
+                        priorityCircles.add(
                             CircleHotspot(tlCenter, cornerR) {
                                 latestOnQuickSplitCell(op.id, ImpostDirection.VERTICAL, 3)
                             }
@@ -492,7 +491,7 @@ fun InteractiveWindowCadCanvas(
                         val blCenter = Offset(glassLeft + offsetFromEdge, glassBottom - offsetFromEdge)
                         drawCircle(Color(0x553B8EEA), cornerR, blCenter)
                         drawLine(iconColor, Offset(blCenter.x, blCenter.y - 11f), Offset(blCenter.x, blCenter.y + 11f), 3.4f)
-                        newCircles.add(
+                        priorityCircles.add(
                             CircleHotspot(blCenter, cornerR) {
                                 latestOnQuickSplitCell(op.id, ImpostDirection.VERTICAL, 2)
                             }
@@ -503,7 +502,7 @@ fun InteractiveWindowCadCanvas(
                         drawCircle(Color(0x553B8EEA), cornerR, trCenter)
                         drawLine(iconColor, Offset(trCenter.x - 11f, trCenter.y - 5.5f), Offset(trCenter.x + 11f, trCenter.y - 5.5f), 3.4f)
                         drawLine(iconColor, Offset(trCenter.x - 11f, trCenter.y + 5.5f), Offset(trCenter.x + 11f, trCenter.y + 5.5f), 3.4f)
-                        newCircles.add(
+                        priorityCircles.add(
                             CircleHotspot(trCenter, cornerR) {
                                 latestOnQuickSplitCell(op.id, ImpostDirection.HORIZONTAL, 3)
                             }
@@ -513,7 +512,7 @@ fun InteractiveWindowCadCanvas(
                         val brCenter = Offset(glassRight - offsetFromEdge, glassBottom - offsetFromEdge)
                         drawCircle(Color(0x553B8EEA), cornerR, brCenter)
                         drawLine(iconColor, Offset(brCenter.x - 11f, brCenter.y), Offset(brCenter.x + 11f, brCenter.y), 3.4f)
-                        newCircles.add(
+                        priorityCircles.add(
                             CircleHotspot(brCenter, cornerR) {
                                 latestOnQuickSplitCell(op.id, ImpostDirection.HORIZONTAL, 2)
                             }
@@ -522,7 +521,134 @@ fun InteractiveWindowCadCanvas(
                 }
             }
 
-            // --- СЛОЙ 4: СТВОРКИ И ДВЕРИ (рисуются ПОВЕРХ РАМЫ И ПОВЕРХ ИМПОСТОВ!) ---
+            // Вспомогательная отрисовка внутреннего заполнения створки/двери (5 вариантов импостов + сэндвич по индексам)
+            fun drawSashInteriorWithImposts(
+                innerL: Float,
+                innerT: Float,
+                innerR: Float,
+                innerB: Float,
+                op: OpeningCellNode,
+                props: OpeningProperties,
+                showImpostHeightDim: Boolean
+            ): Pair<Float?, Offset> {
+                val mode = props.effectiveSashImpostMode()
+                val halfImpPx = (impostWidthPx * 0.46f).coerceAtLeast(5.0f)
+                var impostHeightAnchorY: Float? = null
+                var primaryPaneCenter = Offset((innerL + innerR) / 2f, (innerT + innerB) / 2f)
+
+                when (mode) {
+                    SashImpostMode.NONE -> {
+                        drawRect(borderDark, Offset(innerL, innerT), Size(innerR - innerL, innerB - innerT), style = Stroke(1.5f))
+                        drawGlassOrSandwichPane(
+                            gLeft = innerL + shtapikPx,
+                            gTop = innerT + shtapikPx,
+                            gRight = innerR - shtapikPx,
+                            gBottom = innerB - shtapikPx,
+                            isSandwich = props.isPaneSandwich(0),
+                            glazingBars = props.glazingBars,
+                            hasMosquito = props.hasMosquitoNet
+                        )
+                    }
+                    SashImpostMode.V1 -> {
+                        val mx = (innerL + innerR) / 2f
+                        val lRight = (mx - halfImpPx).coerceAtLeast(innerL + 8f)
+                        val rLeft = (mx + halfImpPx).coerceAtMost(innerR - 8f)
+                        drawRect(borderDark, Offset(innerL, innerT), Size(lRight - innerL, innerB - innerT), style = Stroke(1.5f))
+                        drawGlassOrSandwichPane(innerL + shtapikPx, innerT + shtapikPx, lRight - shtapikPx, innerB - shtapikPx, props.isPaneSandwich(0), props.glazingBars, props.hasMosquitoNet)
+                        drawRect(borderDark, Offset(rLeft, innerT), Size(innerR - rLeft, innerB - innerT), style = Stroke(1.5f))
+                        drawGlassOrSandwichPane(rLeft + shtapikPx, innerT + shtapikPx, innerR - shtapikPx, innerB - shtapikPx, props.isPaneSandwich(1), props.glazingBars, props.hasMosquitoNet)
+                        drawRect(frameFillColor, Offset(lRight, innerT), Size(rLeft - lRight, innerB - innerT))
+                        drawRect(borderDark, Offset(lRight, innerT), Size(rLeft - lRight, innerB - innerT), style = Stroke(1.5f))
+                    }
+                    SashImpostMode.H1 -> {
+                        val impHeightMm = props.sashImpostHeightFromBottomMm.coerceIn(180f, (op.heightMm - 180f).coerceAtLeast(200f))
+                        val impCenterY = if ((innerB - innerT) > 60f) {
+                            (originY + op.bottomMm * scale - impHeightMm * scale).coerceIn(innerT + 26f, innerB - 26f)
+                        } else {
+                            (innerT + innerB) / 2f
+                        }
+                        impostHeightAnchorY = impCenterY
+                        val topSubBottom = impCenterY - halfImpPx
+                        val botSubTop = impCenterY + halfImpPx
+                        drawRect(borderDark, Offset(innerL, innerT), Size(innerR - innerL, topSubBottom - innerT), style = Stroke(1.5f))
+                        drawGlassOrSandwichPane(innerL + shtapikPx, innerT + shtapikPx, innerR - shtapikPx, topSubBottom - shtapikPx, props.isPaneSandwich(0), props.glazingBars, props.hasMosquitoNet)
+                        drawRect(borderDark, Offset(innerL, botSubTop), Size(innerR - innerL, innerB - botSubTop), style = Stroke(1.5f))
+                        drawGlassOrSandwichPane(innerL + shtapikPx, botSubTop + shtapikPx, innerR - shtapikPx, innerB - shtapikPx, props.isPaneSandwich(1), GlazingBarsPattern.NONE, props.hasMosquitoNet)
+                        drawRect(frameFillColor, Offset(innerL, topSubBottom), Size(innerR - innerL, botSubTop - topSubBottom))
+                        drawRect(borderDark, Offset(innerL, topSubBottom), Size(innerR - innerL, botSubTop - topSubBottom), style = Stroke(1.5f))
+                        primaryPaneCenter = Offset((innerL + innerR) / 2f, (innerT + topSubBottom) / 2f)
+
+                        if (showImpostHeightDim && (innerB - innerT) > 60f) {
+                            val doorBottomAxisY = originY + op.bottomMm * scale
+                            val dimX = (innerL + innerR) / 2f
+                            drawLine(Color(0xFF222222), Offset(dimX, impCenterY), Offset(dimX, doorBottomAxisY), 1.4f)
+                            drawCircle(Color.Black, 4f, Offset(dimX, impCenterY))
+                            drawCircle(Color.Black, 4f, Offset(dimX, doorBottomAxisY))
+                            drawDimensionCapsule(dimX, (impCenterY + doorBottomAxisY) / 2f, "${impHeightMm.roundToInt()}") {
+                                latestOnEditDoorImpostHeight(op.id, impHeightMm)
+                            }
+                            if (showControls) {
+                                val botCircleCenter = Offset((innerR - 26f).coerceAtLeast(dimX + 24f), (botSubTop + innerB) / 2f)
+                                drawCircle(Color(0x553B8EEA), 18f, botCircleCenter)
+                                priorityCircles.add(
+                                    CircleHotspot(botCircleCenter, 18f) {
+                                        latestOnToggleDoorBottomSandwich(op.id)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    SashImpostMode.V2 -> {
+                        val step = (innerR - innerL) / 3f
+                        val x1 = innerL + step
+                        val x2 = innerL + step * 2f
+                        val b0 = Offset(innerL, innerT) to Size((x1 - halfImpPx - innerL).coerceAtLeast(6f), innerB - innerT)
+                        val l1 = x1 + halfImpPx
+                        val b1 = Offset(l1, innerT) to Size((x2 - halfImpPx - l1).coerceAtLeast(6f), innerB - innerT)
+                        val l2 = x2 + halfImpPx
+                        val b2 = Offset(l2, innerT) to Size((innerR - l2).coerceAtLeast(6f), innerB - innerT)
+                        listOf(b0, b1, b2).forEachIndexed { idx, (tl, sz) ->
+                            drawRect(borderDark, tl, sz, style = Stroke(1.5f))
+                            drawGlassOrSandwichPane(tl.x + shtapikPx, tl.y + shtapikPx, tl.x + sz.width - shtapikPx, tl.y + sz.height - shtapikPx, props.isPaneSandwich(idx), props.glazingBars, props.hasMosquitoNet)
+                        }
+                        listOf(x1, x2).forEach { ix ->
+                            drawRect(frameFillColor, Offset(ix - halfImpPx, innerT), Size(halfImpPx * 2f, innerB - innerT))
+                            drawRect(borderDark, Offset(ix - halfImpPx, innerT), Size(halfImpPx * 2f, innerB - innerT), style = Stroke(1.5f))
+                        }
+                    }
+                    SashImpostMode.H2 -> {
+                        val step = (innerB - innerT) / 3f
+                        val y1 = innerT + step
+                        val y2 = innerT + step * 2f
+                        val b0 = Offset(innerL, innerT) to Size(innerR - innerL, (y1 - halfImpPx - innerT).coerceAtLeast(6f))
+                        val t1 = y1 + halfImpPx
+                        val b1 = Offset(innerL, t1) to Size(innerR - innerL, (y2 - halfImpPx - t1).coerceAtLeast(6f))
+                        val t2 = y2 + halfImpPx
+                        val b2 = Offset(innerL, t2) to Size(innerR - innerL, (innerB - t2).coerceAtLeast(6f))
+                        listOf(b0, b1, b2).forEachIndexed { idx, (tl, sz) ->
+                            drawRect(borderDark, tl, sz, style = Stroke(1.5f))
+                            drawGlassOrSandwichPane(tl.x + shtapikPx, tl.y + shtapikPx, tl.x + sz.width - shtapikPx, tl.y + sz.height - shtapikPx, props.isPaneSandwich(idx), props.glazingBars, props.hasMosquitoNet)
+                        }
+                        listOf(y1, y2).forEach { iy ->
+                            drawRect(frameFillColor, Offset(innerL, iy - halfImpPx), Size(innerR - innerL, halfImpPx * 2f))
+                            drawRect(borderDark, Offset(innerL, iy - halfImpPx), Size(innerR - innerL, halfImpPx * 2f), style = Stroke(1.5f))
+                        }
+                    }
+                }
+                return impostHeightAnchorY to primaryPaneCenter
+            }
+
+            fun drawShootboltsCanvas(edgeX: Float, glassTop: Float, glassBottom: Float, outerTop: Float, outerBottom: Float, onRightEdge: Boolean) {
+                val dir = if (onRightEdge) -1f else 1f
+                val latchCol = Color(0xFF1E2228)
+                val latchReach = min(18f, (glassBottom - glassTop) * 0.12f)
+                drawLine(latchCol, Offset(edgeX, outerTop - 2f), Offset(edgeX, glassTop + latchReach), 3.0f)
+                drawLine(latchCol, Offset(edgeX, glassTop + latchReach), Offset(edgeX + dir * 7f, glassTop + latchReach), 3.0f)
+                drawLine(latchCol, Offset(edgeX, outerBottom + 2f), Offset(edgeX, glassBottom - latchReach), 3.0f)
+                drawLine(latchCol, Offset(edgeX, glassBottom - latchReach), Offset(edgeX + dir * 7f, glassBottom - latchReach), 3.0f)
+            }
+
+            // --- СЛОЙ 4: СТВОРКИ, ДВЕРИ И ШТУЛЬП (рисуются ПОВЕРХ РАМЫ И ПОВЕРХ ИМПОСТОВ!) ---
             frame.openings.filter { it.properties.openingType.hasSashProfile }.forEach { op ->
                 val insetLeft = if (abs(op.leftMm - frame.leftMm) < 2f) frameWidthPx else impostWidthPx / 2f
                 val insetRight = if (abs(op.rightMm - frame.rightMm) < 2f) frameWidthPx else impostWidthPx / 2f
@@ -537,199 +663,123 @@ fun InteractiveWindowCadCanvas(
                 if (orx <= ol + 8f || ob <= ot + 8f) return@forEach
 
                 val props = op.properties
-                // Наплав створки/двери ложится ПОВЕРХ рамы и ПОВЕРХ импостов со всех 4 сторон!
                 val sl = ol - overlapPx
                 val st = ot - overlapPx
                 val sr = orx + overlapPx
                 val sb = ob + overlapPx
-                val sw = if (props.isDoorSash) doorSashWidthPx else sashWidthPx
+                val sw = if (props.isDoorSash || props.isReverseDoorSash) doorSashWidthPx else sashWidthPx
 
-                // Внешняя тень створки/двери падает и на раму, и на импост!
-                if (showShadows) {
-                    drawRect(
-                        color = Color(0x36000000),
-                        topLeft = Offset(sl + 4.5f, st + 4.5f),
-                        size = Size(sr - sl, sb - st)
-                    )
-                }
+                if (props.openingType.isShtulp) {
+                    val geom = WindowCadOperations.computeShtulpGeometry(frame, op, profileSystem)
+                    val axisXPx = originX + geom.axisXMm * scale
+                    val overlapMm = when {
+                        props.isReverseDoorSash -> profileSystem.revDoorOverlapMm
+                        props.isDoorSash -> profileSystem.doorOverlapMm
+                        else -> profileSystem.sashOverlapMm
+                    }
+                    val gapMm = max(0f, profileSystem.shtulpRebateG1Mm - overlapMm)
+                    val halfGapPx = max(2.5f, (gapMm * scale) / 2f)
 
-                // Полотно профиля створки или широкой двери
-                drawRect(
-                    color = frameFillColor,
-                    topLeft = Offset(sl, st),
-                    size = Size(sr - sl, sb - st)
-                )
-                drawRect(
-                    color = borderDark,
-                    topLeft = Offset(sl, st),
-                    size = Size(sr - sl, sb - st),
-                    style = Stroke(width = 2.1f)
-                )
+                    val lOuterR = (axisXPx - halfGapPx).coerceAtLeast(sl + sw * 2f + 12f)
+                    val rOuterL = (axisXPx + halfGapPx).coerceAtMost(sr - sw * 2f - 12f)
 
-                // Углы заусовки 45° створки/двери
-                drawLine(borderInner, Offset(sl, st), Offset(sl + sw, st + sw), 1.4f)
-                drawLine(borderInner, Offset(sr, st), Offset(sr - sw, st + sw), 1.4f)
-                drawLine(borderInner, Offset(sl, sb), Offset(sl + sw, sb - sw), 1.4f)
-                drawLine(borderInner, Offset(sr, sb), Offset(sr - sw, sb - sw), 1.4f)
-
-                val innerL = (sl + sw).coerceAtMost(sr - 6f)
-                val innerT = (st + sw).coerceAtMost(sb - 6f)
-                val innerR = (sr - sw).coerceAtLeast(innerL + 6f)
-                val innerB = (sb - sw).coerceAtLeast(innerT + 6f)
-
-                if (props.hasHorizontalSashImpost && (innerB - innerT) > 60f) {
-                    // --- СТВОРКА / ДВЕРЬ С ВНУТРЕННИМ ГОРИЗОНТАЛЬНЫМ ИМПОСТОМ (как на 01:44 и 03:57 в видео!) ---
-                    val impHeightMm = props.sashImpostHeightFromBottomMm.coerceIn(180f, (op.heightMm - 180f).coerceAtLeast(200f))
-                    val impCenterY = (originY + op.bottomMm * scale - impHeightMm * scale)
-                        .coerceIn(innerT + 28f, innerB - 28f)
-                    val halfImpPx = (impostWidthPx * 0.48f).coerceAtLeast(5.5f)
-
-                    // Верхний проем внутри двери/створки
-                    val topSubBottom = impCenterY - halfImpPx
-                    drawRect(
-                        color = borderDark,
-                        topLeft = Offset(innerL, innerT),
-                        size = Size(innerR - innerL, topSubBottom - innerT),
-                        style = Stroke(width = 1.5f)
-                    )
-                    val topGlassL = innerL + shtapikPx
-                    val topGlassT = innerT + shtapikPx
-                    val topGlassR = innerR - shtapikPx
-                    val topGlassB = topSubBottom - shtapikPx
-
-                    drawGlassOrSandwichPane(
-                        gLeft = topGlassL,
-                        gTop = topGlassT,
-                        gRight = topGlassR,
-                        gBottom = topGlassB,
-                        isSandwich = props.isSandwichFilling,
-                        glazingBars = props.glazingBars,
-                        hasMosquito = props.hasMosquitoNet
-                    )
-
-                    // Нижний проем внутри двери/створки
-                    val botSubTop = impCenterY + halfImpPx
-                    drawRect(
-                        color = borderDark,
-                        topLeft = Offset(innerL, botSubTop),
-                        size = Size(innerR - innerL, innerB - botSubTop),
-                        style = Stroke(width = 1.5f)
-                    )
-                    val botGlassL = innerL + shtapikPx
-                    val botGlassT = botSubTop + shtapikPx
-                    val botGlassR = innerR - shtapikPx
-                    val botGlassB = innerB - shtapikPx
-
-                    drawGlassOrSandwichPane(
-                        gLeft = botGlassL,
-                        gTop = botGlassT,
-                        gRight = botGlassR,
-                        gBottom = botGlassB,
-                        isSandwich = props.bottomPartIsSandwich || props.isSandwichFilling,
-                        glazingBars = GlazingBarsPattern.NONE,
-                        hasMosquito = props.hasMosquitoNet
-                    )
-
-                    // Сам горизонтальный импост внутри створки/двери
-                    drawRect(
-                        color = frameFillColor,
-                        topLeft = Offset(innerL, topSubBottom),
-                        size = Size(innerR - innerL, botSubTop - topSubBottom)
-                    )
-                    drawRect(
-                        color = borderDark,
-                        topLeft = Offset(innerL, topSubBottom),
-                        size = Size(innerR - innerL, botSubTop - topSubBottom),
-                        style = Stroke(width = 1.5f)
-                    )
-
-                    // Линии открывания рисуются по всему внутреннему контуру двери (как на 01:44 в видео!),
-                    // а ручка ставится на уровне импоста/середины двери
-                    drawOpeningLinesAndHandle(
-                        openingType = props.openingType,
-                        glassLeft = topGlassL,
-                        glassTop = topGlassT,
-                        glassRight = topGlassR,
-                        glassBottom = botGlassB,
-                        sashBandPx = sw,
-                        handleOverrideY = impCenterY
-                    )
-
-                    val topCx = (topGlassL + topGlassR) / 2f
-                    val topCy = (topGlassT + topGlassB) / 2f
-                    val botCx = (botGlassL + botGlassR) / 2f
-                    val botCy = (botGlassT + botGlassB) / 2f
-
-                    drawClearOpeningSizeLabel(frame, op, topGlassL, topGlassT, topGlassR, topGlassB)
-
-                    newRects.add(
-                        RectHotspot(Rect(topGlassL, topGlassT, topGlassR, topGlassB)) {
-                            latestOnOpenCellDialog(op)
+                    listOf(Triple(sl, lOuterR, true), Triple(rOuterL, sr, false)).forEach { (leafL, leafR, isLeftLeaf) ->
+                        if (showShadows) {
+                            drawRect(Color(0x36000000), Offset(leafL + 4.5f, st + 4.5f), Size(leafR - leafL, sb - st))
                         }
-                    )
-                    newRects.add(
-                        RectHotspot(Rect(botGlassL, botGlassT, botGlassR, botGlassB)) {
-                            latestOnToggleDoorBottomSandwich(op.id)
-                        }
-                    )
+                        drawRect(frameFillColor, Offset(leafL, st), Size(leafR - leafL, sb - st))
+                        drawRect(borderDark, Offset(leafL, st), Size(leafR - leafL, sb - st), style = Stroke(2.1f))
 
-                    // Внутренняя вертикальная размерная линия высоты импоста двери (как `1076` -> `800` на 01:44–01:50 в видео!)
-                    val doorBottomAxisY = originY + op.bottomMm * scale
-                    val dimX = (botGlassL + botGlassR) / 2f
-                    drawLine(Color(0xFF222222), Offset(dimX, impCenterY), Offset(dimX, doorBottomAxisY), 1.4f)
-                    drawCircle(Color.Black, 4f, Offset(dimX, impCenterY))
-                    drawCircle(Color.Black, 4f, Offset(dimX, doorBottomAxisY))
-                    drawDimensionCapsule(
-                        cx = dimX,
-                        cy = (impCenterY + doorBottomAxisY) / 2f,
-                        label = "${impHeightMm.roundToInt()}"
-                    ) {
-                        latestOnEditDoorImpostHeight(op.id, impHeightMm)
+                        val innerL = (leafL + sw).coerceAtMost(leafR - 6f)
+                        val innerT = (st + sw).coerceAtMost(sb - 6f)
+                        val innerR = (leafR - sw).coerceAtLeast(innerL + 6f)
+                        val innerB = (sb - sw).coerceAtLeast(innerT + 6f)
+
+                        drawLine(borderInner, Offset(leafL, st), Offset(innerL, innerT), 1.4f)
+                        drawLine(borderInner, Offset(leafR, st), Offset(innerR, innerT), 1.4f)
+                        drawLine(borderInner, Offset(leafL, sb), Offset(innerL, innerB), 1.4f)
+                        drawLine(borderInner, Offset(leafR, sb), Offset(innerR, innerB), 1.4f)
+
+                        val (impAnchorY, _) = drawSashInteriorWithImposts(innerL, innerT, innerR, innerB, op, props, showImpostHeightDim = !isLeftLeaf)
+
+                        val gL = innerL + shtapikPx
+                        val gT = innerT + shtapikPx
+                        val gR = innerR - shtapikPx
+                        val gB = innerB - shtapikPx
+                        val handleY = impAnchorY ?: ((gT + gB) / 2f)
+                        val lCx = (gL + gR) / 2f
+                        val lineCol = Color(0xFF1E2228)
+
+                        if (isLeftLeaf) {
+                            drawLine(lineCol, Offset(gL, gT), Offset(gR, handleY), 1.5f)
+                            drawLine(lineCol, Offset(gR, handleY), Offset(gL, gB), 1.5f)
+                            if (props.openingType.isShtulpLeftTiltTurn) {
+                                drawLine(lineCol, Offset(gL, gB), Offset(lCx, gT), 1.5f)
+                                drawLine(lineCol, Offset(lCx, gT), Offset(gR, gB), 1.5f)
+                            }
+                            if (props.openingType.isShtulpLeftPassive) {
+                                drawShootboltsCanvas(gR - 4f, gT, gB, st, sb, onRightEdge = true)
+                            } else {
+                                drawRect(Color.White, Offset(gR + sw * 0.45f - 3.5f, handleY - 14f), Size(7f, 28f))
+                                drawRect(Color(0xFF555555), Offset(gR + sw * 0.45f - 3.5f, handleY - 14f), Size(7f, 28f), style = Stroke(1.3f))
+                            }
+                        } else {
+                            drawLine(lineCol, Offset(gR, gT), Offset(gL, handleY), 1.5f)
+                            drawLine(lineCol, Offset(gL, handleY), Offset(gR, gB), 1.5f)
+                            if (props.openingType.isShtulpRightTiltTurn) {
+                                drawLine(lineCol, Offset(gL, gB), Offset(lCx, gT), 1.5f)
+                                drawLine(lineCol, Offset(lCx, gT), Offset(gR, gB), 1.5f)
+                            }
+                            if (props.openingType.isShtulpRightPassive) {
+                                drawShootboltsCanvas(gL + 4f, gT, gB, st, sb, onRightEdge = false)
+                            } else {
+                                drawRect(Color.White, Offset(gL - sw * 0.45f - 3.5f, handleY - 14f), Size(7f, 28f))
+                                drawRect(Color(0xFF555555), Offset(gL - sw * 0.45f - 3.5f, handleY - 14f), Size(7f, 28f), style = Stroke(1.3f))
+                            }
+                        }
                     }
 
+                    // Вертикальная центральная штульповая планка по центру зазора
+                    drawRect(frameFillColor, Offset(axisXPx - halfGapPx, st), Size(halfGapPx * 2f, sb - st))
+                    drawRect(borderDark, Offset(axisXPx - halfGapPx, st), Size(halfGapPx * 2f, sb - st), style = Stroke(1.6f))
+
+                    drawClearOpeningSizeLabel(frame, op, sl + sw, st + sw, sr - sw, sb - sw)
                     if (showControls) {
-                        // Голубой кружок в верхней части двери -> открывает диалог проема
-                        val rTop = min(topGlassR - topGlassL, topGlassB - topGlassT).coerceIn(26f, 48f) * 0.44f
-                        drawCircle(Color(0x553B8EEA), rTop, Offset(topCx, topCy))
-                        newCircles.add(
-                            CircleHotspot(Offset(topCx, topCy), rTop) {
-                                latestOnOpenCellDialog(op)
-                            }
-                        )
-                        // Голубой кружок в нижней части двери (справа от размерной линии, чтобы не перекрывать капсулу `800`)
-                        val botCircleCenter = Offset(
-                            (botGlassR - 26f).coerceAtLeast(botCx + 24f),
-                            botCy
-                        )
-                        drawCircle(Color(0x553B8EEA), 18f, botCircleCenter)
-                        newCircles.add(
-                            CircleHotspot(botCircleCenter, 18f) {
-                                latestOnToggleDoorBottomSandwich(op.id)
-                            }
+                        val centerRadius = min(sr - sl, sb - st).coerceIn(28f, 52f) * 0.42f
+                        val shtulpCenter = Offset(axisXPx, (st + sb) / 2f)
+                        drawCircle(Color(0x553B8EEA), centerRadius, shtulpCenter)
+                        centerOpeningCircles.add(
+                            CircleHotspot(
+                                center = shtulpCenter,
+                                radius = centerRadius,
+                                hitRadius = centerRadius * 2f,
+                                action = { latestOnOpenCellDialog(op) }
+                            )
                         )
                     }
                 } else {
-                    // --- ОБЫЧНАЯ СТВОРКА ИЛИ ДВЕРЬ БЕЗ ВНУТРЕННЕГО ИМПОСТА ---
-                    drawRect(
-                        color = borderDark,
-                        topLeft = Offset(innerL, innerT),
-                        size = Size(innerR - innerL, innerB - innerT),
-                        style = Stroke(width = 1.5f)
-                    )
+                    if (showShadows) {
+                        drawRect(Color(0x36000000), Offset(sl + 4.5f, st + 4.5f), Size(sr - sl, sb - st))
+                    }
+                    drawRect(frameFillColor, Offset(sl, st), Size(sr - sl, sb - st))
+                    drawRect(borderDark, Offset(sl, st), Size(sr - sl, sb - st), style = Stroke(2.1f))
+
+                    val innerL = (sl + sw).coerceAtMost(sr - 6f)
+                    val innerT = (st + sw).coerceAtMost(sb - 6f)
+                    val innerR = (sr - sw).coerceAtLeast(innerL + 6f)
+                    val innerB = (sb - sw).coerceAtLeast(innerT + 6f)
+
+                    drawLine(borderInner, Offset(sl, st), Offset(innerL, innerT), 1.4f)
+                    drawLine(borderInner, Offset(sr, st), Offset(innerR, innerT), 1.4f)
+                    drawLine(borderInner, Offset(sl, sb), Offset(innerL, innerB), 1.4f)
+                    drawLine(borderInner, Offset(sr, sb), Offset(innerR, innerB), 1.4f)
+
+                    val (impAnchorY, primaryCenter) = drawSashInteriorWithImposts(innerL, innerT, innerR, innerB, op, props, showImpostHeightDim = true)
+
                     val glassLeft = innerL + shtapikPx
                     val glassTop = innerT + shtapikPx
                     val glassRight = innerR - shtapikPx
                     val glassBottom = innerB - shtapikPx
-
-                    drawGlassOrSandwichPane(
-                        gLeft = glassLeft,
-                        gTop = glassTop,
-                        gRight = glassRight,
-                        gBottom = glassBottom,
-                        isSandwich = props.isSandwichFilling,
-                        glazingBars = props.glazingBars,
-                        hasMosquito = props.hasMosquitoNet
-                    )
 
                     drawOpeningLinesAndHandle(
                         openingType = props.openingType,
@@ -737,31 +787,20 @@ fun InteractiveWindowCadCanvas(
                         glassTop = glassTop,
                         glassRight = glassRight,
                         glassBottom = glassBottom,
-                        sashBandPx = sw
+                        sashBandPx = sw,
+                        handleOverrideY = impAnchorY
                     )
-
-                    val cx = (glassLeft + glassRight) / 2f
-                    val cy = (glassTop + glassBottom) / 2f
 
                     drawClearOpeningSizeLabel(frame, op, glassLeft, glassTop, glassRight, glassBottom)
 
-                    newRects.add(
-                        RectHotspot(Rect(glassLeft, glassTop, glassRight, glassBottom)) {
-                            latestOnOpenCellDialog(op)
-                        }
-                    )
-
                     if (showControls) {
                         val centerRadius = min(glassRight - glassLeft, glassBottom - glassTop).coerceIn(28f, 52f) * 0.45f
-                        drawCircle(
-                            color = Color(0x553B8EEA),
-                            radius = centerRadius,
-                            center = Offset(cx, cy)
-                        )
-                        newCircles.add(
+                        drawCircle(Color(0x553B8EEA), centerRadius, primaryCenter)
+                        centerOpeningCircles.add(
                             CircleHotspot(
-                                center = Offset(cx, cy),
+                                center = primaryCenter,
                                 radius = centerRadius,
+                                hitRadius = centerRadius * 2f,
                                 action = { latestOnOpenCellDialog(op) }
                             )
                         )
@@ -789,7 +828,7 @@ fun InteractiveWindowCadCanvas(
                         val d = 6.2f
                         drawLine(Color(0xFF8E0000), Offset(center.x - d, center.y - d), Offset(center.x + d, center.y + d), 2.8f)
                         drawLine(Color(0xFF8E0000), Offset(center.x - d, center.y + d), Offset(center.x + d, center.y - d), 2.8f)
-                        newCircles.add(
+                        priorityCircles.add(
                             CircleHotspot(center, r) {
                                 latestOnRemoveImpost(imp.id)
                             }
@@ -801,27 +840,61 @@ fun InteractiveWindowCadCanvas(
 
         // --- СЛОЙ 6: ВНЕШНИЕ РАЗМЕРНЫЕ ЦЕПОЧКИ СНИЗУ И СЛЕВА ---
         val dimLine = palette.dimLineColor
-        if (hasMultiX) {
-            val segLineY = originY + drawH + 44f
+        data class BottomXSeg(
+            val x1Mm: Float,
+            val x2Mm: Float,
+            val chainIdx: Int?,
+            val shtulpFrameId: String? = null,
+            val shtulpOpId: String? = null,
+            val isLeftLeaf: Boolean = false
+        )
+        val xBottomSegments = buildList {
             for (i in 0 until (xCoords.size - 1)) {
-                val x1 = originX + xCoords[i] * scale
-                val x2 = originX + xCoords[i + 1] * scale
-                val segLen = xCoords[i + 1] - xCoords[i]
+                val segStart = xCoords[i]
+                val segEnd = xCoords[i + 1]
+                val shtulpMatch = latestTopology.frames.firstNotNullOfOrNull { f ->
+                    f.openings.find { op ->
+                        op.properties.openingType.isShtulp &&
+                            abs(op.leftMm - segStart) <= 2f &&
+                            abs(op.rightMm - segEnd) <= 2f
+                    }?.let { f to it }
+                }
+                if (shtulpMatch != null) {
+                    val geom = WindowCadOperations.computeShtulpGeometry(shtulpMatch.first, shtulpMatch.second, profileSystem)
+                    add(BottomXSeg(segStart, geom.axisXMm, null, shtulpMatch.first.id, shtulpMatch.second.id, isLeftLeaf = true))
+                    add(BottomXSeg(geom.axisXMm, segEnd, null, shtulpMatch.first.id, shtulpMatch.second.id, isLeftLeaf = false))
+                } else {
+                    add(BottomXSeg(segStart, segEnd, chainIdx = i))
+                }
+            }
+        }
+
+        if (hasMultiX || xBottomSegments.size > 1) {
+            val segLineY = originY + drawH + 44f
+            xBottomSegments.forEach { seg ->
+                val x1 = originX + seg.x1Mm * scale
+                val x2 = originX + seg.x2Mm * scale
+                val segLen = seg.x2Mm - seg.x1Mm
 
                 drawLine(dimLine, Offset(x1, segLineY), Offset(x2, segLineY), 1.5f)
                 drawCircle(dimLine, 4.5f, Offset(x1, segLineY))
                 drawCircle(dimLine, 4.5f, Offset(x2, segLineY))
 
                 val midX = (x1 + x2) / 2f
-                val segIdx = i
                 drawDimensionCapsule(midX, segLineY, "${segLen.roundToInt()}") {
-                    latestOnEditChainSegment(true, segIdx, segLen)
+                    val fId = seg.shtulpFrameId
+                    val oId = seg.shtulpOpId
+                    if (fId != null && oId != null) {
+                        latestOnEditShtulpLeafWidth(fId, oId, seg.isLeftLeaf, segLen)
+                    } else if (seg.chainIdx != null) {
+                        latestOnEditChainSegment(true, seg.chainIdx, segLen)
+                    }
                 }
             }
-            if (showControls) {
+            if (showControls && hasMultiX) {
                 val eqCenter = Offset(originX + drawW, segLineY)
                 drawCircle(palette.accentBlue.copy(alpha = 0.42f), 23f, eqCenter)
-                newCircles.add(
+                priorityCircles.add(
                     CircleHotspot(eqCenter, 23f) {
                         latestOnEqualizeChain(true)
                     }
@@ -865,7 +938,7 @@ fun InteractiveWindowCadCanvas(
             if (showControls) {
                 val eqCenter = Offset(segLineX, originY + drawH)
                 drawCircle(palette.accentBlue.copy(alpha = 0.42f), 23f, eqCenter)
-                newCircles.add(
+                priorityCircles.add(
                     CircleHotspot(eqCenter, 23f) {
                         latestOnEqualizeChain(false)
                     }
@@ -889,7 +962,8 @@ fun InteractiveWindowCadCanvas(
             }
         }
 
-        circleHotspots = newCircles
+        // priorityCircles идут ПОСЛЕ centerOpeningCircles -> при пересечении угловых/удаляющих кнопок с 2× центром побеждают приоритетные!
+        circleHotspots = centerOpeningCircles + priorityCircles
         rectHotspots = newRects
     }
 }
@@ -971,18 +1045,22 @@ private fun DrawScope.drawOpeningLinesAndHandle(
         }
         SashOpeningType.SHTULP_TURN_TURN,
         SashOpeningType.SHTULP_TILTTURN_L_TURN_R,
-        SashOpeningType.SHTULP_TURN_L_TILTTURN_R -> {
+        SashOpeningType.SHTULP_TURN_L_TILTTURN_R,
+        SashOpeningType.SHTULP_TURN_L_PASSIVE_R,
+        SashOpeningType.SHTULP_TILTTURN_L_PASSIVE_R,
+        SashOpeningType.SHTULP_PASSIVE_L_TURN_R,
+        SashOpeningType.SHTULP_PASSIVE_L_TILTTURN_R -> {
             drawLine(Color(0xFF5A5E64), Offset(cx, glassTop), Offset(cx, glassBottom), 4f)
             drawLine(lineCol, Offset(glassLeft, glassTop), Offset(cx - 2f, cy), 1.5f)
             drawLine(lineCol, Offset(cx - 2f, cy), Offset(glassLeft, glassBottom), 1.5f)
-            if (openingType == SashOpeningType.SHTULP_TILTTURN_L_TURN_R) {
+            if (openingType.isShtulpLeftTiltTurn) {
                 val lcx = (glassLeft + cx) / 2f
                 drawLine(lineCol, Offset(glassLeft, glassBottom), Offset(lcx, glassTop), 1.5f)
                 drawLine(lineCol, Offset(lcx, glassTop), Offset(cx - 2f, glassBottom), 1.5f)
             }
             drawLine(lineCol, Offset(glassRight, glassTop), Offset(cx + 2f, cy), 1.5f)
             drawLine(lineCol, Offset(cx + 2f, cy), Offset(glassRight, glassBottom), 1.5f)
-            if (openingType == SashOpeningType.SHTULP_TURN_L_TILTTURN_R) {
+            if (openingType.isShtulpRightTiltTurn) {
                 val rcx = (cx + glassRight) / 2f
                 drawLine(lineCol, Offset(cx + 2f, glassBottom), Offset(rcx, glassTop), 1.5f)
                 drawLine(lineCol, Offset(rcx, glassTop), Offset(glassRight, glassBottom), 1.5f)

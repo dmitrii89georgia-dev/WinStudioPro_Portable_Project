@@ -333,7 +333,7 @@ internal fun WorkshopAndCuttingScreen(
 
             item {
                 Text(
-                    "1. Потребность в профиле (Рама → Импост → Створка → Дверь → Штапик):",
+                    "1. Потребность в профиле (Рама → Импост → Створка → Дверь → Штульп → Добор → Угловик → Штапик):",
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
                     color = palette.textPrimary

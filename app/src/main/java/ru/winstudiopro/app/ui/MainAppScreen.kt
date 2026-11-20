@@ -91,6 +91,12 @@ sealed class NumpadRequestState(val title: String, val initialValue: Int) {
         val openingId: String,
         currentMm: Int
     ) : NumpadRequestState("Высота импоста створки/двери от низа (мм)", currentMm)
+    class ShtulpLeafWidth(
+        val frameId: String,
+        val openingId: String,
+        val isLeftLeaf: Boolean,
+        currentMm: Int
+    ) : NumpadRequestState("Ширина створки штульпа (мм)", currentMm)
 }
 
 /**
@@ -356,7 +362,8 @@ fun WinStudioProMainApp(
     // Сразу открывается 2D-редактор с рамой 1500x1500 и номером "Заказ №(дата и время)".
     // По умолчанию выбирается созданная пользователем профильная система (если есть), а не тестовая.
     fun createNewOrderAndOpenEditor() {
-        val defaultSys = profileSystems.lastOrNull { it.id != "al_test_system" }
+        val defaultSys = profileSystems.find { it.id == finSchemeSettings.defaultProfileSystemId }
+            ?: profileSystems.lastOrNull { it.id != "al_test_system" }
             ?: profileSystems.firstOrNull()
             ?: DefaultCatalogs.defaultProfileSystems().first()
         val nowStamp = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date())
@@ -563,6 +570,12 @@ fun WinStudioProMainApp(
                         ProfileConstructorScreen(
                             profileSystems = profileSystems,
                             currencySymbol = normalizeCurrencyDisplay(uiSettings.currencySymbol),
+                            defaultProfileSystemId = finSchemeSettings.defaultProfileSystemId,
+                            onSetDefaultProfileSystem = { sysId ->
+                                persistAll(
+                                    newFinSchemeSettings = finSchemeSettings.copy(defaultProfileSystemId = sysId)
+                                )
+                            },
                             onBack = { screenMode = AppScreenMode.METRO_HOME },
                             onSaveProfiles = { updated -> persistAll(newProfiles = updated) }
                         )

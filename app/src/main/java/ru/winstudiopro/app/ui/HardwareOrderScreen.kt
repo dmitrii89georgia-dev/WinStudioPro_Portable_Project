@@ -159,14 +159,16 @@ internal fun HardwareOrderScreen(
                         !it.isDoor && (
                             it.openingType == SashOpeningType.TILT_TURN_LEFT ||
                                 it.openingType == SashOpeningType.TILT_TURN_RIGHT ||
-                                it.openingType == SashOpeningType.SHTULP_TILTTURN_L_TURN_R ||
-                                it.openingType == SashOpeningType.SHTULP_TURN_L_TILTTURN_R
+                                it.openingType.isShtulpLeftTiltTurn ||
+                                it.openingType.isShtulpRightTiltTurn
                             )
                     },
                     Triple("hardware_quick_turn", "Поворотные") {
                         !it.isDoor && (
                             it.openingType == SashOpeningType.TURN_LEFT ||
                                 it.openingType == SashOpeningType.TURN_RIGHT ||
+                                it.openingType == SashOpeningType.SHTULP_TURN_L_PASSIVE_R ||
+                                it.openingType == SashOpeningType.SHTULP_PASSIVE_L_TURN_R ||
                                 it.openingType == SashOpeningType.SHTULP_TURN_TURN
                             )
                     },
@@ -434,6 +436,10 @@ private fun EditHardwareItemDialog(
                         SashOpeningType.TILT_TURN_RIGHT,
                         SashOpeningType.TURN_LEFT,
                         SashOpeningType.TURN_RIGHT,
+                        SashOpeningType.SHTULP_TURN_L_PASSIVE_R,
+                        SashOpeningType.SHTULP_TILTTURN_L_PASSIVE_R,
+                        SashOpeningType.SHTULP_PASSIVE_L_TURN_R,
+                        SashOpeningType.SHTULP_PASSIVE_L_TILTTURN_R,
                         SashOpeningType.TRANSOM_BOTTOM,
                         SashOpeningType.SLIDING_LEFT,
                         SashOpeningType.SLIDING_RIGHT

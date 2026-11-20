@@ -19,6 +19,8 @@ data class FinSchemeSettings(
     val baseMarkupMultiplier: Double = 1.40,
     val markupPresets: List<Double> = listOf(1.25, 1.35, 1.40, 1.50, 1.65),
     val discountPresets: List<DiscountPresetItem> = DefaultCashCatalogs.defaultDiscountPresets(),
+    val financialSchemes: List<FinancialSchemeItem> = DefaultCatalogs.defaultFinancialSchemes(),
+    val defaultProfileSystemId: String = "",
     val defaultVatPercent: Double = 18.0,
     val warnBelowPrimeCost: Boolean = true,
     val gelPerUsdRate: Double = 2.70

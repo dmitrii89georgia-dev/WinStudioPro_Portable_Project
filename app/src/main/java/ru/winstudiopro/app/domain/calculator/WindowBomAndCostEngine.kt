@@ -142,6 +142,8 @@ object WindowBomAndCostEngine {
                 priceMechanicSliding = 0.0,
                 priceMechanicShtulp = 0.0,
                 priceDoorHardware = 0.0,
+                priceCornerProfilePerM = 0.0,
+                priceShtulpPerM = 0.0,
                 priceSeatProfilePerM = 0.0,
                 priceDoorsillPerM = 0.0,
                 rubberCatalog = ProfileRubberCatalog(
@@ -193,6 +195,7 @@ object WindowBomAndCostEngine {
         var impostPiecesCount = 0
         var sashPerimeterM = 0.0
         var doorSashPerimeterM = 0.0
+        var shtulpLengthM = 0.0
         var windowSashLeavesTotalCount = 0
         var doorSashLeavesTotalCount = 0
         val activeShtapikH2 = matchedShtapik?.widthH2Mm ?: profile.shtapikWidthMm
@@ -390,16 +393,19 @@ object WindowBomAndCostEngine {
                         )
                     )
                 } else {
-                    val isDoubleShtulp = props.openingType == SashOpeningType.SHTULP_TURN_TURN ||
-                        props.openingType == SashOpeningType.SHTULP_TILTTURN_L_TURN_R ||
-                        props.openingType == SashOpeningType.SHTULP_TURN_L_TILTTURN_R
+                    val isDoubleShtulp = props.openingType.isShtulp
                     val isVertDouble = props.openingType == SashOpeningType.VERT_SLIDE_UP ||
                         props.openingType == SashOpeningType.VERT_SLIDE_BOTH
-
-                    val sashLeavesCount = if (isDoubleShtulp || isVertDouble) 2 else 1
-                    val singleLightW = if (isDoubleShtulp) lightW / 2f else lightW
-                    val singleLightH = if (isVertDouble) lightH / 2f else lightH
-
+                    val overlapMm = when {
+                        props.isReverseDoorSash -> profile.revDoorOverlapMm
+                        props.isDoorSash -> profile.doorOverlapMm
+                        else -> profile.sashOverlapMm
+                    }
+                    val sashProfileW = when {
+                        props.isReverseDoorSash -> profile.revDoorInnerWidthE2Mm
+                        props.isDoorSash -> profile.doorSashWidthMm
+                        else -> profile.sashWidthMm
+                    }
                     val isAnyDoor = props.isDoorSash || props.isReverseDoorSash
                     val sashShortTag = if (isAnyDoor) {
                         doorCounter += 1
@@ -408,21 +414,6 @@ object WindowBomAndCostEngine {
                         sashCounter += 1
                         if (totalWindowSashesInWin > 1) "$winNum,$sashCounter" else "$winNum"
                     }
-
-                    val overlapMm = when {
-                        props.isReverseDoorSash -> profile.revDoorOverlapMm
-                        props.isDoorSash -> profile.doorOverlapMm
-                        else -> profile.sashOverlapMm
-                    }
-                    val sashOuterWFloat = singleLightW + 2f * overlapMm
-                    val sashOuterHFloat = singleLightH + 2f * overlapMm
-                    val sashOuterW = sashOuterWFloat.roundToInt()
-                    val sashOuterH = sashOuterHFloat.roundToInt()
-                    val sashProfileW = when {
-                        props.isReverseDoorSash -> profile.revDoorInnerWidthE2Mm
-                        props.isDoorSash -> profile.doorSashWidthMm
-                        else -> profile.sashWidthMm
-                    }
                     val sashRole = if (isAnyDoor) ProfileRole.DOOR_SASH else ProfileRole.SASH
                     val roleTitleLabel = when {
                         props.isReverseDoorSash -> "Обр.дверь"
@@ -430,265 +421,321 @@ object WindowBomAndCostEngine {
                         else -> "Створка"
                     }
 
-                    profileCuts.add(
-                        ProfileCutPiece(
-                            windowName = window.name,
-                            profileSystemId = profile.id,
-                            profileSystemName = profile.name,
-                            materialType = profile.materialType,
-                            role = sashRole,
-                            positionLabel = "$cellCode $roleTitleLabel гориз. (${props.openingType.shortCode})",
-                            shortTag = sashShortTag,
-                            nominalLengthMm = sashOuterW,
-                            cutLengthMm = sashOuterW + weld2Sides,
-                            leftAngleDeg = 45,
-                            rightAngleDeg = 45,
-                            quantity = 2 * sashLeavesCount * qty
-                        )
-                    )
-                    profileCuts.add(
-                        ProfileCutPiece(
-                            windowName = window.name,
-                            profileSystemId = profile.id,
-                            profileSystemName = profile.name,
-                            materialType = profile.materialType,
-                            role = sashRole,
-                            positionLabel = "$cellCode $roleTitleLabel верт. (${props.openingType.shortCode})",
-                            shortTag = sashShortTag,
-                            nominalLengthMm = sashOuterH,
-                            cutLengthMm = sashOuterH + weld2Sides,
-                            leftAngleDeg = 45,
-                            rightAngleDeg = 45,
-                            quantity = 2 * sashLeavesCount * qty
-                        )
+                    data class LeafCutSpec(
+                        val outerWMm: Float,
+                        val outerHMm: Float,
+                        val leafMultiplier: Int,
+                        val sideSuffix: String
                     )
 
-                    val leafPerimM = sashLeavesCount * 2.0 * (sashOuterW + sashOuterH) / 1000.0
-                    if (isAnyDoor) {
-                        doorSashPerimeterM += leafPerimM
-                        doorSashLeavesTotalCount += sashLeavesCount
-                    } else {
-                        sashPerimeterM += leafPerimM
-                        windowSashLeavesTotalCount += sashLeavesCount
-                    }
-                    rubberPerimeterM += leafPerimM * 2.0
-                    if (props.openingType != SashOpeningType.BLIND_SASH) {
-                        rebateRubberPerUnitM += leafPerimM
-                    }
-
-                    val sashInnerLightW = max(80f, sashOuterWFloat - 2f * sashProfileW)
-                    val sashInnerLightH = max(80f, sashOuterHFloat - 2f * sashProfileW)
-
-                    if (props.hasHorizontalSashImpost) {
-                        // Внутренний горизонтальный импост внутри двери/створки (как на 01:44 в видео!)
-                        impCounter += 1
-                        val innerImpShortTag = "$winNum,$impCounter"
-                        val sashImpLen = sashInnerLightW.roundToInt()
+                    val leafSpecs: List<LeafCutSpec> = if (isDoubleShtulp) {
+                        val shtulpGeom = WindowCadOperations.computeShtulpGeometry(frame, op, profile)
+                        val gapMm = (profile.shtulpRebateG1Mm - overlapMm).coerceAtLeast(0f)
+                        val leafWL = (shtulpGeom.lightWLMm + overlapMm - gapMm / 2f).coerceAtLeast(100f)
+                        val leafWR = (shtulpGeom.lightWRMm + overlapMm - gapMm / 2f).coerceAtLeast(100f)
+                        val leafH = (lightH + 2f * overlapMm).coerceAtLeast(100f)
+                        val shtulpLenMm = leafH.roundToInt()
                         profileCuts.add(
                             ProfileCutPiece(
                                 windowName = window.name,
                                 profileSystemId = profile.id,
                                 profileSystemName = profile.name,
                                 materialType = profile.materialType,
-                                role = ProfileRole.IMPOST,
-                                positionLabel = "$cellCode Импост $innerImpShortTag внутри створки/двери",
-                                shortTag = innerImpShortTag,
-                                nominalLengthMm = sashImpLen,
-                                cutLengthMm = sashImpLen,
+                                role = ProfileRole.SHTULP,
+                                positionLabel = "$cellCode Штульп $roleTitleLabel (${props.openingType.shortCode})",
+                                shortTag = sashShortTag,
+                                nominalLengthMm = shtulpLenMm,
+                                cutLengthMm = shtulpLenMm,
                                 leftAngleDeg = 90,
                                 rightAngleDeg = 90,
-                                quantity = sashLeavesCount * qty
+                                quantity = 1 * qty
                             )
                         )
-                        impostsLengthM += (sashImpLen * sashLeavesCount) / 1000.0
-                        impostPiecesCount += sashLeavesCount
-
-                        val botH = (props.sashImpostHeightFromBottomMm - sashProfileW - profile.impostWidthMm / 2f)
-                            .coerceIn(80f, (sashInnerLightH - 120f).coerceAtLeast(80f))
-                        val topH = (sashInnerLightH - botH - profile.impostWidthMm).coerceAtLeast(80f)
-
-                        val glassW = finalizeGlassDim(sashInnerLightW - profile.glazingClearanceTotalMm, window.roundGlassTo5Mm)
-                        val topGlassH = finalizeGlassDim(topH - profile.glazingClearanceTotalMm, window.roundGlassTo5Mm)
-                        val botGlassH = finalizeGlassDim(botH - profile.glazingClearanceTotalMm, window.roundGlassTo5Mm)
-
-                        val topArea = (glassW.toDouble() * topGlassH.toDouble()) / 1_000_000.0
-                        val botArea = (glassW.toDouble() * botGlassH.toDouble()) / 1_000_000.0
-
-                        val topIsSand = props.isSandwichFilling
-                        val botIsSand = props.bottomPartIsSandwich || props.isSandwichFilling
-
-                        glazingSpecs.add(
-                            GlazingSpecItem(
-                                windowName = window.name,
-                                cellLabel = "$cellCode ($roleTitleLabel Верх, проём ${lightW.roundToInt()}×${lightH.roundToInt()})",
-                                formula = if (topIsSand) sandwichItem.formula else glazing.formula,
-                                isSandwich = topIsSand,
-                                widthMm = glassW,
-                                heightMm = topGlassH,
-                                quantity = sashLeavesCount * qty,
-                                singleAreaM2 = topArea,
-                                totalAreaM2 = topArea * sashLeavesCount * qty
-                            )
+                        shtulpLengthM += shtulpLenMm / 1000.0
+                        listOf(
+                            LeafCutSpec(leafWL, leafH, 1, " Лев."),
+                            LeafCutSpec(leafWR, leafH, 1, " Прав.")
                         )
-                        glazingSpecs.add(
-                            GlazingSpecItem(
-                                windowName = window.name,
-                                cellLabel = "$cellCode ($roleTitleLabel Низ)",
-                                formula = if (botIsSand) sandwichItem.formula else glazing.formula,
-                                isSandwich = botIsSand,
-                                widthMm = glassW,
-                                heightMm = botGlassH,
-                                quantity = sashLeavesCount * qty,
-                                singleAreaM2 = botArea,
-                                totalAreaM2 = botArea * sashLeavesCount * qty
-                            )
-                        )
-                        if (topIsSand) sandwichAreaM2 += topArea * sashLeavesCount else glazingAreaM2 += topArea * sashLeavesCount
-                        if (botIsSand) sandwichAreaM2 += botArea * sashLeavesCount else glazingAreaM2 += botArea * sashLeavesCount
-
-                        val horizShtLen = sashInnerLightW.roundToInt()
-                        val topVertShtLen = max(40f, topH - shtapikVertDeductBothSidesMm).roundToInt()
-                        val botVertShtLen = max(40f, botH - shtapikVertDeductBothSidesMm).roundToInt()
-                        val shtPerim = sashLeavesCount * (2.0 * (horizShtLen + topVertShtLen) + 2.0 * (horizShtLen + botVertShtLen)) / 1000.0
-                        shtapikPerimeterM += shtPerim
-                        val topPerimM = sashLeavesCount * 2.0 * (sashInnerLightW + topH) / 1000.0
-                        val botPerimM = sashLeavesCount * 2.0 * (sashInnerLightW + botH) / 1000.0
-                        rubberPerimeterM += topPerimM + botPerimM
-                        val seatMm = when {
-                            props.isReverseDoorSash -> profile.revDoorGlazingSeatE3Mm
-                            props.isDoorSash -> profile.doorGlazingSeatD3Mm
-                            else -> profile.sashGlazingSeatC3Mm
-                        }
-                        val topThick = if (topIsSand) sandwichItem.thicknessMm else glazing.thicknessMm.coerceAtLeast(4)
-                        val botThick = if (botIsSand) sandwichItem.thicknessMm else glazing.thicknessMm.coerceAtLeast(4)
-                        val wedgeTop = OrderProcurementHelper.selectOptimalWedgeVariant(profile, activeShtapikH2, topThick, seatMm)
-                        val wedgeBot = OrderProcurementHelper.selectOptimalWedgeVariant(profile, activeShtapikH2, botThick, seatMm)
-                        wedgeCostPerUnit += topPerimM * (wedgeTop?.pricePerMeter ?: profile.priceRubberPerM)
-                        wedgeCostPerUnit += botPerimM * (wedgeBot?.pricePerMeter ?: profile.priceRubberPerM)
-                        if (wedgeTop != null) usedWedgeLabels.add(wedgeTop.name)
-                        if (wedgeBot != null) usedWedgeLabels.add(wedgeBot.name)
-
-                        profileCuts.add(
-                            ProfileCutPiece(
-                                windowName = window.name,
-                                profileSystemId = profile.id,
-                                profileSystemName = profile.name,
-                                materialType = profile.materialType,
-                                role = ProfileRole.SHTAPIK,
-                                positionLabel = "$cellCode Штапик $roleTitleLabel гориз.$shtapikNameSuffix",
-                                shortTag = sashShortTag,
-                                nominalLengthMm = horizShtLen,
-                                cutLengthMm = horizShtLen,
-                                leftAngleDeg = shtapikCutAngle,
-                                rightAngleDeg = shtapikCutAngle,
-                                quantity = 4 * sashLeavesCount * qty
-                            )
-                        )
-                        profileCuts.add(
-                            ProfileCutPiece(
-                                windowName = window.name,
-                                profileSystemId = profile.id,
-                                profileSystemName = profile.name,
-                                materialType = profile.materialType,
-                                role = ProfileRole.SHTAPIK,
-                                positionLabel = "$cellCode Штапик $roleTitleLabel верт. (верх)$shtapikNameSuffix",
-                                shortTag = sashShortTag,
-                                nominalLengthMm = topVertShtLen,
-                                cutLengthMm = topVertShtLen,
-                                leftAngleDeg = shtapikCutAngle,
-                                rightAngleDeg = shtapikCutAngle,
-                                quantity = 2 * sashLeavesCount * qty
-                            )
-                        )
-                        profileCuts.add(
-                            ProfileCutPiece(
-                                windowName = window.name,
-                                profileSystemId = profile.id,
-                                profileSystemName = profile.name,
-                                materialType = profile.materialType,
-                                role = ProfileRole.SHTAPIK,
-                                positionLabel = "$cellCode Штапик $roleTitleLabel верт. (низ)$shtapikNameSuffix",
-                                shortTag = sashShortTag,
-                                nominalLengthMm = botVertShtLen,
-                                cutLengthMm = botVertShtLen,
-                                leftAngleDeg = shtapikCutAngle,
-                                rightAngleDeg = shtapikCutAngle,
-                                quantity = 2 * sashLeavesCount * qty
+                    } else if (isVertDouble) {
+                        listOf(
+                            LeafCutSpec(
+                                outerWMm = lightW + 2f * overlapMm,
+                                outerHMm = (lightH / 2f) + 2f * overlapMm,
+                                leafMultiplier = 2,
+                                sideSuffix = ""
                             )
                         )
                     } else {
-                        val glassW = finalizeGlassDim(sashInnerLightW - profile.glazingClearanceTotalMm, window.roundGlassTo5Mm)
-                        val glassH = finalizeGlassDim(sashInnerLightH - profile.glazingClearanceTotalMm, window.roundGlassTo5Mm)
-                        val singleArea = (glassW.toDouble() * glassH.toDouble()) / 1_000_000.0
-                        val isSand = props.isSandwichFilling
-
-                        glazingSpecs.add(
-                            GlazingSpecItem(
-                                windowName = window.name,
-                                cellLabel = "$cellCode ($roleTitleLabel, проём ${lightW.roundToInt()}×${lightH.roundToInt()})",
-                                formula = if (isSand) sandwichItem.formula else glazing.formula,
-                                isSandwich = isSand,
-                                widthMm = glassW,
-                                heightMm = glassH,
-                                quantity = sashLeavesCount * qty,
-                                singleAreaM2 = singleArea,
-                                totalAreaM2 = singleArea * sashLeavesCount * qty
-                            )
-                        )
-                        if (isSand) sandwichAreaM2 += singleArea * sashLeavesCount else glazingAreaM2 += singleArea * sashLeavesCount
-
-                        val horizShtLen = sashInnerLightW.roundToInt()
-                        val vertShtLen = max(40f, sashInnerLightH - shtapikVertDeductBothSidesMm).roundToInt()
-                        val shtPerim = sashLeavesCount * 2.0 * (horizShtLen + vertShtLen) / 1000.0
-                        shtapikPerimeterM += shtPerim
-                        val sashGlassPerimM = sashLeavesCount * 2.0 * (sashInnerLightW + sashInnerLightH) / 1000.0
-                        rubberPerimeterM += sashGlassPerimM
-                        val seatMm = when {
-                            props.isReverseDoorSash -> profile.revDoorGlazingSeatE3Mm
-                            props.isDoorSash -> profile.doorGlazingSeatD3Mm
-                            else -> profile.sashGlazingSeatC3Mm
-                        }
-                        val glassThickMm = if (isSand) sandwichItem.thicknessMm else glazing.thicknessMm.coerceAtLeast(4)
-                        val matchedWedge = OrderProcurementHelper.selectOptimalWedgeVariant(profile, activeShtapikH2, glassThickMm, seatMm)
-                        wedgeCostPerUnit += sashGlassPerimM * (matchedWedge?.pricePerMeter ?: profile.priceRubberPerM)
-                        if (matchedWedge != null) usedWedgeLabels.add(matchedWedge.name)
-
-                        profileCuts.add(
-                            ProfileCutPiece(
-                                windowName = window.name,
-                                profileSystemId = profile.id,
-                                profileSystemName = profile.name,
-                                materialType = profile.materialType,
-                                role = ProfileRole.SHTAPIK,
-                                positionLabel = "$cellCode Штапик $roleTitleLabel гориз.$shtapikNameSuffix",
-                                shortTag = sashShortTag,
-                                nominalLengthMm = horizShtLen,
-                                cutLengthMm = horizShtLen,
-                                leftAngleDeg = shtapikCutAngle,
-                                rightAngleDeg = shtapikCutAngle,
-                                quantity = 2 * sashLeavesCount * qty
-                            )
-                        )
-                        profileCuts.add(
-                            ProfileCutPiece(
-                                windowName = window.name,
-                                profileSystemId = profile.id,
-                                profileSystemName = profile.name,
-                                materialType = profile.materialType,
-                                role = ProfileRole.SHTAPIK,
-                                positionLabel = "$cellCode Штапик $roleTitleLabel верт.$shtapikNameSuffix",
-                                shortTag = sashShortTag,
-                                nominalLengthMm = vertShtLen,
-                                cutLengthMm = vertShtLen,
-                                leftAngleDeg = shtapikCutAngle,
-                                rightAngleDeg = shtapikCutAngle,
-                                quantity = 2 * sashLeavesCount * qty
+                        listOf(
+                            LeafCutSpec(
+                                outerWMm = lightW + 2f * overlapMm,
+                                outerHMm = lightH + 2f * overlapMm,
+                                leafMultiplier = 1,
+                                sideSuffix = ""
                             )
                         )
                     }
 
-                    val falzW = (sashOuterW - 16).coerceAtLeast(250)
-                    val falzH = (sashOuterH - 16).coerceAtLeast(250)
+                    val seatMm = when {
+                        props.isReverseDoorSash -> profile.revDoorGlazingSeatE3Mm
+                        props.isDoorSash -> profile.doorGlazingSeatD3Mm
+                        else -> profile.sashGlazingSeatC3Mm
+                    }
+                    val effectiveImpostMode = props.effectiveSashImpostMode()
+
+                    leafSpecs.forEach { leaf ->
+                        val sashOuterW = leaf.outerWMm.roundToInt()
+                        val sashOuterH = leaf.outerHMm.roundToInt()
+                        val mult = leaf.leafMultiplier
+
+                        profileCuts.add(
+                            ProfileCutPiece(
+                                windowName = window.name,
+                                profileSystemId = profile.id,
+                                profileSystemName = profile.name,
+                                materialType = profile.materialType,
+                                role = sashRole,
+                                positionLabel = "$cellCode $roleTitleLabel${leaf.sideSuffix} гориз. (${props.openingType.shortCode})",
+                                shortTag = sashShortTag,
+                                nominalLengthMm = sashOuterW,
+                                cutLengthMm = sashOuterW + weld2Sides,
+                                leftAngleDeg = 45,
+                                rightAngleDeg = 45,
+                                quantity = 2 * mult * qty
+                            )
+                        )
+                        profileCuts.add(
+                            ProfileCutPiece(
+                                windowName = window.name,
+                                profileSystemId = profile.id,
+                                profileSystemName = profile.name,
+                                materialType = profile.materialType,
+                                role = sashRole,
+                                positionLabel = "$cellCode $roleTitleLabel${leaf.sideSuffix} верт. (${props.openingType.shortCode})",
+                                shortTag = sashShortTag,
+                                nominalLengthMm = sashOuterH,
+                                cutLengthMm = sashOuterH + weld2Sides,
+                                leftAngleDeg = 45,
+                                rightAngleDeg = 45,
+                                quantity = 2 * mult * qty
+                            )
+                        )
+
+                        val leafPerimM = mult * 2.0 * (sashOuterW + sashOuterH) / 1000.0
+                        if (isAnyDoor) {
+                            doorSashPerimeterM += leafPerimM
+                            doorSashLeavesTotalCount += mult
+                        } else {
+                            sashPerimeterM += leafPerimM
+                            windowSashLeavesTotalCount += mult
+                        }
+                        rubberPerimeterM += leafPerimM * 2.0
+                        if (props.openingType != SashOpeningType.BLIND_SASH) {
+                            rebateRubberPerUnitM += leafPerimM
+                        }
+
+                        val sashInnerLightW = max(80f, leaf.outerWMm - 2f * sashProfileW)
+                        val sashInnerLightH = max(80f, leaf.outerHMm - 2f * sashProfileW)
+
+                        data class InnerPaneBox(val index: Int, val nameSuffix: String, val wMm: Float, val hMm: Float)
+                        val innerPanes: List<InnerPaneBox> = when (effectiveImpostMode) {
+                            SashImpostMode.NONE -> listOf(
+                                InnerPaneBox(0, "", sashInnerLightW, sashInnerLightH)
+                            )
+                            SashImpostMode.V1 -> {
+                                impCounter += 1
+                                val innerImpTag = "$winNum,$impCounter"
+                                val impLen = sashInnerLightH.roundToInt()
+                                profileCuts.add(
+                                    ProfileCutPiece(
+                                        windowName = window.name,
+                                        profileSystemId = profile.id,
+                                        profileSystemName = profile.name,
+                                        materialType = profile.materialType,
+                                        role = ProfileRole.IMPOST,
+                                        positionLabel = "$cellCode Импост $innerImpTag верт. внутри створки",
+                                        shortTag = innerImpTag,
+                                        nominalLengthMm = impLen,
+                                        cutLengthMm = impLen,
+                                        leftAngleDeg = 90,
+                                        rightAngleDeg = 90,
+                                        quantity = mult * qty
+                                    )
+                                )
+                                impostsLengthM += (impLen * mult) / 1000.0
+                                impostPiecesCount += mult
+                                val partW = max(60f, (sashInnerLightW - profile.impostWidthMm) / 2f)
+                                listOf(
+                                    InnerPaneBox(0, " Лев.", partW, sashInnerLightH),
+                                    InnerPaneBox(1, " Прав.", partW, sashInnerLightH)
+                                )
+                            }
+                            SashImpostMode.H1 -> {
+                                impCounter += 1
+                                val innerImpTag = "$winNum,$impCounter"
+                                val impLen = sashInnerLightW.roundToInt()
+                                profileCuts.add(
+                                    ProfileCutPiece(
+                                        windowName = window.name,
+                                        profileSystemId = profile.id,
+                                        profileSystemName = profile.name,
+                                        materialType = profile.materialType,
+                                        role = ProfileRole.IMPOST,
+                                        positionLabel = "$cellCode Импост $innerImpTag гориз. внутри створки/двери",
+                                        shortTag = innerImpTag,
+                                        nominalLengthMm = impLen,
+                                        cutLengthMm = impLen,
+                                        leftAngleDeg = 90,
+                                        rightAngleDeg = 90,
+                                        quantity = mult * qty
+                                    )
+                                )
+                                impostsLengthM += (impLen * mult) / 1000.0
+                                impostPiecesCount += mult
+                                val botH = (props.sashImpostHeightFromBottomMm - sashProfileW - profile.impostWidthMm / 2f)
+                                    .coerceIn(80f, (sashInnerLightH - 120f).coerceAtLeast(80f))
+                                val topH = (sashInnerLightH - botH - profile.impostWidthMm).coerceAtLeast(80f)
+                                listOf(
+                                    InnerPaneBox(0, " Верх", sashInnerLightW, topH),
+                                    InnerPaneBox(1, " Низ", sashInnerLightW, botH)
+                                )
+                            }
+                            SashImpostMode.V2 -> {
+                                repeat(2) {
+                                    impCounter += 1
+                                }
+                                val innerImpTag = "$winNum,$impCounter"
+                                val impLen = sashInnerLightH.roundToInt()
+                                profileCuts.add(
+                                    ProfileCutPiece(
+                                        windowName = window.name,
+                                        profileSystemId = profile.id,
+                                        profileSystemName = profile.name,
+                                        materialType = profile.materialType,
+                                        role = ProfileRole.IMPOST,
+                                        positionLabel = "$cellCode Импосты $innerImpTag (2 верт.) внутри створки",
+                                        shortTag = innerImpTag,
+                                        nominalLengthMm = impLen,
+                                        cutLengthMm = impLen,
+                                        leftAngleDeg = 90,
+                                        rightAngleDeg = 90,
+                                        quantity = 2 * mult * qty
+                                    )
+                                )
+                                impostsLengthM += (impLen * 2 * mult) / 1000.0
+                                impostPiecesCount += 2 * mult
+                                val partW = max(60f, (sashInnerLightW - 2f * profile.impostWidthMm) / 3f)
+                                listOf(
+                                    InnerPaneBox(0, " Сек.1", partW, sashInnerLightH),
+                                    InnerPaneBox(1, " Сек.2", partW, sashInnerLightH),
+                                    InnerPaneBox(2, " Сек.3", partW, sashInnerLightH)
+                                )
+                            }
+                            SashImpostMode.H2 -> {
+                                repeat(2) {
+                                    impCounter += 1
+                                }
+                                val innerImpTag = "$winNum,$impCounter"
+                                val impLen = sashInnerLightW.roundToInt()
+                                profileCuts.add(
+                                    ProfileCutPiece(
+                                        windowName = window.name,
+                                        profileSystemId = profile.id,
+                                        profileSystemName = profile.name,
+                                        materialType = profile.materialType,
+                                        role = ProfileRole.IMPOST,
+                                        positionLabel = "$cellCode Импосты $innerImpTag (2 гориз.) внутри створки",
+                                        shortTag = innerImpTag,
+                                        nominalLengthMm = impLen,
+                                        cutLengthMm = impLen,
+                                        leftAngleDeg = 90,
+                                        rightAngleDeg = 90,
+                                        quantity = 2 * mult * qty
+                                    )
+                                )
+                                impostsLengthM += (impLen * 2 * mult) / 1000.0
+                                impostPiecesCount += 2 * mult
+                                val partH = max(60f, (sashInnerLightH - 2f * profile.impostWidthMm) / 3f)
+                                listOf(
+                                    InnerPaneBox(0, " Верх", sashInnerLightW, partH),
+                                    InnerPaneBox(1, " Серед.", sashInnerLightW, partH),
+                                    InnerPaneBox(2, " Низ", sashInnerLightW, partH)
+                                )
+                            }
+                        }
+
+                        innerPanes.forEach { pane ->
+                            val glassW = finalizeGlassDim(pane.wMm - profile.glazingClearanceTotalMm, window.roundGlassTo5Mm)
+                            val glassH = finalizeGlassDim(pane.hMm - profile.glazingClearanceTotalMm, window.roundGlassTo5Mm)
+                            val singleArea = (glassW.toDouble() * glassH.toDouble()) / 1_000_000.0
+                            val isSand = props.isPaneSandwich(pane.index)
+
+                            glazingSpecs.add(
+                                GlazingSpecItem(
+                                    windowName = window.name,
+                                    cellLabel = "$cellCode ($roleTitleLabel${leaf.sideSuffix}${pane.nameSuffix}, проём ${lightW.roundToInt()}×${lightH.roundToInt()})",
+                                    formula = if (isSand) sandwichItem.formula else glazing.formula,
+                                    isSandwich = isSand,
+                                    widthMm = glassW,
+                                    heightMm = glassH,
+                                    quantity = mult * qty,
+                                    singleAreaM2 = singleArea,
+                                    totalAreaM2 = singleArea * mult * qty
+                                )
+                            )
+                            if (isSand) sandwichAreaM2 += singleArea * mult else glazingAreaM2 += singleArea * mult
+
+                            val horizShtLen = pane.wMm.roundToInt()
+                            val vertShtLen = max(40f, pane.hMm - shtapikVertDeductBothSidesMm).roundToInt()
+                            val shtPerim = mult * 2.0 * (horizShtLen + vertShtLen) / 1000.0
+                            shtapikPerimeterM += shtPerim
+                            val paneGlassPerimM = mult * 2.0 * (pane.wMm + pane.hMm) / 1000.0
+                            rubberPerimeterM += paneGlassPerimM
+
+                            val glassThickMm = if (isSand) sandwichItem.thicknessMm else glazing.thicknessMm.coerceAtLeast(4)
+                            val matchedWedge = OrderProcurementHelper.selectOptimalWedgeVariant(profile, activeShtapikH2, glassThickMm, seatMm)
+                            wedgeCostPerUnit += paneGlassPerimM * (matchedWedge?.pricePerMeter ?: profile.priceRubberPerM)
+                            if (matchedWedge != null) usedWedgeLabels.add(matchedWedge.name)
+
+                            profileCuts.add(
+                                ProfileCutPiece(
+                                    windowName = window.name,
+                                    profileSystemId = profile.id,
+                                    profileSystemName = profile.name,
+                                    materialType = profile.materialType,
+                                    role = ProfileRole.SHTAPIK,
+                                    positionLabel = "$cellCode Штапик $roleTitleLabel${leaf.sideSuffix}${pane.nameSuffix} гориз.$shtapikNameSuffix",
+                                    shortTag = sashShortTag,
+                                    nominalLengthMm = horizShtLen,
+                                    cutLengthMm = horizShtLen,
+                                    leftAngleDeg = shtapikCutAngle,
+                                    rightAngleDeg = shtapikCutAngle,
+                                    quantity = 2 * mult * qty
+                                )
+                            )
+                            profileCuts.add(
+                                ProfileCutPiece(
+                                    windowName = window.name,
+                                    profileSystemId = profile.id,
+                                    profileSystemName = profile.name,
+                                    materialType = profile.materialType,
+                                    role = ProfileRole.SHTAPIK,
+                                    positionLabel = "$cellCode Штапик $roleTitleLabel${leaf.sideSuffix}${pane.nameSuffix} верт.$shtapikNameSuffix",
+                                    shortTag = sashShortTag,
+                                    nominalLengthMm = vertShtLen,
+                                    cutLengthMm = vertShtLen,
+                                    leftAngleDeg = shtapikCutAngle,
+                                    rightAngleDeg = shtapikCutAngle,
+                                    quantity = 2 * mult * qty
+                                )
+                            )
+                        }
+                    }
+
+                    val repLeafW = leafSpecs.first().outerWMm.roundToInt()
+                    val repLeafH = leafSpecs.first().outerHMm.roundToInt()
+                    val falzW = (repLeafW - 16).coerceAtLeast(250)
+                    val falzH = (repLeafH - 16).coerceAtLeast(250)
                     val baseSetPrice = when {
                         props.isDoorSash -> profile.priceDoorHardware
                         props.openingType == SashOpeningType.BLIND_SASH -> 0.0
@@ -719,7 +766,9 @@ object WindowBomAndCostEngine {
                     hardwareCostTotal += setPrice
 
                     if (props.hasMosquitoNet) {
-                        val mosqArea = (sashOuterW.toDouble() * sashOuterH.toDouble()) / 1_000_000.0
+                        val repW = leafSpecs.first().outerWMm.roundToInt()
+                        val repH = leafSpecs.first().outerHMm.roundToInt()
+                        val mosqArea = (repW.toDouble() * repH.toDouble()) / 1_000_000.0
                         val rate = if (mosqSys != null && mosqSys.id != "msq_none") mosqSys.pricePerM2 else 15.0
                         mosquitoCostTotal += max(10.0, mosqArea * rate)
                     }
@@ -757,6 +806,7 @@ object WindowBomAndCostEngine {
 
         var costExtrasOnly = 0.0
         window.selectedExtraIds.forEach { eid ->
+            if (eid == "ext_corner") return@forEach
             val item = extraAccessoriesCatalog.find { it.id == eid } ?: return@forEach
             costExtrasOnly += when (item.rateType) {
                 UnitRateType.PER_PIECE -> item.price
@@ -777,11 +827,62 @@ object WindowBomAndCostEngine {
         costWorksOnly += costInstallation
         val extrasAndWorksCost = costExtrasOnly + costWorksOnly
 
-        // Чистая стоимость профилей (рама, импост, створка, дверная створка)
+        // Изолированный угловик (по высоте конструкции, 90°/90°, 1 шт) и доборный профиль 90° (по ширине конструкции, по цене рамы, 1 шт)
+        val hasCornerAddon = window.addons.hasCornerProfile || window.selectedExtraIds.contains("ext_corner")
+        val costCornerProfile = if (hasCornerAddon && !isNoSystemSelected) {
+            heightM * profile.priceCornerProfilePerM
+        } else {
+            0.0
+        }
+        if (hasCornerAddon && !isNoSystemSelected) {
+            profileCuts.add(
+                ProfileCutPiece(
+                    windowName = window.name,
+                    profileSystemId = profile.id,
+                    profileSystemName = profile.name,
+                    materialType = profile.materialType,
+                    role = ProfileRole.CORNER_PROFILE,
+                    positionLabel = "Угловик (90°)",
+                    shortTag = "$winNum",
+                    nominalLengthMm = totalH,
+                    cutLengthMm = totalH,
+                    leftAngleDeg = 90,
+                    rightAngleDeg = 90,
+                    quantity = 1 * qty
+                )
+            )
+        }
+
+        val costExtenderProfile = if (window.addons.hasExtenderProfile90 && !isNoSystemSelected) {
+            widthM * profile.priceFramePerM
+        } else {
+            0.0
+        }
+        if (window.addons.hasExtenderProfile90 && !isNoSystemSelected) {
+            profileCuts.add(
+                ProfileCutPiece(
+                    windowName = window.name,
+                    profileSystemId = profile.id,
+                    profileSystemName = profile.name,
+                    materialType = profile.materialType,
+                    role = ProfileRole.EXTENDER,
+                    positionLabel = "Доборный профиль (90°)",
+                    shortTag = "$winNum",
+                    nominalLengthMm = totalW,
+                    cutLengthMm = totalW,
+                    leftAngleDeg = 90,
+                    rightAngleDeg = 90,
+                    quantity = 1 * qty
+                )
+            )
+        }
+
+        // Чистая стоимость профилей (рама, импост, створка, дверная створка, штульп, угловик, добор)
         val costFrame = framePerimeterM * (profile.priceFramePerM + profile.priceReinforcementFramePerM)
         val costImposts = impostsLengthM * (profile.priceImpostPerM + profile.priceReinforcementImpostPerM)
         val costSashesOnly = sashPerimeterM * (profile.priceSashPerM + profile.priceReinforcementSashPerM)
         val costDoorSashesOnly = doorSashPerimeterM * (profile.priceDoorSashPerM + profile.priceReinforcementSashPerM)
+        val costShtulp = shtulpLengthM * profile.priceShtulpPerM
 
         // Угловые сухари (комплекты на 4 угла рамы, створки, двери + комплекты на 1 импост)
         val frameCornerSetsCount = frames.size
@@ -814,10 +915,12 @@ object WindowBomAndCostEngine {
         val costSandwichOnly = sandwichAreaM2 * (if (glazing.id == "none") 0.0 else sandwichItem.pricePerM2)
         val costGlazingAndSandwich = costGlazingOnly + costSandwichOnly
 
-        val profilesBaseCost = costFrame + costImposts + costSashesOnly + costDoorSashesOnly + costCornerConnectors + costShtapikAndRubber
+        val profilesBaseCost = costFrame + costImposts + costSashesOnly + costDoorSashesOnly +
+            costShtulp + costCornerProfile + costExtenderProfile + costCornerConnectors + costShtapikAndRubber
         val costColorMarkup = profilesBaseCost * (color.priceMarkupPercent / 100.0)
 
         val materialsAndWorksCost = costFrame + costImposts + costSashesOnly + costDoorSashesOnly +
+            costShtulp + costCornerProfile + costExtenderProfile +
             costCornerConnectors + costShtapikAndRubber + costGlazingAndSandwich + hardwareCostTotal +
             mosquitoCostTotal + addonsCost + extrasAndWorksCost + costColorMarkup
 
@@ -836,7 +939,7 @@ object WindowBomAndCostEngine {
                 profileCuts = profileCuts,
                 qty = qty,
                 totalAreaM2 = totalAreaM2,
-                totalProfilePerimeterM = framePerimeterM + impostsLengthM + sashPerimeterM + doorSashPerimeterM,
+                totalProfilePerimeterM = framePerimeterM + impostsLengthM + sashPerimeterM + doorSashPerimeterM + shtulpLengthM,
                 glazingPlusSandwichAreaM2 = glazingAreaM2 + sandwichAreaM2,
                 rubberPerimeterM = rubberPerimeterM
             )
@@ -873,6 +976,7 @@ object WindowBomAndCostEngine {
             impostsLengthM = impostsLengthM,
             sashPerimeterM = sashPerimeterM,
             doorSashPerimeterM = doorSashPerimeterM,
+            shtulpLengthM = shtulpLengthM,
             shtapikPerimeterM = shtapikPerimeterM,
             rubberPerimeterM = rubberPerimeterM,
             glazingAreaM2 = glazingAreaM2,
@@ -882,6 +986,9 @@ object WindowBomAndCostEngine {
             costImposts = costImposts,
             costSashes = costSashesOnly,
             costDoorSashes = costDoorSashesOnly,
+            costShtulp = costShtulp,
+            costCornerProfile = costCornerProfile,
+            costExtenderProfile = costExtenderProfile,
             costCornerConnectors = costCornerConnectors,
             costShtapik = costShtapikOnly,
             costRubber = costRubberOnly,
@@ -949,9 +1056,7 @@ object WindowBomAndCostEngine {
                             spec.openingType == SashOpeningType.TRANSOM_TOP -> assemblyPricing.hwTurnRate
                         spec.openingType == SashOpeningType.TILT_TURN_LEFT ||
                             spec.openingType == SashOpeningType.TILT_TURN_RIGHT -> assemblyPricing.hwTiltTurnRate
-                        spec.openingType == SashOpeningType.SHTULP_TURN_TURN ||
-                            spec.openingType == SashOpeningType.SHTULP_TILTTURN_L_TURN_R ||
-                            spec.openingType == SashOpeningType.SHTULP_TURN_L_TILTTURN_R -> assemblyPricing.hwShtulpRate
+                        spec.openingType.isShtulp -> assemblyPricing.hwShtulpRate
                         spec.openingType == SashOpeningType.SLIDING_LEFT ||
                             spec.openingType == SashOpeningType.SLIDING_RIGHT ||
                             spec.openingType == SashOpeningType.VERT_SLIDE_UP ||

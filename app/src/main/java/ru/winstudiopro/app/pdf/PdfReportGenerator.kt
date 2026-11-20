@@ -228,8 +228,13 @@ object PdfReportGenerator {
             if (hwBrand != null && hwBrand.id != "hw_none") {
                 drawCategoryAndItems("фурнитура", listOf(hwBrand.name))
             }
-            val selectedExtras = wItem.selectedExtraIds.mapNotNull { id ->
-                extraAccessoriesCatalog.find { it.id == id }?.name
+            val selectedExtras = buildList {
+                if (wItem.addons.hasCornerProfile) add("Угловик (1 шт.)")
+                if (wItem.addons.hasExtenderProfile90) add("Доборный профиль 90° (1 шт.)")
+                wItem.selectedExtraIds
+                    .filter { it != "ext_corner" }
+                    .mapNotNull { id -> extraAccessoriesCatalog.find { it.id == id }?.name }
+                    .forEach { add(it) }
             }
             if (selectedExtras.isNotEmpty()) {
                 drawCategoryAndItems("разное", selectedExtras)
@@ -1078,6 +1083,9 @@ object PdfReportGenerator {
             cuts.filter { it.role == ProfileRole.DOOR_SASH && it.positionLabel.contains("Обр.дверь") },
             verticalFirst = true
         )
+        val shtulpLines = formatDimensionGroup(cuts.filter { it.role == ProfileRole.SHTULP }, verticalFirst = true)
+        val extenderLines = formatDimensionGroup(cuts.filter { it.role == ProfileRole.EXTENDER }, verticalFirst = false)
+        val cornerLines = formatDimensionGroup(cuts.filter { it.role == ProfileRole.CORNER_PROFILE }, verticalFirst = true)
 
         return buildList {
             if (frameLines.isNotEmpty()) add("Р:" to frameLines)
@@ -1085,6 +1093,9 @@ object PdfReportGenerator {
             if (sashLines.isNotEmpty()) add("С:" to sashLines)
             if (doorLines.isNotEmpty()) add("Д:" to doorLines)
             if (revDoorLines.isNotEmpty()) add("Д.обр.:" to revDoorLines)
+            if (shtulpLines.isNotEmpty()) add("Шт:" to shtulpLines)
+            if (extenderLines.isNotEmpty()) add("Доб:" to extenderLines)
+            if (cornerLines.isNotEmpty()) add("Угл:" to cornerLines)
         }
     }
 
@@ -1121,50 +1132,67 @@ object PdfReportGenerator {
             val lightW = max(100f, op.widthMm - leftDed - rightDed)
             val lightH = max(100f, op.heightMm - topDed - botDed)
 
-            val isDoubleShtulp = props.openingType == SashOpeningType.SHTULP_TURN_TURN ||
-                props.openingType == SashOpeningType.SHTULP_TILTTURN_L_TURN_R ||
-                props.openingType == SashOpeningType.SHTULP_TURN_L_TILTTURN_R
-            val isVertDouble = props.openingType == SashOpeningType.VERT_SLIDE_UP ||
-                props.openingType == SashOpeningType.VERT_SLIDE_BOTH
-
-            val singleLightW = if (isDoubleShtulp) lightW / 2f else lightW
-            val singleLightH = if (isVertDouble) lightH / 2f else lightH
             val overlapMm = when {
                 props.isReverseDoorSash -> profile.revDoorOverlapMm
                 props.isDoorSash -> profile.doorOverlapMm
                 else -> profile.sashOverlapMm
             }
-            val sashOuterW = (singleLightW + 2f * overlapMm).roundToInt()
-            val sashOuterH = (singleLightH + 2f * overlapMm).roundToInt()
-            val falzW = (sashOuterW - 16).coerceAtLeast(250)
-            val falzH = (sashOuterH - 16).coerceAtLeast(250)
-
             val isAnyDoor = props.isDoorSash || props.isReverseDoorSash
-            val dimStr = when {
-                isAnyDoor -> "$falzH"
-                props.openingType == SashOpeningType.TILT_TURN_LEFT ||
-                    props.openingType == SashOpeningType.TILT_TURN_RIGHT ||
-                    props.openingType == SashOpeningType.SHTULP_TILTTURN_L_TURN_R ||
-                    props.openingType == SashOpeningType.SHTULP_TURN_L_TILTTURN_R -> "$falzW/$falzH"
-                props.openingType == SashOpeningType.TRANSOM_BOTTOM ||
-                    props.openingType == SashOpeningType.TRANSOM_TOP -> "$falzW"
-                else -> "$falzH"
-            }
 
-            val sideStr = when (props.openingType) {
-                SashOpeningType.TURN_LEFT,
-                SashOpeningType.TILT_TURN_LEFT,
-                SashOpeningType.SLIDING_LEFT -> "левая"
-                SashOpeningType.TURN_RIGHT,
-                SashOpeningType.TILT_TURN_RIGHT,
-                SashOpeningType.SLIDING_RIGHT -> "правая"
-                SashOpeningType.SHTULP_TURN_TURN,
-                SashOpeningType.SHTULP_TILTTURN_L_TURN_R,
-                SashOpeningType.SHTULP_TURN_L_TILTTURN_R -> "лев.+прав."
-                else -> ""
-            }
+            if (props.openingType.isShtulp) {
+                val geom = WindowCadOperations.computeShtulpGeometry(frame, op, profile)
+                val gapMm = max(0f, profile.shtulpRebateG1Mm - overlapMm)
+                val sashOuterWL = (geom.lightWLMm + overlapMm - gapMm / 2f).roundToInt()
+                val sashOuterWR = (geom.lightWRMm + overlapMm - gapMm / 2f).roundToInt()
+                val sashOuterH = (lightH + 2f * overlapMm).roundToInt()
+                val falzWL = (sashOuterWL - 16).coerceAtLeast(250)
+                val falzWR = (sashOuterWR - 16).coerceAtLeast(250)
+                val falzH = (sashOuterH - 16).coerceAtLeast(250)
 
-            if (sideStr.isNotEmpty()) "${idx + 1}) $dimStr $sideStr" else "${idx + 1}) $dimStr"
+                val dimStr = when {
+                    isAnyDoor -> "$falzH"
+                    props.openingType.isShtulpLeftTiltTurn || props.openingType.isShtulpRightTiltTurn ->
+                        if (falzWL == falzWR) "$falzWL/$falzH" else "$falzWL+$falzWR/$falzH"
+                    else -> "$falzH"
+                }
+                val sideStr = when (props.openingType) {
+                    SashOpeningType.SHTULP_TURN_L_PASSIVE_R,
+                    SashOpeningType.SHTULP_TILTTURN_L_PASSIVE_R -> "акт.Л+пас.П"
+                    SashOpeningType.SHTULP_PASSIVE_L_TURN_R,
+                    SashOpeningType.SHTULP_PASSIVE_L_TILTTURN_R -> "пас.Л+акт.П"
+                    else -> "лев.+прав."
+                }
+                "${idx + 1}) $dimStr $sideStr"
+            } else {
+                val isVertDouble = props.openingType == SashOpeningType.VERT_SLIDE_UP ||
+                    props.openingType == SashOpeningType.VERT_SLIDE_BOTH
+                val singleLightH = if (isVertDouble) lightH / 2f else lightH
+                val sashOuterW = (lightW + 2f * overlapMm).roundToInt()
+                val sashOuterH = (singleLightH + 2f * overlapMm).roundToInt()
+                val falzW = (sashOuterW - 16).coerceAtLeast(250)
+                val falzH = (sashOuterH - 16).coerceAtLeast(250)
+
+                val dimStr = when {
+                    isAnyDoor -> "$falzH"
+                    props.openingType == SashOpeningType.TILT_TURN_LEFT ||
+                        props.openingType == SashOpeningType.TILT_TURN_RIGHT -> "$falzW/$falzH"
+                    props.openingType == SashOpeningType.TRANSOM_BOTTOM ||
+                        props.openingType == SashOpeningType.TRANSOM_TOP -> "$falzW"
+                    else -> "$falzH"
+                }
+
+                val sideStr = when (props.openingType) {
+                    SashOpeningType.TURN_LEFT,
+                    SashOpeningType.TILT_TURN_LEFT,
+                    SashOpeningType.SLIDING_LEFT -> "левая"
+                    SashOpeningType.TURN_RIGHT,
+                    SashOpeningType.TILT_TURN_RIGHT,
+                    SashOpeningType.SLIDING_RIGHT -> "правая"
+                    else -> ""
+                }
+
+                if (sideStr.isNotEmpty()) "${idx + 1}) $dimStr $sideStr" else "${idx + 1}) $dimStr"
+            }
         }
     }
 
@@ -1586,12 +1614,15 @@ object PdfReportGenerator {
         }
 
         // 2. БЛОКИ РАСКРОЯ ДЛЯ МОНОХРОМНОГО ЛАЗЕРНОГО ПРИНТЕРА
-        // РАМА -> ИМПОСТ -> СТВОРКА -> ДВЕРЬ -> ШТАПИК
+        // РАМА -> ИМПОСТ -> СТВОРКА -> ДВЕРЬ -> ШТУЛЬП -> ДОБОР -> УГЛОВИК -> ШТАПИК
         val orderedRoles = listOf(
             ProfileRole.FRAME,
             ProfileRole.IMPOST,
             ProfileRole.SASH,
             ProfileRole.DOOR_SASH,
+            ProfileRole.SHTULP,
+            ProfileRole.EXTENDER,
+            ProfileRole.CORNER_PROFILE,
             ProfileRole.SHTAPIK
         )
 
@@ -1707,9 +1738,10 @@ object PdfReportGenerator {
         val yCoords = topology.yGridCoords
         val hasMultiX = xCoords.size > 2
         val hasMultiY = yCoords.size > 2
+        val hasAnyShtulp = topology.allOpenings.any { it.properties.openingType.isShtulp }
 
         val padLeft = if (hasMultiY) 32f else 20f
-        val padBottom = if (hasMultiX) 30f else 18f
+        val padBottom = if (hasMultiX || hasAnyShtulp) 30f else 18f
         val padTop = 6f
         val padRight = 8f
 
@@ -1883,87 +1915,215 @@ object PdfReportGenerator {
                 drawClearOpeningTextPdf(gRect, frame, op)
             }
 
-            // 4. Створки и широкие ДВЕРИ поверх рамы и импостов
+            // 4. Створки, широкие ДВЕРИ и Штульп поверх рамы и импостов
+            fun drawLeafGlassAndImpostsPdf(gLeft: Float, gTop: Float, gRight: Float, gBottom: Float, p: OpeningProperties, op: OpeningCellNode) {
+                val mode = p.effectiveSashImpostMode()
+                val halfImp = impostPts * 0.48f
+                when (mode) {
+                    SashImpostMode.NONE -> {
+                        val paneRect = RectF(gLeft, gTop, gRight, gBottom)
+                        canvas.drawRect(paneRect, if (p.isPaneSandwich(0)) sandwichFill else glassFill)
+                        canvas.drawRect(paneRect, strokeDark)
+                    }
+                    SashImpostMode.V1 -> {
+                        val mx = (gLeft + gRight) / 2f
+                        val lRect = RectF(gLeft, gTop, (mx - halfImp).coerceAtLeast(gLeft + 1f), gBottom)
+                        val rRect = RectF((mx + halfImp).coerceAtMost(gRight - 1f), gTop, gRight, gBottom)
+                        canvas.drawRect(lRect, if (p.isPaneSandwich(0)) sandwichFill else glassFill)
+                        canvas.drawRect(lRect, strokeDark)
+                        canvas.drawRect(rRect, if (p.isPaneSandwich(1)) sandwichFill else glassFill)
+                        canvas.drawRect(rRect, strokeDark)
+                        val impR = RectF(mx - halfImp, gTop, mx + halfImp, gBottom)
+                        canvas.drawRect(impR, frameFill)
+                        canvas.drawRect(impR, strokeDark)
+                    }
+                    SashImpostMode.H1 -> {
+                        val impostYFromTopMm = (op.bottomMm - p.sashImpostHeightFromBottomMm)
+                            .coerceIn(op.topMm + 120f, op.bottomMm - 120f)
+                        val impostCenterY = if (p.hasHorizontalSashImpost || p.sashImpostMode == SashImpostMode.H1) {
+                            (originY + impostYFromTopMm * scale).coerceIn(gTop + 3f, gBottom - 3f)
+                        } else {
+                            (gTop + gBottom) / 2f
+                        }
+                        val tRect = RectF(gLeft, gTop, gRight, (impostCenterY - halfImp).coerceAtLeast(gTop + 1f))
+                        val bRect = RectF(gLeft, (impostCenterY + halfImp).coerceAtMost(gBottom - 1f), gRight, gBottom)
+                        canvas.drawRect(tRect, if (p.isPaneSandwich(0)) sandwichFill else glassFill)
+                        canvas.drawRect(tRect, strokeDark)
+                        canvas.drawRect(bRect, if (p.isPaneSandwich(1)) sandwichFill else glassFill)
+                        canvas.drawRect(bRect, strokeDark)
+                        val impR = RectF(gLeft, impostCenterY - halfImp, gRight, impostCenterY + halfImp)
+                        canvas.drawRect(impR, frameFill)
+                        canvas.drawRect(impR, strokeDark)
+                    }
+                    SashImpostMode.V2 -> {
+                        val x1 = gLeft + (gRight - gLeft) / 3f
+                        val x2 = gLeft + (gRight - gLeft) * 2f / 3f
+                        val p0 = RectF(gLeft, gTop, (x1 - halfImp).coerceAtLeast(gLeft + 1f), gBottom)
+                        val p1 = RectF((x1 + halfImp), gTop, (x2 - halfImp).coerceAtLeast(x1 + halfImp + 1f), gBottom)
+                        val p2 = RectF((x2 + halfImp).coerceAtMost(gRight - 1f), gTop, gRight, gBottom)
+                        listOf(p0, p1, p2).forEachIndexed { i, r ->
+                            canvas.drawRect(r, if (p.isPaneSandwich(i)) sandwichFill else glassFill)
+                            canvas.drawRect(r, strokeDark)
+                        }
+                        listOf(x1, x2).forEach { ix ->
+                            val impR = RectF(ix - halfImp, gTop, ix + halfImp, gBottom)
+                            canvas.drawRect(impR, frameFill)
+                            canvas.drawRect(impR, strokeDark)
+                        }
+                    }
+                    SashImpostMode.H2 -> {
+                        val y1 = gTop + (gBottom - gTop) / 3f
+                        val y2 = gTop + (gBottom - gTop) * 2f / 3f
+                        val p0 = RectF(gLeft, gTop, gRight, (y1 - halfImp).coerceAtLeast(gTop + 1f))
+                        val p1 = RectF(gLeft, y1 + halfImp, gRight, (y2 - halfImp).coerceAtLeast(y1 + halfImp + 1f))
+                        val p2 = RectF(gLeft, (y2 + halfImp).coerceAtMost(gBottom - 1f), gRight, gBottom)
+                        listOf(p0, p1, p2).forEachIndexed { i, r ->
+                            canvas.drawRect(r, if (p.isPaneSandwich(i)) sandwichFill else glassFill)
+                            canvas.drawRect(r, strokeDark)
+                        }
+                        listOf(y1, y2).forEach { iy ->
+                            val impR = RectF(gLeft, iy - halfImp, gRight, iy + halfImp)
+                            canvas.drawRect(impR, frameFill)
+                            canvas.drawRect(impR, strokeDark)
+                        }
+                    }
+                }
+            }
+
+            fun drawShootboltsPdf(edgeX: Float, gTop: Float, gBottom: Float, onRightEdge: Boolean) {
+                val dir = if (onRightEdge) -1f else 1f
+                val latchH = min(5.5f, (gBottom - gTop) * 0.14f)
+                // Верхний шпингалет
+                canvas.drawLine(edgeX, gTop - 1f, edgeX, gTop + latchH, strokeDark)
+                canvas.drawLine(edgeX, gTop + latchH, edgeX + dir * 2.5f, gTop + latchH, strokeDark)
+                // Нижний шпингалет
+                canvas.drawLine(edgeX, gBottom + 1f, edgeX, gBottom - latchH, strokeDark)
+                canvas.drawLine(edgeX, gBottom - latchH, edgeX + dir * 2.5f, gBottom - latchH, strokeDark)
+            }
+
             frame.openings.filter { it.properties.openingType.hasSashProfile }.forEach { op ->
                 val p = op.properties
                 val clearRect = calcClearRectPts(op)
-                val sashW = if (p.isDoorSash) doorSashPts else sashPts
+                val sashW = if (p.isDoorSash || p.isReverseDoorSash) doorSashPts else sashPts
 
                 val sLeft = clearRect.left - overlapPts
                 val sTop = clearRect.top - overlapPts
                 val sRight = clearRect.right + overlapPts
                 val sBottom = clearRect.bottom + overlapPts
-                val sashRect = RectF(sLeft, sTop, sRight, sBottom)
 
-                canvas.drawRect(sashRect, frameFill)
-                canvas.drawRect(sashRect, strokeDark)
-
-                val gLeft = sLeft + sashW
-                val gTop = sTop + sashW
-                val gRight = sRight - sashW
-                val gBottom = sBottom - sashW
-
-                // Угловые запилы 45° створки/двери
-                if (gRight > gLeft + 2f && gBottom > gTop + 2f) {
-                    canvas.drawLine(sLeft, sTop, gLeft, gTop, strokeInner)
-                    canvas.drawLine(sRight, sTop, gRight, gTop, strokeInner)
-                    canvas.drawLine(sLeft, sBottom, gLeft, gBottom, strokeInner)
-                    canvas.drawLine(sRight, sBottom, gRight, gBottom, strokeInner)
-
-                    val glassRect = RectF(gLeft, gTop, gRight, gBottom)
-                    if (p.hasHorizontalSashImpost) {
-                        val impostYFromTopMm = (op.bottomMm - p.sashImpostHeightFromBottomMm)
-                            .coerceIn(op.topMm + 120f, op.bottomMm - 120f)
-                        val impostCenterY = originY + impostYFromTopMm * scale
-                        val halfImp = impostPts * 0.48f
-
-                        val topGlass = RectF(gLeft, gTop, gRight, (impostCenterY - halfImp).coerceAtLeast(gTop + 1f))
-                        val botGlass = RectF(gLeft, (impostCenterY + halfImp).coerceAtMost(gBottom - 1f), gRight, gBottom)
-
-                        canvas.drawRect(topGlass, if (p.isSandwichFilling) sandwichFill else glassFill)
-                        canvas.drawRect(topGlass, strokeDark)
-
-                        val botIsSandwich = p.bottomPartIsSandwich || p.isSandwichFilling
-                        canvas.drawRect(botGlass, if (botIsSandwich) sandwichFill else glassFill)
-                        canvas.drawRect(botGlass, strokeDark)
-
-                        val impRect = RectF(gLeft, impostCenterY - halfImp, gRight, impostCenterY + halfImp)
-                        canvas.drawRect(impRect, frameFill)
-                        canvas.drawRect(impRect, strokeDark)
-                    } else {
-                        canvas.drawRect(glassRect, if (p.isSandwichFilling) sandwichFill else glassFill)
-                        canvas.drawRect(glassRect, strokeDark)
+                if (p.openingType.isShtulp) {
+                    val geom = WindowCadOperations.computeShtulpGeometry(frame, op, profile)
+                    val axisXPx = originX + geom.axisXMm * scale
+                    val overlapMm = when {
+                        p.isReverseDoorSash -> profile.revDoorOverlapMm
+                        p.isDoorSash -> profile.doorOverlapMm
+                        else -> profile.sashOverlapMm
                     }
+                    val gapMm = max(0f, profile.shtulpRebateG1Mm - overlapMm)
+                    val halfGapPts = max(1.0f, (gapMm * scale) / 2f)
 
-                    // Линии открывания и ручка
-                    val cx = glassRect.centerX()
-                    val cy = glassRect.centerY()
-                    when (p.openingType) {
-                        SashOpeningType.TURN_LEFT, SashOpeningType.TILT_TURN_LEFT -> {
-                            canvas.drawLine(glassRect.left, glassRect.top, glassRect.right, cy, openLinePaint)
-                            canvas.drawLine(glassRect.right, cy, glassRect.left, glassRect.bottom, openLinePaint)
-                            drawHandleVector(sRight - sashW / 2f, cy, p.isDoorSash, isLeftHanded = true)
+                    val leftLeaf = RectF(sLeft, sTop, (axisXPx - halfGapPts).coerceAtLeast(sLeft + sashW * 2f + 4f), sBottom)
+                    val rightLeaf = RectF((axisXPx + halfGapPts).coerceAtMost(sRight - sashW * 2f - 4f), sTop, sRight, sBottom)
+
+                    listOf(leftLeaf to true, rightLeaf to false).forEach { (leafRect, isLeftLeaf) ->
+                        canvas.drawRect(leafRect, frameFill)
+                        canvas.drawRect(leafRect, strokeDark)
+                        val gl = leafRect.left + sashW
+                        val gt = leafRect.top + sashW
+                        val gr = leafRect.right - sashW
+                        val gb = leafRect.bottom - sashW
+                        if (gr > gl + 2f && gb > gt + 2f) {
+                            canvas.drawLine(leafRect.left, leafRect.top, gl, gt, strokeInner)
+                            canvas.drawLine(leafRect.right, leafRect.top, gr, gt, strokeInner)
+                            canvas.drawLine(leafRect.left, leafRect.bottom, gl, gb, strokeInner)
+                            canvas.drawLine(leafRect.right, leafRect.bottom, gr, gb, strokeInner)
+
+                            drawLeafGlassAndImpostsPdf(gl, gt, gr, gb, p, op)
+
+                            val lcx = (gl + gr) / 2f
+                            val lcy = (gt + gb) / 2f
+                            if (isLeftLeaf) {
+                                canvas.drawLine(gl, gt, gr, lcy, openLinePaint)
+                                canvas.drawLine(gr, lcy, gl, gb, openLinePaint)
+                                if (p.openingType.isShtulpLeftTiltTurn) {
+                                    canvas.drawLine(gl, gb, lcx, gt, openLinePaint)
+                                    canvas.drawLine(lcx, gt, gr, gb, openLinePaint)
+                                }
+                                if (p.openingType.isShtulpLeftPassive) {
+                                    drawShootboltsPdf(gr - 2f, gt, gb, onRightEdge = true)
+                                } else {
+                                    drawHandleVector(leafRect.right - sashW / 2f, lcy, p.isDoorSash || p.isReverseDoorSash, isLeftHanded = true)
+                                }
+                            } else {
+                                canvas.drawLine(gr, gt, gl, lcy, openLinePaint)
+                                canvas.drawLine(gl, lcy, gr, gb, openLinePaint)
+                                if (p.openingType.isShtulpRightTiltTurn) {
+                                    canvas.drawLine(gl, gb, lcx, gt, openLinePaint)
+                                    canvas.drawLine(lcx, gt, gr, gb, openLinePaint)
+                                }
+                                if (p.openingType.isShtulpRightPassive) {
+                                    drawShootboltsPdf(gl + 2f, gt, gb, onRightEdge = false)
+                                } else {
+                                    drawHandleVector(leafRect.left + sashW / 2f, lcy, p.isDoorSash || p.isReverseDoorSash, isLeftHanded = false)
+                                }
+                            }
                         }
-                        SashOpeningType.TURN_RIGHT, SashOpeningType.TILT_TURN_RIGHT -> {
-                            canvas.drawLine(glassRect.right, glassRect.top, glassRect.left, cy, openLinePaint)
-                            canvas.drawLine(glassRect.left, cy, glassRect.right, glassRect.bottom, openLinePaint)
-                            drawHandleVector(sLeft + sashW / 2f, cy, p.isDoorSash, isLeftHanded = false)
+                    }
+                    // Вертикальная ось/штульповый притвор по центру зазора
+                    val barRect = RectF(axisXPx - halfGapPts, sTop, axisXPx + halfGapPts, sBottom)
+                    canvas.drawRect(barRect, frameFill)
+                    canvas.drawRect(barRect, strokeDark)
+                    drawClearOpeningTextPdf(RectF(sLeft + sashW, sTop + sashW, sRight - sashW, sBottom - sashW), frame, op)
+                } else {
+                    val sashRect = RectF(sLeft, sTop, sRight, sBottom)
+                    canvas.drawRect(sashRect, frameFill)
+                    canvas.drawRect(sashRect, strokeDark)
+
+                    val gLeft = sLeft + sashW
+                    val gTop = sTop + sashW
+                    val gRight = sRight - sashW
+                    val gBottom = sBottom - sashW
+
+                    // Угловые запилы 45° створки/двери
+                    if (gRight > gLeft + 2f && gBottom > gTop + 2f) {
+                        canvas.drawLine(sLeft, sTop, gLeft, gTop, strokeInner)
+                        canvas.drawLine(sRight, sTop, gRight, gTop, strokeInner)
+                        canvas.drawLine(sLeft, sBottom, gLeft, gBottom, strokeInner)
+                        canvas.drawLine(sRight, sBottom, gRight, gBottom, strokeInner)
+
+                        val glassRect = RectF(gLeft, gTop, gRight, gBottom)
+                        drawLeafGlassAndImpostsPdf(gLeft, gTop, gRight, gBottom, p, op)
+
+                        // Линии открывания и ручка
+                        val cx = glassRect.centerX()
+                        val cy = glassRect.centerY()
+                        when (p.openingType) {
+                            SashOpeningType.TURN_LEFT, SashOpeningType.TILT_TURN_LEFT -> {
+                                canvas.drawLine(glassRect.left, glassRect.top, glassRect.right, cy, openLinePaint)
+                                canvas.drawLine(glassRect.right, cy, glassRect.left, glassRect.bottom, openLinePaint)
+                                drawHandleVector(sRight - sashW / 2f, cy, p.isDoorSash || p.isReverseDoorSash, isLeftHanded = true)
+                            }
+                            SashOpeningType.TURN_RIGHT, SashOpeningType.TILT_TURN_RIGHT -> {
+                                canvas.drawLine(glassRect.right, glassRect.top, glassRect.left, cy, openLinePaint)
+                                canvas.drawLine(glassRect.left, cy, glassRect.right, glassRect.bottom, openLinePaint)
+                                drawHandleVector(sLeft + sashW / 2f, cy, p.isDoorSash || p.isReverseDoorSash, isLeftHanded = false)
+                            }
+                            SashOpeningType.TRANSOM_BOTTOM -> {
+                                canvas.drawLine(glassRect.left, glassRect.bottom, cx, glassRect.top, openLinePaint)
+                                canvas.drawLine(cx, glassRect.top, glassRect.right, glassRect.bottom, openLinePaint)
+                            }
+                            SashOpeningType.TRANSOM_TOP -> {
+                                canvas.drawLine(glassRect.left, glassRect.top, cx, glassRect.bottom, openLinePaint)
+                                canvas.drawLine(cx, glassRect.bottom, glassRect.right, glassRect.top, openLinePaint)
+                            }
+                            else -> {}
                         }
-                        SashOpeningType.TRANSOM_BOTTOM -> {
+                        if (p.openingType == SashOpeningType.TILT_TURN_LEFT || p.openingType == SashOpeningType.TILT_TURN_RIGHT) {
                             canvas.drawLine(glassRect.left, glassRect.bottom, cx, glassRect.top, openLinePaint)
                             canvas.drawLine(cx, glassRect.top, glassRect.right, glassRect.bottom, openLinePaint)
                         }
-                        SashOpeningType.TRANSOM_TOP -> {
-                            canvas.drawLine(glassRect.left, glassRect.top, cx, glassRect.bottom, openLinePaint)
-                            canvas.drawLine(cx, glassRect.bottom, glassRect.right, glassRect.top, openLinePaint)
-                        }
-                        else -> {}
+                        drawClearOpeningTextPdf(glassRect, frame, op)
                     }
-                    if (p.openingType == SashOpeningType.TILT_TURN_LEFT || p.openingType == SashOpeningType.TILT_TURN_RIGHT) {
-                        canvas.drawLine(glassRect.left, glassRect.bottom, cx, glassRect.top, openLinePaint)
-                        canvas.drawLine(cx, glassRect.top, glassRect.right, glassRect.bottom, openLinePaint)
-                    }
-                    drawClearOpeningTextPdf(glassRect, frame, op)
                 }
             }
         }
@@ -2014,14 +2174,34 @@ object PdfReportGenerator {
             canvas.restore()
         }
 
-        // Горизонтальные размеры снизу
-        if (hasMultiX) {
+        // Горизонтальные размеры снизу (учитываем ось штульпа при разбиении сегментов)
+        val xDimSegments = buildList {
+            for (i in 0 until xCoords.size - 1) {
+                val segStart = xCoords[i]
+                val segEnd = xCoords[i + 1]
+                val shtulpPair = topology.frames.firstNotNullOfOrNull { f ->
+                    f.openings.find { op ->
+                        op.properties.openingType.isShtulp &&
+                            abs(op.leftMm - segStart) <= 2f &&
+                            abs(op.rightMm - segEnd) <= 2f
+                    }?.let { f to it }
+                }
+                if (shtulpPair != null) {
+                    val geom = WindowCadOperations.computeShtulpGeometry(shtulpPair.first, shtulpPair.second, profile)
+                    add(segStart to geom.axisXMm)
+                    add(geom.axisXMm to segEnd)
+                } else {
+                    add(segStart to segEnd)
+                }
+            }
+        }
+        if (xDimSegments.size > 1) {
             val innerChainY = originY + drawH + 9f
             val outerChainY = originY + drawH + 20f
-            for (i in 0 until xCoords.size - 1) {
-                val x1 = originX + xCoords[i] * scale
-                val x2 = originX + xCoords[i + 1] * scale
-                val segMm = (xCoords[i + 1] - xCoords[i]).roundToInt()
+            xDimSegments.forEach { (sx1, sx2) ->
+                val x1 = originX + sx1 * scale
+                val x2 = originX + sx2 * scale
+                val segMm = (sx2 - sx1).roundToInt()
                 canvas.drawLine(x1, innerChainY, x2, innerChainY, dimLinePaint)
                 canvas.drawLine(x1, originY + drawH + 1f, x1, innerChainY + 2f, dimLinePaint)
                 canvas.drawLine(x2, originY + drawH + 1f, x2, innerChainY + 2f, dimLinePaint)
@@ -2107,14 +2287,22 @@ object PdfReportGenerator {
         }
 
         val extras = mutableListOf<String>()
-        val selectedExtrasNames = wItem.selectedExtraIds.mapNotNull { id ->
-            extraAccessoriesCatalog.find { it.id == id }?.name
+        if (wItem.addons.hasCornerProfile) extras.add("Угловик")
+        if (wItem.addons.hasExtenderProfile90) extras.add("Доборный профиль 90°")
+        val selectedExtrasNames = wItem.selectedExtraIds
+            .filter { it != "ext_corner" }
+            .mapNotNull { id ->
+                extraAccessoriesCatalog.find { it.id == id }?.name
+            }
+        if (selectedExtrasNames.isNotEmpty() || extras.isNotEmpty()) {
+            extras.addAll(selectedExtrasNames)
         }
-        if (selectedExtrasNames.isNotEmpty()) {
-            extras.add("Доп.: ${selectedExtrasNames.joinToString(", ")}")
-        }
+        val extraSummaryLines = if (extras.isNotEmpty()) {
+            listOf("Доп.: ${extras.joinToString(", ")}")
+        } else emptyList()
+        val finalExtraLines = extraSummaryLines.toMutableList()
         if (wItem.note.isNotBlank()) {
-            extras.add("Прим.: ${wItem.note}")
+            finalExtraLines.add("Прим.: ${wItem.note}")
         }
 
         val breakdown = finSummary.windowBreakdownFor(wItem.id)
@@ -2137,7 +2325,7 @@ object PdfReportGenerator {
             headerNumber = headerNumber,
             headerDimsQty = headerDimsQty,
             materialLines = listOf(profLine, glzLine, hwLine),
-            extraLines = extras,
+            extraLines = finalExtraLines,
             priceRows = priceRows
         )
     }

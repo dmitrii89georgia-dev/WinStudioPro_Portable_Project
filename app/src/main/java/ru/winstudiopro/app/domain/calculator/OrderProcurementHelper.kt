@@ -211,21 +211,29 @@ object OrderProcurementHelper {
                     val lightW = max(100f, op.widthMm - leftDed - rightDed)
                     val lightH = max(100f, op.heightMm - topDed - botDed)
 
-                    val isDoubleShtulp = props.openingType == SashOpeningType.SHTULP_TURN_TURN ||
-                        props.openingType == SashOpeningType.SHTULP_TILTTURN_L_TURN_R ||
-                        props.openingType == SashOpeningType.SHTULP_TURN_L_TILTTURN_R
+                    val isDoubleShtulp = props.openingType.isShtulp
                     val isVertDouble = props.openingType == SashOpeningType.VERT_SLIDE_UP ||
                         props.openingType == SashOpeningType.VERT_SLIDE_BOTH
 
-                    val singleLightW = if (isDoubleShtulp) lightW / 2f else lightW
-                    val singleLightH = if (isVertDouble) lightH / 2f else lightH
                     val overlapMm = when {
                         props.isReverseDoorSash -> profile.revDoorOverlapMm
                         props.isDoorSash -> profile.doorOverlapMm
                         else -> profile.sashOverlapMm
                     }
-                    val sashOuterW = (singleLightW + 2f * overlapMm).roundToInt()
-                    val sashOuterH = (singleLightH + 2f * overlapMm).roundToInt()
+                    val sashOuterW: Int
+                    val sashOuterH: Int
+                    if (isDoubleShtulp) {
+                        val geom = WindowCadOperations.computeShtulpGeometry(frame, op, profile)
+                        val gapMm = (profile.shtulpRebateG1Mm - overlapMm).coerceAtLeast(0f)
+                        val leafWL = (geom.lightWLMm + overlapMm - gapMm / 2f).coerceAtLeast(100f)
+                        val leafWR = (geom.lightWRMm + overlapMm - gapMm / 2f).coerceAtLeast(100f)
+                        sashOuterW = (if (props.openingType.isShtulpLeftPassive) leafWR else leafWL).roundToInt()
+                        sashOuterH = (lightH + 2f * overlapMm).roundToInt()
+                    } else {
+                        val singleLightH = if (isVertDouble) lightH / 2f else lightH
+                        sashOuterW = (lightW + 2f * overlapMm).roundToInt()
+                        sashOuterH = (singleLightH + 2f * overlapMm).roundToInt()
+                    }
                     val falzW = (sashOuterW - 16).coerceAtLeast(250)
                     val falzH = (sashOuterH - 16).coerceAtLeast(250)
 
@@ -260,6 +268,10 @@ object OrderProcurementHelper {
         SashOpeningType.TURN_RIGHT,
         SashOpeningType.TILT_TURN_RIGHT,
         SashOpeningType.SLIDING_RIGHT -> "Правая"
+        SashOpeningType.SHTULP_TURN_L_PASSIVE_R,
+        SashOpeningType.SHTULP_TILTTURN_L_PASSIVE_R -> "Акт.Л + Пас.П"
+        SashOpeningType.SHTULP_PASSIVE_L_TURN_R,
+        SashOpeningType.SHTULP_PASSIVE_L_TILTTURN_R -> "Пас.Л + Акт.П"
         SashOpeningType.SHTULP_TURN_TURN,
         SashOpeningType.SHTULP_TILTTURN_L_TURN_R,
         SashOpeningType.SHTULP_TURN_L_TILTTURN_R -> "Лев.+прав."
@@ -354,9 +366,7 @@ object OrderProcurementHelper {
                         addRubberMeters(profile, RubberType.FIXED_GLAZING, null, fixedPerimM)
                         addRubberMeters(profile, RubberType.WEDGE_SHTAPIK, wedge, fixedPerimM)
                     } else {
-                        val isDoubleShtulp = props.openingType == SashOpeningType.SHTULP_TURN_TURN ||
-                            props.openingType == SashOpeningType.SHTULP_TILTTURN_L_TURN_R ||
-                            props.openingType == SashOpeningType.SHTULP_TURN_L_TILTTURN_R
+                        val isDoubleShtulp = props.openingType.isShtulp
                         val isVertDouble = props.openingType == SashOpeningType.VERT_SLIDE_UP ||
                             props.openingType == SashOpeningType.VERT_SLIDE_BOTH
                         val leavesCount = if (isDoubleShtulp || isVertDouble) 2 else 1
@@ -367,22 +377,11 @@ object OrderProcurementHelper {
                             else -> sashSets += leavesCount * qty
                         }
 
-                        val singleLightW = if (isDoubleShtulp) lightW / 2f else lightW
-                        val singleLightH = if (isVertDouble) lightH / 2f else lightH
                         val overlapMm = when {
                             props.isReverseDoorSash -> profile.revDoorOverlapMm
                             props.isDoorSash -> profile.doorOverlapMm
                             else -> profile.sashOverlapMm
                         }
-                        val sashOuterW = (singleLightW + 2f * overlapMm).roundToInt()
-                        val sashOuterH = (singleLightH + 2f * overlapMm).roundToInt()
-                        val leafPerimM = leavesCount * 2.0 * (sashOuterW + sashOuterH) / 1000.0 * qty
-
-                        if (props.openingType != SashOpeningType.BLIND_SASH) {
-                            addRubberMeters(profile, RubberType.FRAME_REBATE, null, leafPerimM)
-                            addRubberMeters(profile, RubberType.SASH_DOOR_REBATE, null, leafPerimM)
-                        }
-
                         val sashProfileW = when {
                             props.isReverseDoorSash -> profile.revDoorInnerWidthE2Mm
                             props.isDoorSash -> profile.doorSashWidthMm
@@ -393,38 +392,63 @@ object OrderProcurementHelper {
                             props.isDoorSash -> profile.doorGlazingSeatD3Mm
                             else -> profile.sashGlazingSeatC3Mm
                         }
-                        val sashInnerW = max(80f, (singleLightW + 2f * overlapMm) - 2f * sashProfileW)
-                        val sashInnerH = max(80f, (singleLightH + 2f * overlapMm) - 2f * sashProfileW)
 
-                        if (props.hasHorizontalSashImpost) {
-                            val botH = (props.sashImpostHeightFromBottomMm - sashProfileW - profile.impostWidthMm / 2f)
-                                .coerceIn(80f, (sashInnerH - 120f).coerceAtLeast(80f))
-                            val topH = (sashInnerH - botH - profile.impostWidthMm).coerceAtLeast(80f)
-                            val topThick = if (props.isSandwichFilling) sandwichThickMm else baseGlassThickMm
-                            val botThick = if (props.bottomPartIsSandwich || props.isSandwichFilling) sandwichThickMm else baseGlassThickMm
-                            val wedgeTop = selectOptimalWedgeVariant(profile, shtapikH2, topThick, seatMm)
-                            val wedgeBot = selectOptimalWedgeVariant(profile, shtapikH2, botThick, seatMm)
-                            addRubberMeters(
-                                profile,
-                                RubberType.WEDGE_SHTAPIK,
-                                wedgeTop,
-                                leavesCount * 2.0 * (sashInnerW + topH) / 1000.0 * qty
-                            )
-                            addRubberMeters(
-                                profile,
-                                RubberType.WEDGE_SHTAPIK,
-                                wedgeBot,
-                                leavesCount * 2.0 * (sashInnerW + botH) / 1000.0 * qty
-                            )
+                        val leafDims: List<Pair<Float, Float>> = if (isDoubleShtulp) {
+                            val geom = WindowCadOperations.computeShtulpGeometry(frame, op, profile)
+                            val gapMm = (profile.shtulpRebateG1Mm - overlapMm).coerceAtLeast(0f)
+                            val leafWL = (geom.lightWLMm + overlapMm - gapMm / 2f).coerceAtLeast(100f)
+                            val leafWR = (geom.lightWRMm + overlapMm - gapMm / 2f).coerceAtLeast(100f)
+                            val leafH = (lightH + 2f * overlapMm).coerceAtLeast(100f)
+                            listOf(leafWL to leafH, leafWR to leafH)
+                        } else if (isVertDouble) {
+                            val leafW = lightW + 2f * overlapMm
+                            val leafH = (lightH / 2f) + 2f * overlapMm
+                            listOf(leafW to leafH, leafW to leafH)
                         } else {
-                            val glassThick = if (props.isSandwichFilling) sandwichThickMm else baseGlassThickMm
-                            val wedge = selectOptimalWedgeVariant(profile, shtapikH2, glassThick, seatMm)
-                            addRubberMeters(
-                                profile,
-                                RubberType.WEDGE_SHTAPIK,
-                                wedge,
-                                leavesCount * 2.0 * (sashInnerW + sashInnerH) / 1000.0 * qty
-                            )
+                            listOf((lightW + 2f * overlapMm) to (lightH + 2f * overlapMm))
+                        }
+
+                        val effMode = props.effectiveSashImpostMode()
+                        leafDims.forEach { (leafOuterW, leafOuterH) ->
+                            val leafPerimM = 2.0 * (leafOuterW.roundToInt() + leafOuterH.roundToInt()) / 1000.0 * qty
+                            if (props.openingType != SashOpeningType.BLIND_SASH) {
+                                addRubberMeters(profile, RubberType.FRAME_REBATE, null, leafPerimM)
+                                addRubberMeters(profile, RubberType.SASH_DOOR_REBATE, null, leafPerimM)
+                            }
+                            val sashInnerW = max(80f, leafOuterW - 2f * sashProfileW)
+                            val sashInnerH = max(80f, leafOuterH - 2f * sashProfileW)
+
+                            val paneBoxes: List<Triple<Int, Float, Float>> = when (effMode) {
+                                SashImpostMode.NONE -> listOf(Triple(0, sashInnerW, sashInnerH))
+                                SashImpostMode.V1 -> {
+                                    val pw = max(60f, (sashInnerW - profile.impostWidthMm) / 2f)
+                                    listOf(Triple(0, pw, sashInnerH), Triple(1, pw, sashInnerH))
+                                }
+                                SashImpostMode.H1 -> {
+                                    val botH = (props.sashImpostHeightFromBottomMm - sashProfileW - profile.impostWidthMm / 2f)
+                                        .coerceIn(80f, (sashInnerH - 120f).coerceAtLeast(80f))
+                                    val topH = (sashInnerH - botH - profile.impostWidthMm).coerceAtLeast(80f)
+                                    listOf(Triple(0, sashInnerW, topH), Triple(1, sashInnerW, botH))
+                                }
+                                SashImpostMode.V2 -> {
+                                    val pw = max(60f, (sashInnerW - 2f * profile.impostWidthMm) / 3f)
+                                    listOf(Triple(0, pw, sashInnerH), Triple(1, pw, sashInnerH), Triple(2, pw, sashInnerH))
+                                }
+                                SashImpostMode.H2 -> {
+                                    val ph = max(60f, (sashInnerH - 2f * profile.impostWidthMm) / 3f)
+                                    listOf(Triple(0, sashInnerW, ph), Triple(1, sashInnerW, ph), Triple(2, sashInnerW, ph))
+                                }
+                            }
+                            paneBoxes.forEach { (paneIdx, pw, ph) ->
+                                val glassThick = if (props.isPaneSandwich(paneIdx)) sandwichThickMm else baseGlassThickMm
+                                val wedge = selectOptimalWedgeVariant(profile, shtapikH2, glassThick, seatMm)
+                                addRubberMeters(
+                                    profile,
+                                    RubberType.WEDGE_SHTAPIK,
+                                    wedge,
+                                    2.0 * (pw + ph) / 1000.0 * qty
+                                )
+                            }
                         }
                     }
                 }

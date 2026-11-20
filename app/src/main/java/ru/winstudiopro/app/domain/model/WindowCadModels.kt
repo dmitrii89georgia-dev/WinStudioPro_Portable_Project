@@ -59,14 +59,50 @@ enum class SashOpeningType(
     // Ряд 4 (глухая створка по центру):
     BLIND_SASH("Глухая створка", "Ств.Гл", true),
 
-    // Штульповые двухстворчатые:
+    // Штульповые двухстворчатые (4 явные комбинации + legacy):
+    SHTULP_TURN_L_PASSIVE_R("Штульп: Пов.Л + Пасс.П", "Шт.ПЛ+ПасП", true),
+    SHTULP_TILTTURN_L_PASSIVE_R("Штульп: П/О Л + Пасс.П", "Шт.ПОЛ+ПасП", true),
+    SHTULP_PASSIVE_L_TURN_R("Штульп: Пасс.Л + Пов.П", "Шт.ПасЛ+ПП", true),
+    SHTULP_PASSIVE_L_TILTTURN_R("Штульп: Пасс.Л + П/О П", "Шт.ПасЛ+ПОП", true),
     SHTULP_TURN_TURN("Штульп: Пов.Л + Пов.П", "Шт.П+П", true),
     SHTULP_TILTTURN_L_TURN_R("Штульп: П/О Л + Пов.П", "Шт.ПОЛ+ПП", true),
     SHTULP_TURN_L_TILTTURN_R("Штульп: Пов.Л + П/О П", "Шт.ПЛ+ПОП", true),
 
     // Вертикально-подъемные (английские / гильотинные):
     VERT_SLIDE_UP("Подъемная вверх (↑)", "Подъем.↑", true),
-    VERT_SLIDE_BOTH("Раздвижная верт. (↓↑)", "Раздв.↕", true)
+    VERT_SLIDE_BOTH("Раздвижная верт. (↓↑)", "Раздв.↕", true);
+
+    val isShtulp: Boolean
+        get() = this == SHTULP_TURN_L_PASSIVE_R ||
+            this == SHTULP_TILTTURN_L_PASSIVE_R ||
+            this == SHTULP_PASSIVE_L_TURN_R ||
+            this == SHTULP_PASSIVE_L_TILTTURN_R ||
+            this == SHTULP_TURN_TURN ||
+            this == SHTULP_TILTTURN_L_TURN_R ||
+            this == SHTULP_TURN_L_TILTTURN_R
+
+    val isShtulpLeftPassive: Boolean
+        get() = this == SHTULP_PASSIVE_L_TURN_R || this == SHTULP_PASSIVE_L_TILTTURN_R
+
+    val isShtulpRightPassive: Boolean
+        get() = this == SHTULP_TURN_L_PASSIVE_R ||
+            this == SHTULP_TILTTURN_L_PASSIVE_R ||
+            this == SHTULP_TURN_TURN ||
+            this == SHTULP_TILTTURN_L_TURN_R
+
+    val isShtulpLeftTiltTurn: Boolean
+        get() = this == SHTULP_TILTTURN_L_PASSIVE_R || this == SHTULP_TILTTURN_L_TURN_R
+
+    val isShtulpRightTiltTurn: Boolean
+        get() = this == SHTULP_PASSIVE_L_TILTTURN_R || this == SHTULP_TURN_L_TILTTURN_R
+}
+
+enum class SashImpostMode(val titleRu: String, val paneCount: Int) {
+    NONE("Пустой проём", 1),
+    V1("1 вертикальный импост", 2),
+    H1("1 горизонтальный импост", 2),
+    V2("2 вертикальных импоста", 3),
+    H2("2 горизонтальных импоста", 3)
 }
 
 enum class GlazingBarsPattern(val titleRu: String, val horizontalRows: Int, val verticalCols: Int) {
@@ -84,8 +120,28 @@ data class OpeningProperties(
     val hasHorizontalSashImpost: Boolean = false,
     val sashImpostHeightFromBottomMm: Float = 800f,
     val bottomPartIsSandwich: Boolean = false,
-    val glazingBars: GlazingBarsPattern = GlazingBarsPattern.NONE
-)
+    val glazingBars: GlazingBarsPattern = GlazingBarsPattern.NONE,
+    val sashImpostMode: SashImpostMode = SashImpostMode.NONE,
+    val paneSandwichFlags: List<Boolean> = emptyList(),
+    val shtulpSplitRatio: Float = 0.5f
+) {
+    fun effectiveSashImpostMode(): SashImpostMode = when {
+        sashImpostMode != SashImpostMode.NONE -> sashImpostMode
+        hasHorizontalSashImpost -> SashImpostMode.H1
+        else -> SashImpostMode.NONE
+    }
+
+    fun isPaneSandwich(index: Int): Boolean {
+        if (paneSandwichFlags.isNotEmpty()) {
+            return paneSandwichFlags.getOrElse(index) { false }
+        }
+        return if (effectiveSashImpostMode() == SashImpostMode.H1 && index == 1) {
+            bottomPartIsSandwich || isSandwichFilling
+        } else {
+            isSandwichFilling
+        }
+    }
+}
 
 /**
  * Световая ячейка (проем) внутри рамы.
@@ -144,6 +200,8 @@ data class WindowPerimeterAddons(
     val hasSeatProfile: Boolean = false,
     val hasDoorsill: Boolean = false,
     val hasCornerJamb: Boolean = false,
+    val hasCornerProfile: Boolean = false,
+    val hasExtenderProfile90: Boolean = false,
     val extenderTopMm: Int = 0,
     val extenderBottomMm: Int = 0,
     val extenderLeftMm: Int = 0,
@@ -276,6 +334,7 @@ object WindowCadOperations {
                             op.copy(
                                 properties = op.properties.copy(
                                     hasHorizontalSashImpost = true,
+                                    sashImpostMode = if (op.properties.sashImpostMode == SashImpostMode.NONE) SashImpostMode.H1 else op.properties.sashImpostMode,
                                     sashImpostHeightFromBottomMm = clamped
                                 )
                             )
@@ -295,12 +354,84 @@ object WindowCadOperations {
                 frame.copy(
                     openings = frame.openings.map { op ->
                         if (op.id == openingId) {
+                            val nextFlags = if (op.properties.paneSandwichFlags.size >= 2) {
+                                op.properties.paneSandwichFlags.mapIndexed { idx, v ->
+                                    if (idx == 1) !v else v
+                                }
+                            } else {
+                                op.properties.paneSandwichFlags
+                            }
                             op.copy(
                                 properties = op.properties.copy(
-                                    bottomPartIsSandwich = !op.properties.bottomPartIsSandwich
+                                    bottomPartIsSandwich = !op.properties.bottomPartIsSandwich,
+                                    paneSandwichFlags = nextFlags
                                 )
                             )
                         } else op
+                    }
+                )
+            }
+        )
+    }
+
+    data class ShtulpGeometryMm(
+        val leftDedMm: Float,
+        val rightDedMm: Float,
+        val lightWMm: Float,
+        val lightWLMm: Float,
+        val lightWRMm: Float,
+        val axisXMm: Float
+    )
+
+    fun computeShtulpGeometry(
+        frame: FrameBlockNode,
+        op: OpeningCellNode,
+        profileSystem: ProfileSystemSpec
+    ): ShtulpGeometryMm {
+        val atFrameLeft = abs(op.leftMm - frame.leftMm) <= EPS
+        val atFrameRight = abs(op.rightMm - frame.rightMm) <= EPS
+        val leftDed = if (atFrameLeft) profileSystem.frameWidthMm else profileSystem.impostWidthMm / 2f
+        val rightDed = if (atFrameRight) profileSystem.frameWidthMm else profileSystem.impostWidthMm / 2f
+        val lightW = (op.widthMm - leftDed - rightDed).coerceAtLeast(100f)
+        val ratio = op.properties.shtulpSplitRatio.coerceIn(0.15f, 0.85f)
+        val lightWL = lightW * ratio
+        val lightWR = lightW - lightWL
+        val axisX = op.leftMm + leftDed + lightWL
+        return ShtulpGeometryMm(
+            leftDedMm = leftDed,
+            rightDedMm = rightDed,
+            lightWMm = lightW,
+            lightWLMm = lightWL,
+            lightWRMm = lightWR,
+            axisXMm = axisX
+        )
+    }
+
+    fun updateShtulpSplitBySegment(
+        topology: WindowBlockTopology,
+        frameId: String,
+        openingId: String,
+        isLeftLeaf: Boolean,
+        enteredWidthMm: Float,
+        profileSystem: ProfileSystemSpec
+    ): WindowBlockTopology {
+        return topology.copy(
+            frames = topology.frames.map { frame ->
+                if (frame.id != frameId) return@map frame
+                frame.copy(
+                    openings = frame.openings.map { op ->
+                        if (op.id != openingId) return@map op
+                        val geom = computeShtulpGeometry(frame, op, profileSystem)
+                        val lightW = geom.lightWMm
+                        val minLight = minOf(MIN_SEGMENT_MM, lightW * 0.4f)
+                        val rawLightWL = if (isLeftLeaf) {
+                            enteredWidthMm - geom.leftDedMm
+                        } else {
+                            lightW - (enteredWidthMm - geom.rightDedMm)
+                        }
+                        val clampedLightWL = rawLightWL.coerceIn(minLight, (lightW - minLight).coerceAtLeast(minLight))
+                        val newRatio = (clampedLightWL / lightW).coerceIn(0.15f, 0.85f)
+                        op.copy(properties = op.properties.copy(shtulpSplitRatio = newRatio))
                     }
                 )
             }
@@ -534,9 +665,7 @@ object WindowCadOperations {
                             profileSystem.sashFullWidthC2Mm.takeIf { it > 0f } ?: profileSystem.sashWidthMm
                         }
                         val overlap = if (p.isDoorSash) profileSystem.doorOverlapMm else profileSystem.sashOverlapMm
-                        val isDoubleShtulp = p.openingType == SashOpeningType.SHTULP_TURN_TURN ||
-                            p.openingType == SashOpeningType.SHTULP_TILTTURN_L_TURN_R ||
-                            p.openingType == SashOpeningType.SHTULP_TURN_L_TILTTURN_R
+                        val isDoubleShtulp = p.openingType.isShtulp
                         val leaves = if (isHorizontalAxis && isDoubleShtulp) 2 else 1
                         baseInnerLoss + leaves * 2f * (sashFullW - overlap).coerceAtLeast(0f)
                     }

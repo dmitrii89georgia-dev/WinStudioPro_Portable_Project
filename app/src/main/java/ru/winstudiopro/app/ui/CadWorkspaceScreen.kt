@@ -122,7 +122,8 @@ internal fun CadEditorWorkspaceScreen(
         extraAccessoriesCatalog,
         workServicesCatalog,
         hardwareBrandsCatalog,
-        assemblyPricingCatalog
+        assemblyPricingCatalog,
+        finSchemeSettings
     ) {
         order.windows.mapIndexed { idx, win ->
             WindowBomAndCostEngine.calculateWindow(
@@ -135,6 +136,7 @@ internal fun CadEditorWorkspaceScreen(
                 workServicesCatalog = workServicesCatalog,
                 hardwareBrandsCatalog = hardwareBrandsCatalog,
                 assemblyPricingCatalog = assemblyPricingCatalog,
+                financialSchemesCatalog = finSchemeSettings.financialSchemes,
                 windowIndexInOrder = idx + 1
             )
         }
@@ -244,6 +246,7 @@ internal fun CadEditorWorkspaceScreen(
         applyExtrasAndWorks: Boolean = true,
         applyAssemblyScheme: Boolean = false
     ) {
+        val filteredExtrasForAll = currentWindow.selectedExtraIds.filterNot { it == "ext_corner" }
         val updatedWindows = windows.map { win ->
             win.copy(
                 profileSystemId = if (applyProfile) currentWindow.profileSystemId else win.profileSystemId,
@@ -259,7 +262,7 @@ internal fun CadEditorWorkspaceScreen(
                 hardwareBrandId = if (applyHardware) currentWindow.hardwareBrandId else win.hardwareBrandId,
                 mosquitoSystemId = if (applyHardware) currentWindow.mosquitoSystemId else win.mosquitoSystemId,
                 financialSchemeId = if (applyFinancials) currentWindow.financialSchemeId else win.financialSchemeId,
-                selectedExtraIds = if (applyExtrasAndWorks) currentWindow.selectedExtraIds else win.selectedExtraIds,
+                selectedExtraIds = if (applyExtrasAndWorks) filteredExtrasForAll else win.selectedExtraIds,
                 selectedWorkIds = if (applyExtrasAndWorks) currentWindow.selectedWorkIds else win.selectedWorkIds,
                 assemblySchemeOverride = if (applyAssemblyScheme) currentWindow.assemblySchemeOverride else win.assemblySchemeOverride
             )
@@ -268,7 +271,7 @@ internal fun CadEditorWorkspaceScreen(
         snackMessage = "Настройки применены ко всем конструкциям заказа (${updatedWindows.size} шт.)!"
     }
 
-    // Добавление новой конструкции 1500x1500 через "+" С НАСЛЕДОВАНИЕМ настроек текущего окна!
+    // Добавление новой конструкции 1500x1500 через "+" С НАСЛЕДОВАНИЕМ базовых настроек, но БЕЗ переноса доборов/угловиков!
     fun addNewWindowInheritingSettings() {
         val nextNum = windows.size + 1
         val newWin = currentWindow.copy(
@@ -276,6 +279,8 @@ internal fun CadEditorWorkspaceScreen(
             name = "Окно $nextNum",
             quantity = 1,
             manualUnitPriceOverride = null,
+            selectedExtraIds = currentWindow.selectedExtraIds.filterNot { it == "ext_corner" },
+            addons = WindowPerimeterAddons(),
             topology = WindowCadOperations.single1500Topology()
         )
         val updated = windows + newWin
@@ -351,6 +356,14 @@ internal fun CadEditorWorkspaceScreen(
                         updateCurrentWindow { win ->
                             win.copy(topology = WindowCadOperations.toggleDoorBottomSandwich(win.topology, openingId))
                         }
+                    },
+                    onEditShtulpLeafWidth = { frameId, openingId, isLeftLeaf, curMm ->
+                        numpadRequest = NumpadRequestState.ShtulpLeafWidth(
+                            frameId = frameId,
+                            openingId = openingId,
+                            isLeftLeaf = isLeftLeaf,
+                            currentMm = curMm.roundToInt()
+                        )
                     },
                     topSafeInsetPx = topBarBottomPx,
                     rightSafeInsetPx = 0f,
@@ -572,7 +585,7 @@ internal fun CadEditorWorkspaceScreen(
                 // ПРАВЫЕ КОМПАКТНЫЕ ИНФОРМАЦИОННЫЕ ПЛАШКИ (СМЕЩЕНЫ НИЖЕ ПЛАВАЮЩЕЙ ВЕРХНЕЙ ПАНЕЛИ)
                 val hwName = hardwareBrandsCatalog
                     .find { it.id == currentWindow.hardwareBrandId }?.name ?: strings.notAccounted
-                val finName = DefaultCatalogs.defaultFinancialSchemes()
+                val finName = finSchemeSettings.financialSchemes
                     .find { it.id == currentWindow.financialSchemeId }?.name
                 val badgesTopPadDp = with(density) { topBarBottomPx.toDp() }.let {
                     if (it > 0.dp) it + 6.dp else 64.dp
@@ -607,12 +620,20 @@ internal fun CadEditorWorkspaceScreen(
                     if (currentWindow.hardwareBrandId != "hw_none") {
                         CanvasReadOnlyInfoBadge(label = hwName, bgColor = palette.accentIndigo)
                     }
-                    currentWindow.selectedExtraIds.forEach { eid ->
-                        val extName = extraAccessoriesCatalog.find { it.id == eid }?.name
-                        if (extName != null) {
-                            CanvasReadOnlyInfoBadge(label = extName, bgColor = Color(0xFF00838F))
-                        }
+                    if (currentWindow.addons.hasCornerProfile || currentWindow.selectedExtraIds.contains("ext_corner")) {
+                        CanvasReadOnlyInfoBadge(label = "Угловик", bgColor = Color(0xFF00838F))
                     }
+                    if (currentWindow.addons.hasExtenderProfile90) {
+                        CanvasReadOnlyInfoBadge(label = "Добор 90°", bgColor = Color(0xFF00838F))
+                    }
+                    currentWindow.selectedExtraIds
+                        .filterNot { it == "ext_corner" }
+                        .forEach { eid ->
+                            val extName = extraAccessoriesCatalog.find { it.id == eid }?.name
+                            if (extName != null) {
+                                CanvasReadOnlyInfoBadge(label = extName, bgColor = Color(0xFF00838F))
+                            }
+                        }
                     currentWindow.selectedWorkIds.forEach { wid ->
                         val wrkName = workServicesCatalog.find { it.id == wid }?.name
                         if (wrkName != null) {
@@ -1089,7 +1110,7 @@ internal fun CadEditorWorkspaceScreen(
         ImpostsAndOpeningModalDialog(
             cell = targetCell,
             onDismiss = { activeCellForModal = null },
-            onApply = { splitOp, newOpeningType, isSandwich, hasMosquito, isDoor, isReverseDoor, hasHorizSashImpost ->
+            onApply = { splitOp, newOpeningType, sashImpostMode, paneSandwichFlags, hasMosquito, isDoor, isReverseDoor ->
                 updateCurrentWindow { win ->
                     var topo = win.topology
                     val neighborHeightMm = WindowCadOperations.findNeighborHorizontalImpostHeightFromBottom(
@@ -1098,25 +1119,37 @@ internal fun CadEditorWorkspaceScreen(
                     )
                     val snapHeightMm = neighborHeightMm ?: targetCell.properties.sashImpostHeightFromBottomMm
 
+                    val effectiveMode = if (newOpeningType.hasSashProfile) sashImpostMode else SashImpostMode.NONE
+                    val normalizedFlags = paneSandwichFlags.take(effectiveMode.paneCount).let { list ->
+                        if (list.size < effectiveMode.paneCount) {
+                            list + List(effectiveMode.paneCount - list.size) { false }
+                        } else {
+                            list
+                        }
+                    }
                     val newProps = targetCell.properties.copy(
                         openingType = newOpeningType,
                         isDoorSash = isDoor,
                         isReverseDoorSash = isReverseDoor,
-                        isSandwichFilling = isSandwich,
+                        isSandwichFilling = normalizedFlags.all { it },
                         hasMosquitoNet = hasMosquito,
-                        hasHorizontalSashImpost = hasHorizSashImpost,
+                        sashImpostMode = effectiveMode,
+                        paneSandwichFlags = normalizedFlags,
+                        hasHorizontalSashImpost = (effectiveMode == SashImpostMode.H1),
+                        bottomPartIsSandwich = (effectiveMode == SashImpostMode.H1 && normalizedFlags.getOrElse(1) { false }),
                         sashImpostHeightFromBottomMm = snapHeightMm
                     )
 
                     topo = WindowCadOperations.updateOpeningProperties(topo, targetCell.id, newProps)
 
-                    topo = when (splitOp) {
-                        SplitOperation.NONE -> topo
-                        SplitOperation.SPLIT_V2 -> WindowCadOperations.splitOpening(topo, targetCell.id, ImpostDirection.VERTICAL, 2)
-                        SplitOperation.SPLIT_H2 -> WindowCadOperations.splitOpening(topo, targetCell.id, ImpostDirection.HORIZONTAL, 2)
-                        SplitOperation.SPLIT_V3 -> WindowCadOperations.splitOpening(topo, targetCell.id, ImpostDirection.VERTICAL, 3)
-                        SplitOperation.SPLIT_H3 -> WindowCadOperations.splitOpening(topo, targetCell.id, ImpostDirection.HORIZONTAL, 3)
-                        SplitOperation.SPLIT_SHTULP_LEFT_MAIN, SplitOperation.SPLIT_SHTULP_RIGHT_MAIN -> topo
+                    if (!newOpeningType.hasSashProfile) {
+                        topo = when (splitOp) {
+                            SplitOperation.NONE -> topo
+                            SplitOperation.SPLIT_V2 -> WindowCadOperations.splitOpening(topo, targetCell.id, ImpostDirection.VERTICAL, 2)
+                            SplitOperation.SPLIT_H2 -> WindowCadOperations.splitOpening(topo, targetCell.id, ImpostDirection.HORIZONTAL, 2)
+                            SplitOperation.SPLIT_V3 -> WindowCadOperations.splitOpening(topo, targetCell.id, ImpostDirection.VERTICAL, 3)
+                            SplitOperation.SPLIT_H3 -> WindowCadOperations.splitOpening(topo, targetCell.id, ImpostDirection.HORIZONTAL, 3)
+                        }
                     }
                     win.copy(topology = topo)
                 }
@@ -1177,6 +1210,20 @@ internal fun CadEditorWorkspaceScreen(
                                     topology = win.topology,
                                     openingId = activeNumpad.openingId,
                                     newHeightFromBottomMm = newVal.toFloat()
+                                )
+                            )
+                        }
+                    }
+                    is NumpadRequestState.ShtulpLeafWidth -> {
+                        updateCurrentWindow { win ->
+                            win.copy(
+                                topology = WindowCadOperations.updateShtulpSplitBySegment(
+                                    topology = win.topology,
+                                    frameId = activeNumpad.frameId,
+                                    openingId = activeNumpad.openingId,
+                                    isLeftLeaf = activeNumpad.isLeftLeaf,
+                                    enteredWidthMm = newVal.toFloat(),
+                                    profileSystem = activeProfile
                                 )
                             )
                         }
@@ -1672,7 +1719,7 @@ private fun RightWindowSettingsDrawerContent(
     val strings = LocalAppStrings.current
     val displayCurrency = normalizeCurrencyDisplay(order.currencySymbol)
     val scroll = rememberScrollState()
-    val financialSchemes = remember { DefaultCatalogs.defaultFinancialSchemes() }
+    val financialSchemes = finSchemeSettings.financialSchemes
 
     Column(
         modifier = Modifier
@@ -1930,75 +1977,7 @@ private fun RightWindowSettingsDrawerContent(
             }
 
             // 6. СТЕКЛОПАКЕТЫ + ПЕРЕКЛЮЧАТЕЛЬ ОКРУГЛЕНИЯ ДО 0 / 5 ММ
-            Surface(
-                color = palette.secondaryBackground,
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            text = strings.glazingLabel,
-                            color = palette.textSecondary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        if (totalWindowsCount > 1) {
-                            Text(
-                                text = strings.applyShort,
-                                color = palette.accentBlue,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.clickable {
-                                    onApplyToAllWindows(false, true, false, false, false, false, false)
-                                }
-                            )
-                        }
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = strings.round05MmLabel,
-                            color = palette.textPrimary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Switch(
-                            checked = windowItem.roundGlassTo5Mm,
-                            onCheckedChange = { round5 ->
-                                onUpdateWindow(windowItem.copy(roundGlassTo5Mm = round5))
-                            },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.White,
-                                checkedTrackColor = palette.accentGreen,
-                                uncheckedThumbColor = Color.White,
-                                uncheckedTrackColor = palette.divider
-                            )
-                        )
-                    }
-                }
-            }
-            glazingCatalog.forEach { glz ->
-                val selected = glz.id == windowItem.glazingId
-                DrawerRadioOptionRow(
-                    label = glz.name,
-                    subtitle = if (glz.id == "none") null else "${glz.pricePerM2} $displayCurrency/m2",
-                    selected = selected,
-                    onClick = { onUpdateWindow(windowItem.copy(glazingId = glz.id)) }
-                )
-            }
-
+            // (Перенесено ниже Цвета по требованию — сначала 7. Цвет, затем 8. Стеклопакеты!)
             // 7. ЦВЕТ (строго цвета выбранной профильной системы + «Индивидуальный цвет клиента...»)
             var showCustomColorDialog by remember { mutableStateOf(false) }
             val activeSysForColors = profileSystems.find { it.id == windowItem.profileSystemId }
@@ -2138,7 +2117,77 @@ private fun RightWindowSettingsDrawerContent(
                 )
             }
 
-            // 8. ФУРНИТУРА
+            // 8. СТЕКЛОПАКЕТЫ + ПЕРЕКЛЮЧАТЕЛЬ ОКРУГЛЕНИЯ ДО 0 / 5 ММ
+            Surface(
+                color = palette.secondaryBackground,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = strings.glazingLabel,
+                            color = palette.textSecondary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (totalWindowsCount > 1) {
+                            Text(
+                                text = strings.applyShort,
+                                color = palette.accentBlue,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clickable {
+                                    onApplyToAllWindows(false, true, false, false, false, false, false)
+                                }
+                            )
+                        }
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = strings.round05MmLabel,
+                            color = palette.textPrimary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Switch(
+                            checked = windowItem.roundGlassTo5Mm,
+                            onCheckedChange = { round5 ->
+                                onUpdateWindow(windowItem.copy(roundGlassTo5Mm = round5))
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = palette.accentGreen,
+                                uncheckedThumbColor = Color.White,
+                                uncheckedTrackColor = palette.divider
+                            )
+                        )
+                    }
+                }
+            }
+            glazingCatalog.forEach { glz ->
+                val selected = glz.id == windowItem.glazingId
+                DrawerRadioOptionRow(
+                    label = glz.name,
+                    subtitle = if (glz.id == "none") null else "${glz.pricePerM2} $displayCurrency/m2",
+                    selected = selected,
+                    onClick = { onUpdateWindow(windowItem.copy(glazingId = glz.id)) }
+                )
+            }
+
+            // 9. ФУРНИТУРА
             DrawerGrayHeader(
                 title = strings.hardwareLabel,
                 actionText = if (totalWindowsCount > 1) strings.applyShort else null,
@@ -2154,24 +2203,57 @@ private fun RightWindowSettingsDrawerContent(
                 )
             }
 
-            // 9. РАЗНОЕ
+            // 10. РАЗНОЕ (Угловик и Доборный профиль 90° — только для активной конструкции + прочие аксессуары)
+            val cornerPriceM = activeSysForColors?.priceCornerProfilePerM ?: 0.0
+            val framePriceM = activeSysForColors?.priceFramePerM ?: 0.0
+            val cornerChecked = windowItem.addons.hasCornerProfile || windowItem.selectedExtraIds.contains("ext_corner")
             DrawerGrayHeader(
                 title = strings.extrasLabel,
                 actionText = if (totalWindowsCount > 1) strings.applyShort else null,
                 onAction = { onApplyToAllWindows(false, false, false, false, false, true, false) }
             )
-            extraAccessories.forEach { item ->
-                val checked = windowItem.selectedExtraIds.contains(item.id)
-                DrawerCheckboxOptionRow(
-                    label = item.name,
-                    subtitle = "${item.price} $displayCurrency/${item.rateType.labelRu}",
-                    checked = checked,
-                    onToggle = {
-                        val next = if (checked) windowItem.selectedExtraIds - item.id else windowItem.selectedExtraIds + item.id
-                        onUpdateWindow(windowItem.copy(selectedExtraIds = next))
-                    }
-                )
-            }
+            DrawerCheckboxOptionRow(
+                label = "Угловик (1 шт. по высоте)",
+                subtitle = "Рез 90° • ${String.format(Locale.US, "%.2f", cornerPriceM)} $displayCurrency/м • только активное окно",
+                checked = cornerChecked,
+                modifier = Modifier.testTag("drawer_addon_corner_profile"),
+                onToggle = {
+                    val nextCorner = !cornerChecked
+                    onUpdateWindow(
+                        windowItem.copy(
+                            addons = windowItem.addons.copy(hasCornerProfile = nextCorner),
+                            selectedExtraIds = windowItem.selectedExtraIds.filterNot { it == "ext_corner" }
+                        )
+                    )
+                }
+            )
+            DrawerCheckboxOptionRow(
+                label = "Доборный профиль 90° (1 шт. по ширине)",
+                subtitle = "Рез 90° • ${String.format(Locale.US, "%.2f", framePriceM)} $displayCurrency/м • только активное окно",
+                checked = windowItem.addons.hasExtenderProfile90,
+                modifier = Modifier.testTag("drawer_addon_extender_90"),
+                onToggle = {
+                    onUpdateWindow(
+                        windowItem.copy(
+                            addons = windowItem.addons.copy(hasExtenderProfile90 = !windowItem.addons.hasExtenderProfile90)
+                        )
+                    )
+                }
+            )
+            extraAccessories
+                .filterNot { it.id == "ext_corner" }
+                .forEach { item ->
+                    val checked = windowItem.selectedExtraIds.contains(item.id)
+                    DrawerCheckboxOptionRow(
+                        label = item.name,
+                        subtitle = "${item.price} $displayCurrency/${item.rateType.labelRu}",
+                        checked = checked,
+                        onToggle = {
+                            val next = if (checked) windowItem.selectedExtraIds - item.id else windowItem.selectedExtraIds + item.id
+                            onUpdateWindow(windowItem.copy(selectedExtraIds = next))
+                        }
+                    )
+                }
 
             // 10. МОНТАЖ
             DrawerGrayHeader(
@@ -2393,66 +2475,22 @@ private fun RightWindowSettingsDrawerContent(
                 }
             }
 
-            // Общий НДС и скидка заказа
+            // 14. НАЛОГ НДС (без скидочных пресетов внизу — все схемы скидок выбираются в пункте 4)
             DrawerGrayHeader(strings.vatAndDiscountLabel)
-            if (finSchemeSettings.discountPresets.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    finSchemeSettings.discountPresets.forEach { preset ->
-                        val isSel = kotlin.math.abs(order.discountPercent - preset.discountPercent) < 0.01
-                        FilterChip(
-                            selected = isSel,
-                            onClick = { onUpdateOrderDiscount(preset.discountPercent, order.taxVatPercent) },
-                            label = {
-                                Text(
-                                    text = if (preset.isDealer) "${preset.name} (${preset.discountPercent.toInt()}%)" else preset.name,
-                                    fontSize = 11.sp,
-                                    color = if (isSel) Color.White else palette.textPrimary
-                                )
-                            },
-                            shape = RoundedCornerShape(10.dp),
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = if (preset.isDealer) palette.accentOrange else palette.accentBlue,
-                                containerColor = palette.secondaryBackground
-                            ),
-                            modifier = Modifier.testTag("drawer_discount_preset_${preset.discountPercent.toInt()}")
-                        )
-                    }
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = order.discountPercent.roundToInt().toString(),
-                    onValueChange = { v ->
-                        val d = (v.toDoubleOrNull() ?: 0.0).coerceIn(0.0, 90.0)
-                        onUpdateOrderDiscount(d, order.taxVatPercent)
-                    },
-                    label = { Text(strings.orderDiscountPct, fontSize = 10.sp) },
-                    shape = RoundedCornerShape(12.dp),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
-                OutlinedTextField(
-                    value = order.taxVatPercent.roundToInt().toString(),
-                    onValueChange = { v ->
-                        val vat = (v.toDoubleOrNull() ?: 0.0).coerceIn(0.0, 50.0)
-                        onUpdateOrderDiscount(order.discountPercent, vat)
-                    },
-                    label = { Text(strings.vatPct, fontSize = 10.sp) },
-                    shape = RoundedCornerShape(12.dp),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
-            }
+            OutlinedTextField(
+                value = order.taxVatPercent.roundToInt().toString(),
+                onValueChange = { v ->
+                    val vat = (v.toDoubleOrNull() ?: 0.0).coerceIn(0.0, 50.0)
+                    onUpdateOrderDiscount(order.discountPercent, vat)
+                },
+                label = { Text(strings.vatPct, fontSize = 10.sp) },
+                shape = RoundedCornerShape(12.dp),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("drawer_vat_input"),
+                singleLine = true
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)

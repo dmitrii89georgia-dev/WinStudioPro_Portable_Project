@@ -92,6 +92,7 @@ internal fun rememberOrderLedgerSnapshots(
                     extraAccessoriesCatalog = extraAccessoriesCatalog,
                     workServicesCatalog = workServicesCatalog,
                     hardwareBrandsCatalog = hardwareBrandsCatalog,
+                    financialSchemesCatalog = finSchemeSettings.financialSchemes,
                     assemblyPricingCatalog = assemblyPricingCatalog,
                     windowIndexInOrder = idx + 1
                 )

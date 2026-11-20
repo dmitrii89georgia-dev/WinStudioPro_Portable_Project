@@ -300,7 +300,9 @@ enum class ProfileRole(val titleRu: String) {
     SHTAPIK("Штапик"),
     SEAT_PROFILE("Подставочный профиль"),
     DOORSILL("Порог"),
-    EXTENDER("Доборный профиль")
+    EXTENDER("Доборный профиль"),
+    SHTULP("Штульп"),
+    CORNER_PROFILE("Угловик")
 }
 
 data class ProfileCutPiece(
@@ -393,7 +395,11 @@ data class WindowCalculationResult(
     val costAssembly: Double = 0.0,
     val costInstallation: Double = 0.0,
     val costOrderServices: Double = 0.0,
-    val unitPrimeCost: Double = 0.0
+    val unitPrimeCost: Double = 0.0,
+    val shtulpLengthM: Double = 0.0,
+    val costShtulp: Double = 0.0,
+    val costCornerProfile: Double = 0.0,
+    val costExtenderProfile: Double = 0.0
 )
 
 data class WindowTurnkeyPriceBreakdown(

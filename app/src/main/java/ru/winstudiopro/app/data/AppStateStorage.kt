@@ -1421,6 +1421,19 @@ object AppStateStorage {
             )
         }
         put("discountPresets", dArr)
+        val fsArr = JSONArray()
+        f.financialSchemes.forEach { s ->
+            fsArr.put(
+                JSONObject().apply {
+                    put("id", s.id)
+                    put("name", s.name)
+                    put("discountPercent", s.discountPercent)
+                    put("markupPercent", s.markupPercent)
+                }
+            )
+        }
+        put("financialSchemes", fsArr)
+        put("defaultProfileSystemId", f.defaultProfileSystemId)
         put("defaultVatPercent", f.defaultVatPercent)
         put("warnBelowPrimeCost", f.warnBelowPrimeCost)
         put("gelPerUsdRate", f.gelPerUsdRate)
@@ -1454,10 +1467,31 @@ object AppStateStorage {
             DefaultCashCatalogs.defaultDiscountPresets()
         }
 
+        val fsArr = o.optJSONArray("financialSchemes")
+        val fsList = if (fsArr != null) {
+            val list = mutableListOf<FinancialSchemeItem>()
+            for (i in 0 until fsArr.length()) {
+                val item = fsArr.getJSONObject(i)
+                list.add(
+                    FinancialSchemeItem(
+                        id = item.optString("id", "fin_$i"),
+                        name = item.optString("name", "Схема"),
+                        discountPercent = item.optDouble("discountPercent", 0.0).coerceIn(0.0, 99.0),
+                        markupPercent = item.optDouble("markupPercent", 0.0).coerceIn(0.0, 500.0)
+                    )
+                )
+            }
+            list.ifEmpty { DefaultCatalogs.defaultFinancialSchemes() }
+        } else {
+            DefaultCatalogs.defaultFinancialSchemes()
+        }
+
         return FinSchemeSettings(
             baseMarkupMultiplier = o.optDouble("baseMarkupMultiplier", 1.40).coerceAtLeast(0.1),
             markupPresets = mList,
             discountPresets = dList,
+            financialSchemes = fsList,
+            defaultProfileSystemId = o.optString("defaultProfileSystemId", ""),
             defaultVatPercent = o.optDouble("defaultVatPercent", 18.0).coerceIn(0.0, 50.0),
             warnBelowPrimeCost = o.optBoolean("warnBelowPrimeCost", true),
             gelPerUsdRate = o.optDouble("gelPerUsdRate", 2.70).coerceAtLeast(0.01)
@@ -2175,6 +2209,8 @@ object AppStateStorage {
                     put("hasSeatProfile", w.addons.hasSeatProfile)
                     put("hasDoorsill", w.addons.hasDoorsill)
                     put("hasCornerJamb", w.addons.hasCornerJamb)
+                    put("hasCornerProfile", w.addons.hasCornerProfile)
+                    put("hasExtenderProfile90", w.addons.hasExtenderProfile90)
                     put("extTop", w.addons.extenderTopMm)
                     put("extBot", w.addons.extenderBottomMm)
                     put("extLeft", w.addons.extenderLeftMm)
@@ -2243,6 +2279,8 @@ object AppStateStorage {
                         hasSeatProfile = wo.optBoolean("hasSeatProfile", false),
                         hasDoorsill = wo.optBoolean("hasDoorsill", false),
                         hasCornerJamb = wo.optBoolean("hasCornerJamb", false),
+                        hasCornerProfile = wo.optBoolean("hasCornerProfile", false),
+                        hasExtenderProfile90 = wo.optBoolean("hasExtenderProfile90", false),
                         extenderTopMm = wo.optInt("extTop", 0),
                         extenderBottomMm = wo.optInt("extBot", 0),
                         extenderLeftMm = wo.optInt("extLeft", 0),
@@ -2370,6 +2408,9 @@ object AppStateStorage {
                         put("sashImpostHeightFromBottomMm", op.properties.sashImpostHeightFromBottomMm.toDouble())
                         put("bottomPartIsSandwich", op.properties.bottomPartIsSandwich)
                         put("glazingBars", op.properties.glazingBars.name)
+                        put("sashImpostMode", op.properties.sashImpostMode.name)
+                        put("paneSandwichFlags", JSONArray(op.properties.paneSandwichFlags))
+                        put("shtulpSplitRatio", op.properties.shtulpSplitRatio.toDouble())
                     }
                 )
             }
@@ -2423,6 +2464,19 @@ object AppStateStorage {
                 } catch (_: Exception) {
                     GlazingBarsPattern.NONE
                 }
+                val impostModeStr = oo.optString("sashImpostMode", "NONE")
+                val safeImpostMode = try {
+                    SashImpostMode.valueOf(impostModeStr)
+                } catch (_: Exception) {
+                    SashImpostMode.NONE
+                }
+                val paneFlagsArr = oo.optJSONArray("paneSandwichFlags")
+                val paneFlags = if (paneFlagsArr != null) {
+                    (0 until paneFlagsArr.length()).map { idx -> paneFlagsArr.optBoolean(idx, false) }
+                } else {
+                    emptyList()
+                }
+                val splitRatio = oo.optDouble("shtulpSplitRatio", 0.5).toFloat().coerceIn(0.15f, 0.85f)
                 openings.add(
                     OpeningCellNode(
                         id = oo.getString("id"),
@@ -2440,7 +2494,10 @@ object AppStateStorage {
                             hasHorizontalSashImpost = oo.optBoolean("hasHorizontalSashImpost", false),
                             sashImpostHeightFromBottomMm = oo.optDouble("sashImpostHeightFromBottomMm", 800.0).toFloat(),
                             bottomPartIsSandwich = oo.optBoolean("bottomPartIsSandwich", false),
-                            glazingBars = safeBars
+                            glazingBars = safeBars,
+                            sashImpostMode = safeImpostMode,
+                            paneSandwichFlags = paneFlags,
+                            shtulpSplitRatio = splitRatio
                         )
                     )
                 )

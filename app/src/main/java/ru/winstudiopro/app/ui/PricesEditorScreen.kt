@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -1372,8 +1373,8 @@ private fun FinSchemeTabContent(
     var markupPresets by remember(finSchemeSettings) {
         mutableStateOf(finSchemeSettings.markupPresets)
     }
-    var discountPresets by remember(finSchemeSettings) {
-        mutableStateOf(finSchemeSettings.discountPresets)
+    var financialSchemes by remember(finSchemeSettings) {
+        mutableStateOf(finSchemeSettings.financialSchemes)
     }
     var defaultVatText by remember(finSchemeSettings) {
         mutableStateOf(
@@ -1388,9 +1389,10 @@ private fun FinSchemeTabContent(
         mutableStateOf(finSchemeSettings.warnBelowPrimeCost)
     }
 
-    var newDiscName by remember { mutableStateOf("") }
-    var newDiscPct by remember { mutableStateOf("") }
-    var newDiscDealer by remember { mutableStateOf(false) }
+    var newSchemeName by remember { mutableStateOf("") }
+    var newSchemeDiscPct by remember { mutableStateOf("") }
+    var newSchemeMarkupPct by remember { mutableStateOf("") }
+    var editingScheme by remember { mutableStateOf<FinancialSchemeItem?>(null) }
 
     val parsedMarkup = markupText.replace(',', '.').toDoubleOrNull()?.coerceIn(1.0, 10.0)
         ?: finSchemeSettings.baseMarkupMultiplier
@@ -1503,7 +1505,7 @@ private fun FinSchemeTabContent(
             }
         }
 
-        // 2. Пресеты скидок для быстрого выбора в заказе
+        // 2. Редактируемые финансовые схемы для шторки заказа (в шторке отображается только название)
         Surface(
             color = palette.cardSurface,
             shape = RoundedCornerShape(20.dp),
@@ -1512,11 +1514,16 @@ private fun FinSchemeTabContent(
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Пресеты скидок клиентам (быстрый выбор в шторке заказа)",
+                    text = "Финансовые схемы (выбор в шторке заказа)",
                     fontWeight = FontWeight.Bold,
                     color = palette.accentBlue
                 )
-                discountPresets.forEach { preset ->
+                Text(
+                    text = "В шторке окна клиенту показывается только название схемы, а скидка и наценка настраиваются здесь.",
+                    fontSize = 11.5.sp,
+                    color = palette.textSecondary
+                )
+                financialSchemes.forEach { scheme ->
                     Surface(
                         color = palette.secondaryBackground.copy(alpha = 0.65f),
                         shape = RoundedCornerShape(12.dp),
@@ -1531,28 +1538,51 @@ private fun FinSchemeTabContent(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = preset.name,
+                                    text = scheme.name,
                                     fontSize = 13.5.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = palette.textPrimary
                                 )
-                                val tag = if (preset.isDealer) " • Дилер" else ""
+                                val detailsText = buildString {
+                                    if (scheme.discountPercent > 0.0) {
+                                        append("Скидка ${scheme.discountPercent.toInt()}%")
+                                    } else {
+                                        append("Скидка 0%")
+                                    }
+                                    if (scheme.markupPercent > 0.0) {
+                                        append(" • Наценка +${scheme.markupPercent.toInt()}%")
+                                    }
+                                }
                                 Text(
-                                    text = "Скидка ${preset.discountPercent.toInt()}%$tag",
+                                    text = detailsText,
                                     fontSize = 11.sp,
-                                    color = if (preset.isDealer) palette.accentOrange else palette.textSecondary
+                                    color = if (scheme.markupPercent > 0.0) palette.accentOrange else palette.textSecondary
                                 )
                             }
-                            if (discountPresets.size > 1) {
+                            IconButton(
+                                onClick = { editingScheme = scheme },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .testTag("fin_scheme_edit_${scheme.id}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Edit,
+                                    contentDescription = "Редактировать финансовую схему",
+                                    tint = palette.accentBlue
+                                )
+                            }
+                            if (financialSchemes.size > 1 && scheme.id != "fin_none") {
                                 IconButton(
                                     onClick = {
-                                        discountPresets = discountPresets.filterNot { it.id == preset.id }
+                                        financialSchemes = financialSchemes.filterNot { it.id == scheme.id }
                                     },
-                                    modifier = Modifier.size(40.dp)
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .testTag("fin_scheme_delete_${scheme.id}")
                                 ) {
                                     Icon(
                                         imageVector = Icons.Rounded.DeleteOutline,
-                                        contentDescription = "Удалить пресет",
+                                        contentDescription = "Удалить финансовую схему",
                                         tint = palette.accentRed
                                     )
                                 }
@@ -1562,57 +1592,127 @@ private fun FinSchemeTabContent(
                 }
 
                 HorizontalDivider(color = palette.divider)
-                Text("Добавить пресет скидки", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
+                Text("Добавить финансовую схему", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
+                OutlinedTextField(
+                    value = newSchemeName,
+                    onValueChange = { newSchemeName = it },
+                    label = { Text("Название (напр. Постоянный клиент)") },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("fin_new_scheme_name_input"),
+                    singleLine = true
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
-                        value = newDiscName,
-                        onValueChange = { newDiscName = it },
-                        label = { Text("Название (напр. Постоянный)") },
+                        value = newSchemeDiscPct,
+                        onValueChange = { newSchemeDiscPct = it },
+                        label = { Text("Скидка %") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1.4f).testTag("fin_new_discount_name_input"),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("fin_new_scheme_discount_input"),
                         singleLine = true
                     )
                     OutlinedTextField(
-                        value = newDiscPct,
-                        onValueChange = { newDiscPct = it },
-                        label = { Text("%") },
+                        value = newSchemeMarkupPct,
+                        onValueChange = { newSchemeMarkupPct = it },
+                        label = { Text("Наценка %") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(0.7f).testTag("fin_new_discount_pct_input"),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("fin_new_scheme_markup_input"),
                         singleLine = true
                     )
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Button(
+                    onClick = {
+                        val title = newSchemeName.trim()
+                        if (title.isBlank()) return@Button
+                        val disc = newSchemeDiscPct.replace(',', '.').toDoubleOrNull()?.coerceIn(0.0, 90.0) ?: 0.0
+                        val mark = newSchemeMarkupPct.replace(',', '.').toDoubleOrNull()?.coerceIn(0.0, 200.0) ?: 0.0
+                        financialSchemes = financialSchemes + FinancialSchemeItem(
+                            id = "fin_${UUID.randomUUID().toString().take(6)}",
+                            name = title,
+                            discountPercent = disc,
+                            markupPercent = mark
+                        )
+                        newSchemeName = ""
+                        newSchemeDiscPct = ""
+                        newSchemeMarkupPct = ""
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .testTag("fin_add_scheme_button")
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = newDiscDealer, onCheckedChange = { newDiscDealer = it })
-                        Text("Дилерская цена", fontSize = 12.sp, color = palette.textPrimary)
-                    }
-                    Button(
-                        onClick = {
-                            val pct = newDiscPct.replace(',', '.').toDoubleOrNull()?.coerceIn(0.0, 90.0) ?: return@Button
-                            val title = newDiscName.trim().ifBlank { "Скидка ${pct.toInt()}%" }
-                            discountPresets = discountPresets + DiscountPresetItem(
-                                id = "disc_${UUID.randomUUID().toString().take(6)}",
-                                name = title,
-                                discountPercent = pct,
-                                isDealer = newDiscDealer
-                            )
-                            newDiscName = ""
-                            newDiscPct = ""
-                            newDiscDealer = false
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
-                        modifier = Modifier.heightIn(min = 44.dp).testTag("fin_add_discount_button")
-                    ) {
-                        Text("+ Добавить", color = Color.White, fontWeight = FontWeight.SemiBold)
-                    }
+                    Text("+ Добавить финансовую схему", color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
             }
+        }
+
+        val schemeBeingEdited = editingScheme
+        if (schemeBeingEdited != null) {
+            var editName by remember(schemeBeingEdited.id) { mutableStateOf(schemeBeingEdited.name) }
+            var editDisc by remember(schemeBeingEdited.id) { mutableStateOf(schemeBeingEdited.discountPercent.toString().removeSuffix(".0")) }
+            var editMarkup by remember(schemeBeingEdited.id) { mutableStateOf(schemeBeingEdited.markupPercent.toString().removeSuffix(".0")) }
+            AlertDialog(
+                onDismissRequest = { editingScheme = null },
+                title = { Text("Редактировать схему", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = editName,
+                            onValueChange = { editName = it },
+                            label = { Text("Название") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = editDisc,
+                            onValueChange = { editDisc = it },
+                            label = { Text("Скидка (%)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = editMarkup,
+                            onValueChange = { editMarkup = it },
+                            label = { Text("Наценка (%)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val d = editDisc.replace(',', '.').toDoubleOrNull()?.coerceIn(0.0, 90.0) ?: 0.0
+                            val m = editMarkup.replace(',', '.').toDoubleOrNull()?.coerceIn(0.0, 200.0) ?: 0.0
+                            val nextName = editName.trim().ifBlank { schemeBeingEdited.name }
+                            financialSchemes = financialSchemes.map {
+                                if (it.id == schemeBeingEdited.id) {
+                                    it.copy(name = nextName, discountPercent = d, markupPercent = m)
+                                } else it
+                            }
+                            editingScheme = null
+                        }
+                    ) {
+                        Text("Сохранить")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { editingScheme = null }) {
+                        Text("Отмена")
+                    }
+                }
+            )
         }
 
         // 3. НДС по умолчанию и контроль минимальной цены
@@ -1697,7 +1797,7 @@ private fun FinSchemeTabContent(
                     finSchemeSettings.copy(
                         baseMarkupMultiplier = parsedMarkup,
                         markupPresets = updatedPresets,
-                        discountPresets = discountPresets,
+                        financialSchemes = financialSchemes,
                         defaultVatPercent = parsedVat,
                         warnBelowPrimeCost = warnBelowPrimeCost
                     )
