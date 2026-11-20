@@ -40,15 +40,15 @@ class WinStudioUiRobolectricTest {
     fun `home dashboard opens orders list with seeded orders and applies status filter`() {
         composeRule.waitForIdle()
 
-        // Главный экран: видны основные плитки разделов (нижние прокручиваем в область видимости)
-        composeRule.onNodeWithTag("dashboard_orders_card").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("dashboard_profiles_card").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("dashboard_prices_card").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("dashboard_warehouse_card").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("dashboard_settings_card").performScrollTo().assertIsDisplayed()
+        // Главный экран статичный: все основные плитки видны сразу без прокрутки
+        composeRule.onNodeWithTag("dashboard_orders_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_profiles_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_prices_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_warehouse_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_settings_card").assertIsDisplayed()
 
         // Переходим в список заказов
-        composeRule.onNodeWithTag("dashboard_orders_card").performScrollTo().performClick()
+        composeRule.onNodeWithTag("dashboard_orders_card").performClick()
         composeRule.waitForIdle()
 
         // Должен отображаться заголовок с количеством 16 заказов из dev_seed.winbackup.json
@@ -67,7 +67,7 @@ class WinStudioUiRobolectricTest {
         // Возвращаемся на главный экран по кнопке "Назад"
         composeRule.onNodeWithTag("top_bar_back_button").assertIsDisplayed().performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("dashboard_orders_card").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_orders_card").assertIsDisplayed()
     }
 
     @Test
@@ -75,7 +75,7 @@ class WinStudioUiRobolectricTest {
         composeRule.waitForIdle()
 
         // Создаём новый заказ из главного экрана и переходим в 2D-редактор
-        composeRule.onNodeWithTag("dashboard_orders_card").performScrollTo().performClick()
+        composeRule.onNodeWithTag("dashboard_orders_card").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("orders_list_add_button").performClick()
         composeRule.waitForIdle()
@@ -141,7 +141,7 @@ class WinStudioUiRobolectricTest {
         composeRule.waitForIdle()
 
         // Открываем первый существующий заказ из базы и заходим в 2D-конструктор
-        composeRule.onNodeWithTag("dashboard_orders_card").performScrollTo().performClick()
+        composeRule.onNodeWithTag("dashboard_orders_card").performClick()
         composeRule.waitForIdle()
         composeRule.onAllNodesWithText("Окон:", substring = true)[0].performClick()
         composeRule.waitForIdle()
@@ -178,7 +178,7 @@ class WinStudioUiRobolectricTest {
         composeRule.waitForIdle()
 
         // 1. Открываем "Профили", раскрываем секцию "Резина (уплотнители)" внизу списка
-        composeRule.onNodeWithTag("dashboard_profiles_card").performScrollTo().performClick()
+        composeRule.onNodeWithTag("dashboard_profiles_card").performClick()
         composeRule.waitForIdle()
         composeRule.onAllNodesWithText("Резина (уплотнители)", substring = true)[0]
             .performScrollTo()
@@ -195,7 +195,7 @@ class WinStudioUiRobolectricTest {
         composeRule.waitForIdle()
 
         // 2. Открываем "Склад", прокручиваем LazyColumn до раздела уплотнительной резины
-        composeRule.onNodeWithTag("dashboard_warehouse_card").performScrollTo().performClick()
+        composeRule.onNodeWithTag("dashboard_warehouse_card").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("warehouse_lazy_column")
             .performScrollToNode(hasText("Уплотнительная резина", substring = true))
@@ -210,7 +210,7 @@ class WinStudioUiRobolectricTest {
         composeRule.waitForIdle()
 
         // 1. Открываем "Прайсы" и проверяем переименованную вкладку "Монтаж", вкладку "Сборка" и вкладку "Доп. услуги"
-        composeRule.onNodeWithTag("dashboard_prices_card").performScrollTo().performClick()
+        composeRule.onNodeWithTag("dashboard_prices_card").performClick()
         composeRule.waitForIdle()
 
         composeRule.onNodeWithTag("price_tab_WORKS").performScrollTo().assertIsDisplayed()
@@ -235,7 +235,7 @@ class WinStudioUiRobolectricTest {
         composeRule.waitForIdle()
 
         // 2. Открываем заказ в 2D-конструкторе и проверяем нижнюю расчётную панель и правую шторку
-        composeRule.onNodeWithTag("dashboard_orders_card").performScrollTo().performClick()
+        composeRule.onNodeWithTag("dashboard_orders_card").performClick()
         composeRule.waitForIdle()
         composeRule.onAllNodesWithText("Окон:", substring = true)[0].performClick()
         composeRule.waitForIdle()

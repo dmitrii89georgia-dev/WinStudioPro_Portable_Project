@@ -69,6 +69,7 @@ enum class AppScreenMode {
     CASH_MANAGER,        // Касса и счета (мультивалюта, история, категории расходов, зарплаты)
     ANALYTICS_PULSE,     // Аналитика: пульс производства, графики выручки и маржи, KPI
     UI_SETTINGS,         // Настройки интерфейса и реквизитов компании для PDF
+    USER_GUIDE,          // Обучение и краткая пошаговая инструкция по программе
     WORKSHOP_CUTTING,    // Модуль задания в цех и линейного 1D-раскроя профилей
     GLAZING_ORDER_EDITOR,// Редактор «Заказ стеклопакетов» перед генерацией PDF
     HARDWARE_ORDER_EDITOR// Редактор «Заказ фурнитуры» перед генерацией PDF
@@ -400,6 +401,7 @@ fun WinStudioProMainApp(
             AppScreenMode.WORKSHOP_CUTTING,
             AppScreenMode.GLAZING_ORDER_EDITOR,
             AppScreenMode.HARDWARE_ORDER_EDITOR -> AppScreenMode.CAD_WORKSPACE
+            AppScreenMode.USER_GUIDE -> AppScreenMode.UI_SETTINGS
             else -> AppScreenMode.METRO_HOME
         }
     }
@@ -660,7 +662,14 @@ fun WinStudioProMainApp(
                                 val file = AppStateStorage.createFullBackupFile(context)
                                 onShareExportFile(file, "Полный бэкап WinStudio Pro")
                             },
-                            onImportBackup = { importBackupLauncher.launch("*/*") }
+                            onImportBackup = { importBackupLauncher.launch("*/*") },
+                            onOpenGuide = { screenMode = AppScreenMode.USER_GUIDE }
+                        )
+                    }
+
+                    AppScreenMode.USER_GUIDE -> {
+                        AppGuideScreen(
+                            onBack = { screenMode = AppScreenMode.UI_SETTINGS }
                         )
                     }
 

@@ -206,7 +206,8 @@ fun <T> IosSegmentedControl(
 }
 
 /**
- * Главный экран в стиле iPhone: мягкие карточки, скругления, быстрый переход в Настройки.
+ * Главный экран в стиле iPhone: фиксированная статичная компоновка без прокрутки
+ * на портретных телефонах — нижние кнопки всегда видны на экране.
  */
 @Composable
 fun IosHomeDashboard(
@@ -229,39 +230,35 @@ fun IosHomeDashboard(
 ) {
     val p = LocalWinStudioPalette.current
     val s = LocalAppStrings.current
-    val scrollState = rememberScrollState()
 
     val lastOrder = orders.getOrNull(0)
     val prevOrder = orders.getOrNull(1)
     val fullBarsCount = stockRemnants.filter { it.isFullStockBar }.sumOf { it.quantity }
     val remnantsCount = stockRemnants.filter { !it.isFullStockBar }.sumOf { it.quantity }
+    val themeChip = if (uiSettings.themeMode == AppThemeMode.DARK) s.themeDark else s.themeLight
+    val curDisp = normalizeCurrencyDisplay(uiSettings.currencySymbol)
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(p.background)
-            .verticalScroll(scrollState)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // Верхняя шапка в стиле iOS Large Title + кнопка Настроек ⚙
+    @Composable
+    fun HeaderBar(compact: Boolean) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 2.dp, vertical = 4.dp),
+                .height(48.dp)
+                .padding(horizontal = 2.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = "WinStudio Pro",
-                fontSize = 28.sp,
+                fontSize = if (compact) 23.sp else 26.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = (-0.5).sp,
                 color = p.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
 
-            // Кнопка быстрого перехода в Настройки
             Surface(
                 color = p.cardSurface,
                 shape = CircleShape,
@@ -278,19 +275,20 @@ fun IosHomeDashboard(
                         imageVector = Icons.Rounded.Settings,
                         contentDescription = s.settingsTitle,
                         tint = p.accentBlue,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(23.dp)
                     )
                 }
             }
         }
+    }
 
-        // Крупная акцентная карточка «Новый заказ» в стиле iPhone
-        val heroShape = RoundedCornerShape(22.dp)
+    @Composable
+    fun HeroNewOrderCard(modifier: Modifier, compact: Boolean) {
+        val heroShape = RoundedCornerShape(20.dp)
         Box(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
-                .height(106.dp)
-                .shadow(if (p.isDark) 0.dp else 6.dp, heroShape)
+                .shadow(if (p.isDark) 0.dp else 5.dp, heroShape)
                 .clip(heroShape)
                 .background(
                     Brush.linearGradient(
@@ -298,7 +296,7 @@ fun IosHomeDashboard(
                     )
                 )
                 .clickable { onNewOrderClick() }
-                .padding(horizontal = 20.dp, vertical = 16.dp)
+                .padding(horizontal = 18.dp, vertical = if (compact) 8.dp else 12.dp)
                 .testTag("dashboard_new_order_card")
         ) {
             Row(
@@ -306,24 +304,31 @@ fun IosHomeDashboard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.Center
+                ) {
                     Text(
                         text = s.newOrderTitle,
                         color = Color.White,
-                        fontSize = 21.sp,
-                        fontWeight = FontWeight.Bold
+                        fontSize = if (compact) 18.sp else 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = s.newOrderSubtitle,
                         color = Color.White.copy(alpha = 0.88f),
-                        fontSize = 13.sp
+                        fontSize = if (compact) 11.5.sp else 12.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 Box(
                     modifier = Modifier
-                        .size(54.dp)
-                        .clip(RoundedCornerShape(16.dp))
+                        .size(if (compact) 42.dp else 48.dp)
+                        .clip(RoundedCornerShape(14.dp))
                         .background(Color.White.copy(alpha = 0.22f)),
                     contentAlignment = Alignment.Center
                 ) {
@@ -331,133 +336,32 @@ fun IosHomeDashboard(
                         imageVector = Icons.Rounded.Add,
                         contentDescription = s.newOrderTitle,
                         tint = Color.White,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(if (compact) 26.dp else 30.dp)
                     )
                 }
             }
         }
+    }
 
-        // Последние два заказа с живыми миниатюрами
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(148.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            IosRecentOrderCard(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                headerLabel = s.lastOrderLabel,
-                order = lastOrder,
-                onClick = {
-                    if (lastOrder != null) onOpenOrder(lastOrder.id) else onNewOrderClick()
-                }
-            )
-            IosRecentOrderCard(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                headerLabel = s.prevOrderLabel,
-                order = prevOrder,
-                onClick = {
-                    if (prevOrder != null) onOpenOrder(prevOrder.id)
-                }
-            )
-        }
-
-        // Сетка разделов (2 колонки, мягкие карточки с iOS squircle-иконками)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            IosDashboardTileCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.AutoMirrored.Rounded.ListAlt,
-                iconBg = p.accentBlue,
-                title = s.ordersTitle,
-                subtitle = String.format(s.ordersCountFormat, orders.size),
-                testTag = "dashboard_orders_card",
-                onClick = onOpenOrdersList
-            )
-            IosDashboardTileCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Rounded.Architecture,
-                iconBg = p.accentIndigo,
-                title = s.profileSystemsTitle,
-                subtitle = String.format(s.profileSystemsSubFormat, profileSystems.size),
-                testTag = "dashboard_profiles_card",
-                onClick = onOpenProfileConstructor
-            )
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            IosDashboardTileCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Rounded.Payments,
-                iconBg = p.accentGreen,
-                title = s.pricesTitle,
-                subtitle = s.pricesSubtitle,
-                testTag = "dashboard_prices_card",
-                onClick = onOpenPrices
-            )
-            IosDashboardTileCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Rounded.Inventory2,
-                iconBg = p.accentTeal,
-                title = s.warehouseTitle,
-                subtitle = String.format(s.warehouseSubFormat, fullBarsCount, remnantsCount),
-                testTag = "dashboard_warehouse_card",
-                onClick = onOpenWarehouse
-            )
-        }
-
-        // Разделы «Касса» (только кнопка, без показа сумм) и «Аналитика»
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            IosDashboardTileCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Rounded.AccountBalanceWallet,
-                iconBg = Color(0xFF1E88E5),
-                title = s.cashTitle,
-                subtitle = s.cashSubtitle,
-                testTag = "dashboard_cash_card",
-                onClick = onOpenCash
-            )
-            IosDashboardTileCard(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Rounded.BarChart,
-                iconBg = Color(0xFF8E24AA),
-                title = s.analyticsTitle,
-                subtitle = s.analyticsSubtitle,
-                testTag = "dashboard_analytics_card",
-                onClick = onOpenAnalytics
-            )
-        }
-
-        val themeChip = if (uiSettings.themeMode == AppThemeMode.DARK) s.themeDark else s.themeLight
-        val curDisp = normalizeCurrencyDisplay(uiSettings.currencySymbol)
+    @Composable
+    fun SettingsCompactCard(compact: Boolean) {
         IosGroupedCard(
             modifier = Modifier
                 .fillMaxWidth()
+                .height(if (compact) 50.dp else 56.dp)
                 .testTag("dashboard_settings_card"),
             onClick = onOpenSettings,
-            contentPadding = PaddingValues(14.dp)
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxSize(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .size(if (compact) 32.dp else 36.dp)
+                        .clip(RoundedCornerShape(10.dp))
                         .background(Color(0xFF636366)),
                     contentAlignment = Alignment.Center
                 ) {
@@ -465,14 +369,17 @@ fun IosHomeDashboard(
                         imageVector = Icons.Rounded.Tune,
                         contentDescription = s.settingsTitle,
                         tint = Color.White,
-                        modifier = Modifier.size(22.dp)
+                        modifier = Modifier.size(19.dp)
                     )
                 }
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.Center
+                ) {
                     Text(
                         text = s.settingsTitle,
                         color = p.textPrimary,
-                        fontSize = 15.5.sp,
+                        fontSize = if (compact) 14.sp else 15.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -485,7 +392,7 @@ fun IosHomeDashboard(
                             curDisp
                         ),
                         color = p.textSecondary,
-                        fontSize = 11.5.sp,
+                        fontSize = 11.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -497,22 +404,24 @@ fun IosHomeDashboard(
                 )
             }
         }
+    }
 
-        // Три быстрые кнопки операций кассы внизу главного экрана (без показа балансов)
+    @Composable
+    fun QuickActionsBottomBar() {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 2.dp, bottom = 6.dp),
+                .height(48.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Button(
                 onClick = onQuickIncome,
                 colors = ButtonDefaults.buttonColors(containerColor = p.accentGreen),
                 shape = RoundedCornerShape(14.dp),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(min = 48.dp)
+                    .fillMaxHeight()
                     .testTag("dashboard_quick_income_btn")
             ) {
                 Text(
@@ -520,17 +429,18 @@ fun IosHomeDashboard(
                     color = Color.White,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
             Button(
                 onClick = onQuickExpense,
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
                 shape = RoundedCornerShape(14.dp),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(min = 48.dp)
+                    .fillMaxHeight()
                     .testTag("dashboard_quick_expense_btn")
             ) {
                 Text(
@@ -538,17 +448,18 @@ fun IosHomeDashboard(
                     color = Color.White,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
             Button(
                 onClick = onQuickTransfer,
                 colors = ButtonDefaults.buttonColors(containerColor = p.accentBlue),
                 shape = RoundedCornerShape(14.dp),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(min = 48.dp)
+                    .fillMaxHeight()
                     .testTag("dashboard_quick_transfer_btn")
             ) {
                 Text(
@@ -556,8 +467,299 @@ fun IosHomeDashboard(
                     color = Color.White,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
+            }
+        }
+    }
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(p.background),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        val useStaticLayout = maxHeight >= 540.dp
+        val isCompactHeight = maxHeight < 680.dp
+        val gap = if (isCompactHeight) 6.dp else 8.dp
+        val outerVertPad = if (isCompactHeight) 8.dp else 10.dp
+
+        if (useStaticLayout) {
+            // Полностью статичный, не прокручиваемый главный экран: все плитки и нижние кнопки помещаются целиком
+            Column(
+                modifier = Modifier
+                    .widthIn(max = 600.dp)
+                    .fillMaxSize()
+                    .padding(horizontal = 14.dp, vertical = outerVertPad),
+                verticalArrangement = Arrangement.spacedBy(gap)
+            ) {
+                HeaderBar(compact = isCompactHeight)
+
+                HeroNewOrderCard(
+                    modifier = Modifier.weight(0.84f),
+                    compact = isCompactHeight
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1.22f),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    IosRecentOrderCard(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        headerLabel = s.lastOrderLabel,
+                        order = lastOrder,
+                        onClick = {
+                            if (lastOrder != null) onOpenOrder(lastOrder.id) else onNewOrderClick()
+                        }
+                    )
+                    IosRecentOrderCard(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        headerLabel = s.prevOrderLabel,
+                        order = prevOrder,
+                        onClick = {
+                            if (prevOrder != null) onOpenOrder(prevOrder.id)
+                        }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    IosDashboardTileCard(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        icon = Icons.AutoMirrored.Rounded.ListAlt,
+                        iconBg = p.accentBlue,
+                        title = s.ordersTitle,
+                        subtitle = String.format(s.ordersCountFormat, orders.size),
+                        testTag = "dashboard_orders_card",
+                        onClick = onOpenOrdersList
+                    )
+                    IosDashboardTileCard(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        icon = Icons.Rounded.Architecture,
+                        iconBg = p.accentIndigo,
+                        title = s.profileSystemsTitle,
+                        subtitle = String.format(s.profileSystemsSubFormat, profileSystems.size),
+                        testTag = "dashboard_profiles_card",
+                        onClick = onOpenProfileConstructor
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    IosDashboardTileCard(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        icon = Icons.Rounded.Payments,
+                        iconBg = p.accentGreen,
+                        title = s.pricesTitle,
+                        subtitle = s.pricesSubtitle,
+                        testTag = "dashboard_prices_card",
+                        onClick = onOpenPrices
+                    )
+                    IosDashboardTileCard(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        icon = Icons.Rounded.Inventory2,
+                        iconBg = p.accentTeal,
+                        title = s.warehouseTitle,
+                        subtitle = String.format(s.warehouseSubFormat, fullBarsCount, remnantsCount),
+                        testTag = "dashboard_warehouse_card",
+                        onClick = onOpenWarehouse
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    IosDashboardTileCard(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        icon = Icons.Rounded.AccountBalanceWallet,
+                        iconBg = Color(0xFF1E88E5),
+                        title = s.cashTitle,
+                        subtitle = s.cashSubtitle,
+                        testTag = "dashboard_cash_card",
+                        onClick = onOpenCash
+                    )
+                    IosDashboardTileCard(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        icon = Icons.Rounded.BarChart,
+                        iconBg = Color(0xFF8E24AA),
+                        title = s.analyticsTitle,
+                        subtitle = s.analyticsSubtitle,
+                        testTag = "dashboard_analytics_card",
+                        onClick = onOpenAnalytics
+                    )
+                }
+
+                SettingsCompactCard(compact = isCompactHeight)
+
+                QuickActionsBottomBar()
+            }
+        } else {
+            // Запасной режим для очень низких окон (альбомный режим / split-screen): прокрутка середины при закреплённых нижних кнопках
+            Column(
+                modifier = Modifier
+                    .widthIn(max = 600.dp)
+                    .fillMaxSize()
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                HeaderBar(compact = true)
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    HeroNewOrderCard(
+                        modifier = Modifier.height(78.dp),
+                        compact = true
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(112.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        IosRecentOrderCard(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            headerLabel = s.lastOrderLabel,
+                            order = lastOrder,
+                            onClick = {
+                                if (lastOrder != null) onOpenOrder(lastOrder.id) else onNewOrderClick()
+                            }
+                        )
+                        IosRecentOrderCard(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            headerLabel = s.prevOrderLabel,
+                            order = prevOrder,
+                            onClick = {
+                                if (prevOrder != null) onOpenOrder(prevOrder.id)
+                            }
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(74.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        IosDashboardTileCard(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            icon = Icons.AutoMirrored.Rounded.ListAlt,
+                            iconBg = p.accentBlue,
+                            title = s.ordersTitle,
+                            subtitle = String.format(s.ordersCountFormat, orders.size),
+                            testTag = "dashboard_orders_card",
+                            onClick = onOpenOrdersList
+                        )
+                        IosDashboardTileCard(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            icon = Icons.Rounded.Architecture,
+                            iconBg = p.accentIndigo,
+                            title = s.profileSystemsTitle,
+                            subtitle = String.format(s.profileSystemsSubFormat, profileSystems.size),
+                            testTag = "dashboard_profiles_card",
+                            onClick = onOpenProfileConstructor
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(74.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        IosDashboardTileCard(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            icon = Icons.Rounded.Payments,
+                            iconBg = p.accentGreen,
+                            title = s.pricesTitle,
+                            subtitle = s.pricesSubtitle,
+                            testTag = "dashboard_prices_card",
+                            onClick = onOpenPrices
+                        )
+                        IosDashboardTileCard(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            icon = Icons.Rounded.Inventory2,
+                            iconBg = p.accentTeal,
+                            title = s.warehouseTitle,
+                            subtitle = String.format(s.warehouseSubFormat, fullBarsCount, remnantsCount),
+                            testTag = "dashboard_warehouse_card",
+                            onClick = onOpenWarehouse
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(74.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        IosDashboardTileCard(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            icon = Icons.Rounded.AccountBalanceWallet,
+                            iconBg = Color(0xFF1E88E5),
+                            title = s.cashTitle,
+                            subtitle = s.cashSubtitle,
+                            testTag = "dashboard_cash_card",
+                            onClick = onOpenCash
+                        )
+                        IosDashboardTileCard(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                            icon = Icons.Rounded.BarChart,
+                            iconBg = Color(0xFF8E24AA),
+                            title = s.analyticsTitle,
+                            subtitle = s.analyticsSubtitle,
+                            testTag = "dashboard_analytics_card",
+                            onClick = onOpenAnalytics
+                        )
+                    }
+                    SettingsCompactCard(compact = true)
+                }
+                QuickActionsBottomBar()
             }
         }
     }
@@ -575,46 +777,90 @@ private fun IosDashboardTileCard(
 ) {
     val p = LocalWinStudioPalette.current
     IosGroupedCard(
-        modifier = modifier
-            .height(114.dp)
-            .testTag(testTag),
+        modifier = modifier.testTag(testTag),
         onClick = onClick,
-        contentPadding = PaddingValues(14.dp)
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp)
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.SpaceBetween
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(11.dp))
-                    .background(iconBg),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = title,
-                    tint = Color.White,
-                    modifier = Modifier.size(21.dp)
-                )
-            }
-            Column {
-                Text(
-                    text = title,
-                    color = p.textPrimary,
-                    fontSize = 15.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = subtitle,
-                    color = p.textSecondary,
-                    fontSize = 11.5.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val useHorizontal = maxHeight < 76.dp
+            if (useHorizontal) {
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(iconBg),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = title,
+                            tint = Color.White,
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = title,
+                            color = p.textPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = subtitle,
+                            color = p.textSecondary,
+                            fontSize = 10.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(iconBg),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = title,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = title,
+                            color = p.textPrimary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = subtitle,
+                            color = p.textSecondary,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
             }
         }
     }
@@ -633,117 +879,124 @@ private fun IosRecentOrderCard(
     IosGroupedCard(
         modifier = modifier,
         onClick = if (order != null) onClick else null,
-        contentPadding = PaddingValues(12.dp)
+        contentPadding = PaddingValues(10.dp)
     ) {
-        if (order == null) {
-            Column(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = headerLabel,
-                    color = p.textSecondary,
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.Medium
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = s.noOrderLabel,
-                        color = p.textSecondary.copy(alpha = 0.7f),
-                        fontSize = 13.sp
-                    )
-                }
-            }
-        } else {
-            Column(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val compact = maxHeight < 96.dp
+            if (order == null) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
                         text = headerLabel,
-                        color = p.accentBlue,
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        color = p.textSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Surface(
-                        color = p.accentTeal.copy(alpha = 0.14f),
-                        shape = RoundedCornerShape(8.dp)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "${order.windows.sumOf { it.quantity }}",
-                            color = p.accentTeal,
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            text = s.noOrderLabel,
+                            color = p.textSecondary.copy(alpha = 0.7f),
+                            fontSize = 12.5.sp
                         )
                     }
                 }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(top = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    val firstWin = order.windows.firstOrNull()
-                    if (firstWin != null) {
-                        Box(
-                            modifier = Modifier
-                                .size(62.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(p.canvasBg)
-                                .border(0.6.dp, p.floatingBorder, RoundedCornerShape(12.dp))
-                                .padding(4.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = headerLabel,
+                            color = p.accentBlue,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Surface(
+                            color = p.accentTeal.copy(alpha = 0.14f),
+                            shape = RoundedCornerShape(7.dp)
                         ) {
-                            WindowMiniThumbnail(
-                                topology = firstWin.topology,
-                                modifier = Modifier.fillMaxSize()
+                            Text(
+                                text = "${order.windows.sumOf { it.quantity }}",
+                                color = p.accentTeal,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                             )
                         }
                     }
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .padding(top = if (compact) 4.dp else 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = order.orderNumber,
-                            color = p.textPrimary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (order.customerName.isNotBlank()) {
+                        val firstWin = order.windows.firstOrNull()
+                        if (firstWin != null) {
+                            Box(
+                                modifier = Modifier
+                                    .size(if (compact) 48.dp else 58.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(p.canvasBg)
+                                    .border(0.6.dp, p.floatingBorder, RoundedCornerShape(10.dp))
+                                    .padding(3.dp)
+                            ) {
+                                WindowMiniThumbnail(
+                                    topology = firstWin.topology,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                        }
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(1.dp)
+                        ) {
                             Text(
-                                text = order.customerName,
-                                color = p.textSecondary,
-                                fontSize = 11.sp,
+                                text = order.orderNumber,
+                                color = p.textPrimary,
+                                fontSize = if (compact) 11.5.sp else 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = if (compact) 1 else 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (order.customerName.isNotBlank()) {
+                                Text(
+                                    text = order.customerName,
+                                    color = p.textSecondary,
+                                    fontSize = 10.5.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Text(
+                                text = if (s.language == AppLanguage.EN) order.status.name.lowercase().replace('_', ' ') else order.status.titleRu,
+                                color = p.accentOrange,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
-                        Text(
-                            text = if (s.language == AppLanguage.EN) order.status.name.lowercase().replace('_', ' ') else order.status.titleRu,
-                            color = p.accentOrange,
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
                 }
             }
@@ -765,7 +1018,8 @@ fun IosSettingsScreen(
     onUpdateSettingsLive: (AppUiSettings) -> Unit,
     onApplyCurrencyToAllOrders: (String) -> Unit,
     onExportBackup: () -> Unit = {},
-    onImportBackup: () -> Unit = {}
+    onImportBackup: () -> Unit = {},
+    onOpenGuide: () -> Unit = {}
 ) {
     val p = LocalWinStudioPalette.current
     val s = LocalAppStrings.current
@@ -1072,6 +1326,46 @@ fun IosSettingsScreen(
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = s.backupImportHint,
+                            color = p.textSecondary,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Rounded.ChevronRight,
+                        contentDescription = null,
+                        tint = p.textSecondary
+                    )
+                }
+            }
+
+            // 6. СПРАВКА И ОБУЧЕНИЕ
+            SettingsSectionHeader(s.sectionHelpGuide)
+            IosGroupedCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_guide_button"),
+                onClick = onOpenGuide,
+                contentPadding = PaddingValues(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    SettingsIconBadge(Icons.Rounded.MenuBook, p.accentBlue)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = s.guideButtonTitle,
+                            color = p.textPrimary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = s.guideButtonSubtitle,
                             color = p.textSecondary,
                             fontSize = 12.sp,
                             lineHeight = 16.sp

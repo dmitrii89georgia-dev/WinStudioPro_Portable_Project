@@ -37,17 +37,19 @@ class CashAndAnalyticsUiRobolectricTest {
     fun `home dashboard exposes cashbox analytics and quick actions without showing balances`() {
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithTag("dashboard_cash_card").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("dashboard_analytics_card").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("dashboard_quick_income_btn").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("dashboard_quick_expense_btn").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("dashboard_quick_transfer_btn").performScrollTo().assertIsDisplayed()
+        // На статичном главном экране все плитки и нижние кнопки видны сразу без прокрутки
+        composeRule.onNodeWithTag("dashboard_cash_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_analytics_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_settings_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_quick_income_btn").assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_quick_expense_btn").assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_quick_transfer_btn").assertIsDisplayed()
 
         // На главном экране нет отображения общего баланса
         composeRule.onNodeWithTag("cash_total_balance_card").assertDoesNotExist()
 
         // Проверяем открытие быстрого диалога прихода с главного экрана
-        composeRule.onNodeWithTag("dashboard_quick_income_btn").performScrollTo().performClick()
+        composeRule.onNodeWithTag("dashboard_quick_income_btn").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("income_amount_input").assertIsDisplayed()
         composeRule.onNodeWithText("Отмена").performClick()
@@ -57,7 +59,7 @@ class CashAndAnalyticsUiRobolectricTest {
     @Test
     fun `prices screen exposes FinScheme tab and saves settings`() {
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("dashboard_prices_card").performScrollTo().performClick()
+        composeRule.onNodeWithTag("dashboard_prices_card").performClick()
         composeRule.waitForIdle()
 
         composeRule.onNodeWithTag("price_tab_FIN_SCHEME").performClick()
@@ -69,7 +71,7 @@ class CashAndAnalyticsUiRobolectricTest {
     @Test
     fun `cashbox opens accounts executes quick income and displays payroll modal`() {
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("dashboard_cash_card").performScrollTo().performClick()
+        composeRule.onNodeWithTag("dashboard_cash_card").performClick()
         composeRule.waitForIdle()
 
         composeRule.onNodeWithTag("cash_total_balance_card").assertIsDisplayed()
@@ -87,7 +89,7 @@ class CashAndAnalyticsUiRobolectricTest {
     @Test
     fun `analytics opens charts switches bar to donut and displays KPI grid`() {
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("dashboard_analytics_card").performScrollTo().performClick()
+        composeRule.onNodeWithTag("dashboard_analytics_card").performClick()
         composeRule.waitForIdle()
 
         composeRule.onNodeWithTag("analytics_bar_canvas").assertIsDisplayed()
@@ -99,5 +101,39 @@ class CashAndAnalyticsUiRobolectricTest {
         composeRule.onNodeWithTag("analytics_chart_tab_1").performScrollTo().performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("analytics_donut_canvas").assertIsDisplayed()
+    }
+
+    @Test
+    fun `settings exposes training button at bottom and opens interactive guide`() {
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("dashboard_settings_card").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("settings_guide_button").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("Обучение и инструкция").assertIsDisplayed()
+        composeRule.onNodeWithTag("guide_section_home").assertIsDisplayed()
+        composeRule.onNodeWithTag("guide_toggle_all_btn").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("top_bar_back_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_guide_button").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    @Config(sdk = [34], qualifiers = "w360dp-h640dp-xxhdpi")
+    fun `compact 360x640 phone keeps static home dashboard and bottom quick buttons fully visible`() {
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("dashboard_new_order_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_orders_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_cash_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_analytics_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_settings_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_quick_income_btn").assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_quick_expense_btn").assertIsDisplayed()
+        composeRule.onNodeWithTag("dashboard_quick_transfer_btn").assertIsDisplayed()
     }
 }
