@@ -1,5 +1,11 @@
 package ru.winstudiopro.app.ui.components
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
@@ -8,6 +14,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -26,16 +33,26 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.android.gms.auth.api.identity.Identity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import ru.winstudiopro.app.data.backup.BackupManager
+import ru.winstudiopro.app.data.backup.GoogleDriveBackupClient
 import ru.winstudiopro.app.domain.model.*
 import ru.winstudiopro.app.ui.cad.WindowMiniThumbnail
 import ru.winstudiopro.app.ui.i18n.LocalAppStrings
 import ru.winstudiopro.app.ui.i18n.normalizeCurrencyDisplay
 import ru.winstudiopro.app.ui.theme.LocalWinStudioPalette
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Единая верхняя панель навигации в стиле iOS для второстепенных экранов.
@@ -231,8 +248,9 @@ fun IosHomeDashboard(
     val p = LocalWinStudioPalette.current
     val s = LocalAppStrings.current
 
-    val lastOrder = orders.getOrNull(0)
-    val prevOrder = orders.getOrNull(1)
+    val activeOrders = remember(orders) { orders.filterNot { it.isArchived } }
+    val lastOrder = activeOrders.getOrNull(0)
+    val prevOrder = activeOrders.getOrNull(1)
     val fullBarsCount = stockRemnants.filter { it.isFullStockBar }.sumOf { it.quantity }
     val remnantsCount = stockRemnants.filter { !it.isFullStockBar }.sumOf { it.quantity }
     val themeChip = if (uiSettings.themeMode == AppThemeMode.DARK) s.themeDark else s.themeLight
@@ -1023,11 +1041,98 @@ fun IosSettingsScreen(
 ) {
     val p = LocalWinStudioPalette.current
     val s = LocalAppStrings.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var companyName by remember(settings.companyName) { mutableStateOf(settings.companyName) }
     var companyPhone by remember(settings.companyPhone) { mutableStateOf(settings.companyPhone) }
     var companyAddress by remember(settings.companyAddress) { mutableStateOf(settings.companyAddress) }
     var statusBanner by remember { mutableStateOf<String?>(null) }
+    var isSyncingBackup by remember { mutableStateOf(false) }
+
+    val driveAuthLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { activityResult ->
+        val authResult = try {
+            Identity.getAuthorizationClient(context)
+                .getAuthorizationResultFromIntent(activityResult.data)
+        } catch (_: Exception) {
+            null
+        }
+        val token = authResult?.accessToken
+        if (!token.isNullOrBlank()) {
+            isSyncingBackup = true
+            scope.launch {
+                val email = withContext(Dispatchers.IO) {
+                    GoogleDriveBackupClient.fetchDriveUserEmail(token) ?: "Google аккаунт"
+                }
+                onUpdateSettingsLive(
+                    settings.copy(
+                        googleDriveSyncEnabled = true,
+                        googleDriveAccountEmail = email
+                    )
+                )
+                val outcome = BackupManager.runBackupNow(
+                    context = context,
+                    force = true,
+                    explicitAccessToken = token
+                )
+                onUpdateSettingsLive(outcome.updatedUiSettings.copy(googleDriveAccountEmail = email, googleDriveSyncEnabled = true))
+                statusBanner = outcome.summaryMessage
+                isSyncingBackup = false
+            }
+        } else {
+            statusBanner = "Подключение Google Диска отменено"
+        }
+    }
+
+    fun requestDriveAuthorization(syncImmediately: Boolean) {
+        val activity = context.findHostActivity()
+        val authClient = if (activity != null) {
+            Identity.getAuthorizationClient(activity)
+        } else {
+            Identity.getAuthorizationClient(context)
+        }
+        authClient.authorize(BackupManager.buildDriveAuthorizationRequest())
+            .addOnSuccessListener { result ->
+                val pending = result.pendingIntent
+                if (result.hasResolution() && pending != null) {
+                    driveAuthLauncher.launch(IntentSenderRequest.Builder(pending.intentSender).build())
+                } else {
+                    val token = result.accessToken
+                    if (!token.isNullOrBlank()) {
+                        isSyncingBackup = true
+                        scope.launch {
+                            val email = withContext(Dispatchers.IO) {
+                                GoogleDriveBackupClient.fetchDriveUserEmail(token)
+                                    ?: settings.googleDriveAccountEmail.ifBlank { "Google аккаунт" }
+                            }
+                            onUpdateSettingsLive(
+                                settings.copy(
+                                    googleDriveSyncEnabled = true,
+                                    googleDriveAccountEmail = email
+                                )
+                            )
+                            if (syncImmediately) {
+                                val outcome = BackupManager.runBackupNow(
+                                    context = context,
+                                    force = true,
+                                    explicitAccessToken = token
+                                )
+                                onUpdateSettingsLive(outcome.updatedUiSettings.copy(googleDriveAccountEmail = email, googleDriveSyncEnabled = true))
+                                statusBanner = outcome.summaryMessage
+                            } else {
+                                statusBanner = "Google Диск подключён ($email)"
+                            }
+                            isSyncingBackup = false
+                        }
+                    }
+                }
+            }
+            .addOnFailureListener { err ->
+                statusBanner = "Ошибка входа Google: ${err.localizedMessage ?: "проверьте Google Play Services"}"
+            }
+    }
 
     val activeCurrency = normalizeCurrencyDisplay(settings.currencySymbol)
 
@@ -1263,9 +1368,304 @@ fun IosSettingsScreen(
                 }
             }
 
-            // 5. РЕЗЕРВНОЕ КОПИРОВАНИЕ И ДАННЫЕ (iOS Grouped List)
+            // 5. АВТОАРХИВАЦИЯ ЗАКРЫТЫХ ЗАКАЗОВ
+            SettingsSectionHeader(s.sectionAutoArchive)
+            IosGroupedCard(contentPadding = PaddingValues(14.dp)) {
+                Row(
+                    modifier = Modifier.testTag("settings_auto_archive_header"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    SettingsIconBadge(Icons.Rounded.Inventory2, p.accentTeal)
+                    Text(
+                        text = s.autoArchiveAfterLabel,
+                        color = p.textPrimary,
+                        fontSize = 14.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(14, 30, 60, 90, 0).forEach { days ->
+                        val isSel = settings.autoArchiveAfterDays == days
+                        val label = if (days == 0) s.autoArchiveManualLabel else "$days дн."
+                        FilterChip(
+                            selected = isSel,
+                            onClick = {
+                                onUpdateSettingsLive(settings.copy(autoArchiveAfterDays = days))
+                                statusBanner = "${s.autoArchiveAfterLabel}: $label"
+                            },
+                            label = {
+                                Text(
+                                    text = label,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSel) Color.White else p.textPrimary
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = p.accentTeal,
+                                containerColor = p.secondaryBackground
+                            ),
+                            modifier = Modifier.testTag("settings_auto_archive_$days")
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = s.autoArchiveHint,
+                    color = p.textSecondary,
+                    fontSize = 11.5.sp,
+                    lineHeight = 15.sp
+                )
+            }
+
+            // 6. РЕЗЕРВНОЕ КОПИРОВАНИЕ И GOOGLE ДИСК
             SettingsSectionHeader(s.sectionBackupData)
             IosGroupedCard(contentPadding = PaddingValues(14.dp)) {
+                // Ежедневный локальный автобэкап
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    SettingsIconBadge(Icons.Rounded.Schedule, p.accentGreen)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = s.autoBackupTitle,
+                            color = p.textPrimary,
+                            fontSize = 14.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = s.autoBackupHint,
+                            color = p.textSecondary,
+                            fontSize = 11.5.sp,
+                            lineHeight = 15.sp
+                        )
+                    }
+                    Switch(
+                        checked = settings.autoBackupEnabled,
+                        onCheckedChange = { enabled ->
+                            onUpdateSettingsLive(settings.copy(autoBackupEnabled = enabled))
+                        },
+                        modifier = Modifier.testTag("settings_auto_backup_switch")
+                    )
+                }
+
+                if (settings.autoBackupEnabled) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = s.autoBackupTimeLabel,
+                        color = p.textSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(0, 2, 4, 22).forEach { hr ->
+                            val isSel = settings.autoBackupHour == hr
+                            val label = String.format(Locale.US, "%02d:00", hr)
+                            FilterChip(
+                                selected = isSel,
+                                onClick = {
+                                    onUpdateSettingsLive(settings.copy(autoBackupHour = hr))
+                                },
+                                label = {
+                                    Text(
+                                        text = label,
+                                        fontSize = 12.sp,
+                                        color = if (isSel) Color.White else p.textPrimary
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = p.accentGreen,
+                                    containerColor = p.secondaryBackground
+                                ),
+                                modifier = Modifier.testTag("settings_auto_backup_hour_$hr")
+                            )
+                        }
+                    }
+                }
+
+                if (settings.autoBackupLastRunMillis != null || settings.autoBackupLastStatus.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    val dtStr = settings.autoBackupLastRunMillis?.let { ms ->
+                        SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date(ms))
+                    } ?: ""
+                    Text(
+                        text = listOfNotNull(
+                            dtStr.takeIf { it.isNotBlank() },
+                            settings.autoBackupLastStatus.takeIf { it.isNotBlank() }
+                        ).joinToString(" — "),
+                        fontSize = 11.5.sp,
+                        color = p.textSecondary
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = {
+                        if (!isSyncingBackup) {
+                            isSyncingBackup = true
+                            scope.launch {
+                                val outcome = BackupManager.runBackupNow(context, force = true)
+                                onUpdateSettingsLive(outcome.updatedUiSettings)
+                                statusBanner = outcome.summaryMessage
+                                isSyncingBackup = false
+                            }
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 46.dp)
+                        .testTag("settings_backup_now_button")
+                ) {
+                    if (isSyncingBackup) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Text(s.backupNowBtn, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider(color = p.divider, thickness = 0.7.dp)
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Облачный бэкап на Google Диск
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    SettingsIconBadge(Icons.Rounded.CloudUpload, p.accentBlue)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = s.googleDriveTitle,
+                            color = p.textPrimary,
+                            fontSize = 14.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = s.googleDriveHint,
+                            color = p.textSecondary,
+                            fontSize = 11.5.sp,
+                            lineHeight = 15.sp
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+
+                if (settings.googleDriveAccountEmail.isBlank() && !settings.googleDriveSyncEnabled) {
+                    Button(
+                        onClick = { requestDriveAuthorization(syncImmediately = true) },
+                        colors = ButtonDefaults.buttonColors(containerColor = p.accentBlue),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 46.dp)
+                            .testTag("settings_gdrive_connect_button")
+                    ) {
+                        Icon(Icons.Rounded.AccountCircle, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(s.googleDriveConnectBtn, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                    }
+                } else {
+                    Surface(
+                        color = p.secondaryBackground,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "${s.googleDriveConnectedPrefix} ${settings.googleDriveAccountEmail.ifBlank { "Google аккаунт" }}",
+                                    color = p.textPrimary,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(
+                                    onClick = {
+                                        onUpdateSettingsLive(
+                                            settings.copy(
+                                                googleDriveSyncEnabled = false,
+                                                googleDriveAccountEmail = "",
+                                                googleDriveLastStatus = "Отключено"
+                                            )
+                                        )
+                                        statusBanner = "Google Диск отключён"
+                                    },
+                                    modifier = Modifier.testTag("settings_gdrive_disconnect_button")
+                                ) {
+                                    Text(s.googleDriveDisconnectBtn, color = p.accentRed, fontSize = 12.sp)
+                                }
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Автовыгрузка на Google Диск",
+                                    color = p.textSecondary,
+                                    fontSize = 12.sp
+                                )
+                                Switch(
+                                    checked = settings.googleDriveSyncEnabled,
+                                    onCheckedChange = { enabled ->
+                                        onUpdateSettingsLive(settings.copy(googleDriveSyncEnabled = enabled))
+                                    },
+                                    modifier = Modifier.testTag("settings_gdrive_sync_switch")
+                                )
+                            }
+                            if (settings.googleDriveLastStatus.isNotBlank()) {
+                                Text(
+                                    text = settings.googleDriveLastStatus,
+                                    color = p.textSecondary,
+                                    fontSize = 11.5.sp
+                                )
+                            }
+                            Button(
+                                onClick = { requestDriveAuthorization(syncImmediately = true) },
+                                colors = ButtonDefaults.buttonColors(containerColor = p.accentBlue),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 44.dp)
+                                    .testTag("settings_gdrive_sync_now_button")
+                            ) {
+                                Text(s.googleDriveSyncNowBtn, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider(color = p.divider, thickness = 0.7.dp)
+                Spacer(modifier = Modifier.height(8.dp))
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1413,4 +1813,10 @@ private fun SettingsIconBadge(icon: ImageVector, bgColor: Color) {
             modifier = Modifier.size(18.dp)
         )
     }
+}
+
+private tailrec fun Context.findHostActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findHostActivity()
+    else -> null
 }

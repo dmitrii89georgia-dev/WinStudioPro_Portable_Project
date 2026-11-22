@@ -16,113 +16,52 @@ object WindowBomAndCostEngine {
         }
     }
 
-    /**
-     * Разрешает цвет конструкции с приоритетом:
-     * 1) Индивидуальный цвет клиента (CUSTOM_CLIENT_COLOR_ID)
-     * 2) Каталог цветов выбранной профильной системы
-     * 3) Прежний общий каталог цветов (для обратной совместимости старых заказов)
-     */
-    fun resolveWindowColor(
-        window: WindowItem,
-        profile: ProfileSystemSpec,
-        legacyColorCatalog: List<ColorCatalogItem> = DefaultCatalogs.defaultColors()
-    ): ColorCatalogItem {
-        if (window.colorId == CUSTOM_CLIENT_COLOR_ID) {
-            val baseName = window.customColorName.trim().ifBlank { "Цвет клиента" }
-            val label = if (window.customColorRal.isNotBlank()) {
-                "$baseName (RAL ${window.customColorRal.trim()})"
-            } else {
-                baseName
-            }
-            return ColorCatalogItem(
-                id = CUSTOM_CLIENT_COLOR_ID,
-                name = label,
-                hexColor = window.customColorHex,
-                priceMarkupPercent = 0.0
-            )
+    private fun inferFallbackColorHex(label: String?): Long {
+        val lower = label.orEmpty().lowercase()
+        return when {
+            lower.contains("корич") || lower.contains("brown") || lower.contains("дуб") || lower.contains("орех") || lower.contains("махагон") -> 0xFF5D4037L
+            lower.contains("антрац") || lower.contains("7016") || lower.contains("граф") || lower.contains("сер") -> 0xFF455A64L
+            lower.contains("чёрн") || lower.contains("черн") || lower.contains("black") -> 0xFF263238L
+            else -> 0xFFE6E9EDL
         }
-        profile.colors.find { it.id == window.colorId }?.let { c ->
-            val label = if (c.ralCode.isNotBlank()) "${c.name} (${c.ralCode})" else c.name
-            return ColorCatalogItem(
-                id = c.id,
-                name = label,
-                hexColor = c.hexColor,
-                priceMarkupPercent = c.priceMarkupPercent
-            )
-        }
-        legacyColorCatalog.find { it.id == window.colorId }?.let { legacy ->
-            return legacy
-        }
-        profile.colors.firstOrNull()?.let { firstC ->
-            val label = if (firstC.ralCode.isNotBlank()) "${firstC.name} (${firstC.ralCode})" else firstC.name
-            return ColorCatalogItem(
-                id = firstC.id,
-                name = label,
-                hexColor = firstC.hexColor,
-                priceMarkupPercent = firstC.priceMarkupPercent
-            )
-        }
-        return legacyColorCatalog.firstOrNull()
-            ?: ColorCatalogItem("col_anthracite", "Антрацит (7016)", 0xFF383E42, 0.0)
     }
 
-    /**
-     * Возвращает имя и HEX цвета профиля для карт 1D-раскроя и учёта на складе.
-     */
-    fun resolveWindowCutColor(
-        window: WindowItem,
-        profile: ProfileSystemSpec,
-        legacyColorCatalog: List<ColorCatalogItem> = DefaultCatalogs.defaultColors()
-    ): Pair<String, Long> {
-        if (window.colorId == CUSTOM_CLIENT_COLOR_ID) {
-            return if (window.customColorUseRawForStock) {
-                RAW_UNPAINTED_COLOR_NAME to 0xFFC0C0C0L
-            } else {
-                val baseName = window.customColorName.trim().ifBlank { "Цвет клиента" }
-                val label = if (window.customColorRal.isNotBlank()) {
-                    "$baseName (${window.customColorRal.trim()})"
-                } else {
-                    baseName
-                }
-                label to window.customColorHex
-            }
-        }
-        profile.colors.find { it.id == window.colorId }?.let { c ->
-            return c.name to c.hexColor
-        }
-        if (window.colorId == "none") {
-            return "Белый" to 0xFFFFFFFFL
-        }
-        legacyColorCatalog.find { it.id == window.colorId }?.let { legacy ->
-            return legacy.name.replaceFirstChar { it.uppercase() } to legacy.hexColor
-        }
-        profile.colors.firstOrNull()?.let { firstC ->
-            return firstC.name to firstC.hexColor
-        }
-        return "Антрацит" to 0xFF383E42L
+    fun createLegacyFallbackProfile(
+        systemId: String,
+        legacyName: String? = null
+    ): ProfileSystemSpec {
+        val safeName = legacyName?.trim()?.takeIf { it.isNotBlank() } ?: "Архивная система"
+        return ProfileSystemSpec(
+            id = systemId.ifBlank { "legacy_fallback_system" },
+            name = safeName,
+            materialType = ProfileMaterialType.PVC,
+            frameWidthMm = 48f,
+            frameRebateHeightA2Mm = 20f,
+            frameFullWidthA3Mm = 68f,
+            impostWidthMm = 52f,
+            impostRebateHeightB2Mm = 18f,
+            impostFullWidthB3Mm = 88f,
+            sashWidthMm = 56f,
+            sashFullWidthC2Mm = 76f,
+            sashOverlapMm = 8f,
+            doorSashWidthMm = 85f,
+            doorFullWidthD2Mm = 105f,
+            shtapikWidthMm = 18f,
+            shtapikVariants = listOf(
+                ShtapikVariantSpec("sht_fallback_18", "Штапик 18 мм", 18f, 18f, 24, 2.2)
+            ),
+            stockBarLengthMm = 6000f,
+            sawKerfMm = 4f
+        )
     }
 
-    fun calculateWindow(
+    fun resolveProfileSystemWithFallback(
         window: WindowItem,
         profileSystems: List<ProfileSystemSpec>,
-        glazingCatalog: List<GlazingCatalogItem>,
-        colorCatalog: List<ColorCatalogItem>,
-        sillsCatalog: List<SillCatalogItem>,
-        extraAccessoriesCatalog: List<ExtraAccessoryItem> = DefaultCatalogs.defaultExtraAccessories(),
-        workServicesCatalog: List<WorkServiceItem> = DefaultCatalogs.defaultWorkServices(),
-        hardwareBrandsCatalog: List<HardwareBrandItem> = DefaultCatalogs.defaultHardwareBrands(),
-        financialSchemesCatalog: List<FinancialSchemeItem> = DefaultCatalogs.defaultFinancialSchemes(),
-        windowIndexInOrder: Int = 0,
-        assemblyPricingCatalog: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog()
-    ): WindowCalculationResult {
-        val winNum = if (windowIndexInOrder > 0) {
-            windowIndexInOrder
-        } else {
-            Regex("\\d+").find(window.name)?.value?.toIntOrNull() ?: 1
-        }
-        val isNoSystemSelected = window.profileSystemId == "none"
-        val profile = if (isNoSystemSelected) {
-            ProfileSystemSpec(
+        orderLegacySystemName: String? = null
+    ): ProfileSystemSpec {
+        if (window.profileSystemId == "none") {
+            return ProfileSystemSpec(
                 id = "none",
                 name = "не учитывать",
                 materialType = ProfileMaterialType.ALUMINUM,
@@ -153,14 +92,176 @@ object WindowBomAndCostEngine {
                     sashDoorRebate = RubberBoxSpec(name = "", metersPerBox = 357.0, pricePerBox = 0.0)
                 )
             )
-        } else {
-            profileSystems.find { it.id == window.profileSystemId }
-                ?: profileSystems.firstOrNull { it.id != "al_test_system" }
-                ?: profileSystems.first()
         }
+        profileSystems.find { it.id == window.profileSystemId }?.let { return it }
+        return createLegacyFallbackProfile(
+            systemId = window.profileSystemId,
+            legacyName = window.legacySystemName?.takeIf { it.isNotBlank() } ?: orderLegacySystemName
+        )
+    }
 
-        val glazing = glazingCatalog.find { it.id == window.glazingId }
-            ?: glazingCatalog.first()
+    fun resolveGlazingWithFallback(
+        window: WindowItem,
+        glazingCatalog: List<GlazingCatalogItem>,
+        orderLegacyGlazingName: String? = null
+    ): GlazingCatalogItem {
+        glazingCatalog.find { it.id == window.glazingId }?.let { return it }
+        val legacyText = window.legacyGlazingName?.trim()?.takeIf { it.isNotBlank() }
+            ?: orderLegacyGlazingName?.trim()?.takeIf { it.isNotBlank() }
+        if (legacyText != null || window.glazingId.isNotBlank()) {
+            val isSand = legacyText?.lowercase()?.contains("сэндв") == true ||
+                legacyText?.lowercase()?.contains("сендв") == true ||
+                legacyText?.lowercase()?.contains("sand") == true
+            val title = legacyText ?: "24 мм (архив)"
+            return GlazingCatalogItem(
+                id = window.glazingId.ifBlank { "legacy_sp_24" },
+                name = title,
+                formula = title,
+                thicknessMm = 24,
+                isSandwich = isSand,
+                pricePerM2 = if (isSand) 18.0 else 20.0
+            )
+        }
+        return glazingCatalog.firstOrNull()
+            ?: GlazingCatalogItem("sp_24", "24мм", "4-16-4", 24, false, 20.0)
+    }
+
+    /**
+     * Разрешает цвет конструкции с приоритетом:
+     * 1) Индивидуальный цвет клиента (CUSTOM_CLIENT_COLOR_ID)
+     * 2) Каталог цветов выбранной профильной системы
+     * 3) Прежний общий каталог цветов (для обратной совместимости старых заказов)
+     * 4) Безопасная заглушка для импортированных/архивных конструкций (legacyColorName)
+     */
+    fun resolveWindowColor(
+        window: WindowItem,
+        profile: ProfileSystemSpec,
+        legacyColorCatalog: List<ColorCatalogItem> = DefaultCatalogs.defaultColors(),
+        orderLegacyColorName: String? = null
+    ): ColorCatalogItem {
+        if (window.colorId == CUSTOM_CLIENT_COLOR_ID) {
+            val baseName = window.customColorName.trim().ifBlank { "Цвет клиента" }
+            val label = if (window.customColorRal.isNotBlank()) {
+                "$baseName (RAL ${window.customColorRal.trim()})"
+            } else {
+                baseName
+            }
+            return ColorCatalogItem(
+                id = CUSTOM_CLIENT_COLOR_ID,
+                name = label,
+                hexColor = window.customColorHex,
+                priceMarkupPercent = 0.0
+            )
+        }
+        profile.colors.find { it.id == window.colorId }?.let { c ->
+            val label = if (c.ralCode.isNotBlank()) "${c.name} (${c.ralCode})" else c.name
+            return ColorCatalogItem(
+                id = c.id,
+                name = label,
+                hexColor = c.hexColor,
+                priceMarkupPercent = c.priceMarkupPercent
+            )
+        }
+        legacyColorCatalog.find { it.id == window.colorId }?.let { legacy ->
+            return legacy
+        }
+        val fallbackLegacyName = window.legacyColorName?.trim()?.takeIf { it.isNotBlank() }
+            ?: orderLegacyColorName?.trim()?.takeIf { it.isNotBlank() }
+        if (fallbackLegacyName != null) {
+            return ColorCatalogItem(
+                id = window.colorId.ifBlank { "legacy_color" },
+                name = fallbackLegacyName,
+                hexColor = inferFallbackColorHex(fallbackLegacyName),
+                priceMarkupPercent = 0.0
+            )
+        }
+        profile.colors.firstOrNull()?.let { firstC ->
+            val label = if (firstC.ralCode.isNotBlank()) "${firstC.name} (${firstC.ralCode})" else firstC.name
+            return ColorCatalogItem(
+                id = firstC.id,
+                name = label,
+                hexColor = firstC.hexColor,
+                priceMarkupPercent = firstC.priceMarkupPercent
+            )
+        }
+        return ColorCatalogItem("col_fallback_neutral", "Белый / Серый", 0xFFE6E9ED, 0.0)
+    }
+
+    /**
+     * Возвращает имя и HEX цвета профиля для карт 1D-раскроя и учёта на складе.
+     */
+    fun resolveWindowCutColor(
+        window: WindowItem,
+        profile: ProfileSystemSpec,
+        legacyColorCatalog: List<ColorCatalogItem> = DefaultCatalogs.defaultColors(),
+        orderLegacyColorName: String? = null
+    ): Pair<String, Long> {
+        if (window.colorId == CUSTOM_CLIENT_COLOR_ID) {
+            return if (window.customColorUseRawForStock) {
+                RAW_UNPAINTED_COLOR_NAME to 0xFFC0C0C0L
+            } else {
+                val baseName = window.customColorName.trim().ifBlank { "Цвет клиента" }
+                val label = if (window.customColorRal.isNotBlank()) {
+                    "$baseName (${window.customColorRal.trim()})"
+                } else {
+                    baseName
+                }
+                label to window.customColorHex
+            }
+        }
+        profile.colors.find { it.id == window.colorId }?.let { c ->
+            return c.name to c.hexColor
+        }
+        if (window.colorId == "none") {
+            return "Белый" to 0xFFFFFFFFL
+        }
+        legacyColorCatalog.find { it.id == window.colorId }?.let { legacy ->
+            return legacy.name.replaceFirstChar { it.uppercase() } to legacy.hexColor
+        }
+        val fallbackLegacyName = window.legacyColorName?.trim()?.takeIf { it.isNotBlank() }
+            ?: orderLegacyColorName?.trim()?.takeIf { it.isNotBlank() }
+        if (fallbackLegacyName != null) {
+            return fallbackLegacyName to inferFallbackColorHex(fallbackLegacyName)
+        }
+        profile.colors.firstOrNull()?.let { firstC ->
+            return firstC.name to firstC.hexColor
+        }
+        return "Белый" to 0xFFFFFFFFL
+    }
+
+    fun calculateWindow(
+        window: WindowItem,
+        profileSystems: List<ProfileSystemSpec>,
+        glazingCatalog: List<GlazingCatalogItem>,
+        colorCatalog: List<ColorCatalogItem>,
+        sillsCatalog: List<SillCatalogItem>,
+        extraAccessoriesCatalog: List<ExtraAccessoryItem> = DefaultCatalogs.defaultExtraAccessories(),
+        workServicesCatalog: List<WorkServiceItem> = DefaultCatalogs.defaultWorkServices(),
+        hardwareBrandsCatalog: List<HardwareBrandItem> = DefaultCatalogs.defaultHardwareBrands(),
+        financialSchemesCatalog: List<FinancialSchemeItem> = DefaultCatalogs.defaultFinancialSchemes(),
+        windowIndexInOrder: Int = 0,
+        assemblyPricingCatalog: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog(),
+        orderLegacySystemName: String? = null,
+        orderLegacyGlazingName: String? = null,
+        orderLegacyColorName: String? = null
+    ): WindowCalculationResult {
+        val winNum = if (windowIndexInOrder > 0) {
+            windowIndexInOrder
+        } else {
+            Regex("\\d+").find(window.name)?.value?.toIntOrNull() ?: 1
+        }
+        val isNoSystemSelected = window.profileSystemId == "none"
+        val profile = resolveProfileSystemWithFallback(
+            window = window,
+            profileSystems = profileSystems,
+            orderLegacySystemName = orderLegacySystemName
+        )
+
+        val glazing = resolveGlazingWithFallback(
+            window = window,
+            glazingCatalog = glazingCatalog,
+            orderLegacyGlazingName = orderLegacyGlazingName
+        )
         val sandwichItem = glazingCatalog.find { it.isSandwich }
             ?: GlazingCatalogItem("sandwich_24", "сендвич", "Сэндвич 24", 24, true, 18.0)
         val matchedShtapik = profile.shtapikVariants.find { it.id == window.selectedShtapikId }
@@ -175,8 +276,8 @@ object WindowBomAndCostEngine {
         } else {
             0f
         }
-        val color = resolveWindowColor(window, profile, colorCatalog)
-        val (cutColorName, cutColorHex) = resolveWindowCutColor(window, profile, colorCatalog)
+        val color = resolveWindowColor(window, profile, colorCatalog, orderLegacyColorName)
+        val (cutColorName, cutColorHex) = resolveWindowCutColor(window, profile, colorCatalog, orderLegacyColorName)
         val innerSill = sillsCatalog.find { it.id == window.innerSillId }
         val outerSill = sillsCatalog.find { it.id == window.outerSillId }
         val finScheme = financialSchemesCatalog.find { it.id == window.financialSchemeId }
@@ -1237,7 +1338,8 @@ object WindowBomAndCostEngine {
         for ((key, pieces) in grouped) {
             val (sysId, role, colorName) = key
             val groupColorHex = pieces.firstOrNull()?.colorHex ?: 0xFF383E42L
-            val sys = profileSystems.find { it.id == sysId } ?: profileSystems.first()
+            val sys = profileSystems.find { it.id == sysId }
+                ?: createLegacyFallbackProfile(sysId, pieces.firstOrNull()?.profileSystemName)
             val fullBarLen = sys.stockBarLengthMm.roundToInt().coerceIn(3000, 8500)
             val kerf = sys.sawKerfMm.roundToInt().coerceAtLeast(0)
 

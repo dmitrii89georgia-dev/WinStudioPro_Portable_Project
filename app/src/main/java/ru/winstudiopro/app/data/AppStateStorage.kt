@@ -7,10 +7,12 @@ import android.database.sqlite.SQLiteOpenHelper
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
+import ru.winstudiopro.app.domain.calculator.OrderArchiveHelper
 import ru.winstudiopro.app.domain.calculator.RubberType
 import ru.winstudiopro.app.domain.model.*
 import java.io.File
 import java.io.FileNotFoundException
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -35,7 +37,7 @@ data class PersistedAppState(
 )
 
 private class WinStudioSqliteHelper(context: Context) :
-    SQLiteOpenHelper(context, "winstudio_pro_v3.db", null, 7) {
+    SQLiteOpenHelper(context, "winstudio_pro_v3.db", null, 8) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -55,6 +57,8 @@ private class WinStudioSqliteHelper(context: Context) :
                 order_number TEXT NOT NULL,
                 customer_name TEXT NOT NULL,
                 status TEXT NOT NULL,
+                is_archived INTEGER NOT NULL DEFAULT 0,
+                is_legacy_import INTEGER NOT NULL DEFAULT 0,
                 json_payload TEXT NOT NULL
             )
             """.trimIndent()
@@ -169,6 +173,9 @@ private class WinStudioSqliteHelper(context: Context) :
             if ("color_hex" !in cols) {
                 db.execSQL("ALTER TABLE stock_inventory ADD COLUMN color_hex INTEGER NOT NULL DEFAULT 4294967295")
             }
+            if (oldVersion < 8) {
+                AppStateStorage.migrateDatabaseV7ToV8(db)
+            }
             if (oldVersion < 6) {
                 AppStateStorage.migrateDatabaseV5ToV6(db)
             }
@@ -189,6 +196,7 @@ object AppStateStorage {
     private const val KEY_FILTER_INITIALIZED = "orders_filter_initialized"
     private const val KEY_FILTER_STATUSES = "orders_filter_statuses"
     private const val KEY_DEV_SEED_APPLIED = "dev_seed_v1_applied"
+    private const val KEY_LAST_BACKUP_HASH = "last_backup_state_hash"
 
     fun loadOrdersFilterStatuses(context: Context): Set<OrderStatus> {
         return try {
@@ -263,7 +271,22 @@ object AppStateStorage {
                 migrateDatabaseV6ToV7(dbHelper.writableDatabase)
             }
             val finalBundle = loadSettingsBundleFromDb(dbHelper.readableDatabase)
-            val finalOrders = loadOrdersFromDb(dbHelper.readableDatabase).ifEmpty { orders }
+            val rawFinalOrders = loadOrdersFromDb(dbHelper.readableDatabase).ifEmpty { orders }
+            val autoArchiveResult = OrderArchiveHelper.applyAutoArchivePolicy(
+                orders = rawFinalOrders,
+                autoArchiveAfterDays = finalBundle.uiSettings.autoArchiveAfterDays
+            )
+            val finalOrders = autoArchiveResult.orders
+            if (autoArchiveResult.newlyArchivedCount > 0) {
+                val wDb = dbHelper.writableDatabase
+                wDb.beginTransaction()
+                try {
+                    saveOrdersToDb(wDb, finalOrders)
+                    wDb.setTransactionSuccessful()
+                } finally {
+                    wDb.endTransaction()
+                }
+            }
             val assemblyPricing = loadAssemblyPricingFromDb(dbHelper.readableDatabase)
             val orderExtraServices = loadOrderExtraServicesFromDb(dbHelper.readableDatabase, fallbackToDefaults = !finalBundle.v6CatalogsSeeded)
             val cashAccounts = loadCashAccountsFromDb(dbHelper.readableDatabase)
@@ -402,6 +425,7 @@ object AppStateStorage {
                 if (root.has("orderExtraServices")) {
                     saveOrderExtraServicesToDb(db, parseOrderExtraServicesArray(root.getJSONArray("orderExtraServices")))
                 }
+                migrateDatabaseV7ToV8Internal(db)
                 migrateDatabaseV5ToV6Internal(db)
                 migrateDatabaseV6ToV7Internal(db)
                 db.setTransactionSuccessful()
@@ -580,6 +604,63 @@ object AppStateStorage {
         return file
     }
 
+    /**
+     * Вычисляет детерминированный SHA-256 хеш содержимого базы данных (без timestamp/метаданных синка),
+     * чтобы не создавать лишних копий при отсутствии изменений за день.
+     */
+    fun computeDatabaseContentHash(context: Context): String {
+        return try {
+            val rawJson = exportFullBackupJsonString(context)
+            val root = JSONObject(rawJson)
+            root.remove("timestamp")
+            root.remove("exportDate")
+            root.optJSONObject("appSettingsPayload")?.let { settingsObj ->
+                settingsObj.remove("autoBackupLastRunMillis")
+                settingsObj.remove("autoBackupLastStatus")
+                settingsObj.remove("googleDriveLastSyncMillis")
+                settingsObj.remove("googleDriveLastStatus")
+            }
+            val digest = MessageDigest.getInstance("SHA-256").digest(root.toString().toByteArray(Charsets.UTF_8))
+            digest.joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to compute DB hash", e)
+            System.currentTimeMillis().toString()
+        }
+    }
+
+    fun getLastBackupStateHash(context: Context): String? {
+        return context.getSharedPreferences(LOCAL_PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_LAST_BACKUP_HASH, null)
+    }
+
+    fun saveLastBackupStateHash(context: Context, hash: String) {
+        context.getSharedPreferences(LOCAL_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_LAST_BACKUP_HASH, hash)
+            .apply()
+    }
+
+    /**
+     * Точечное обновление статусов автобэкапа / Google Диска без перезаписи заказов и каталогов.
+     */
+    fun updateBackupSyncStatusInDb(
+        context: Context,
+        updater: (AppUiSettings) -> AppUiSettings
+    ): AppUiSettings {
+        val dbHelper = WinStudioSqliteHelper(context)
+        val db = dbHelper.writableDatabase
+        db.beginTransaction()
+        return try {
+            val bundle = loadSettingsBundleFromDb(db)
+            val updatedUi = updater(bundle.uiSettings)
+            saveSettingsBundleToDb(db, bundle.copy(uiSettings = updatedUi))
+            db.setTransactionSuccessful()
+            updatedUi
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     // Восстановление всей базы данных из файла полного бэкапа
     fun importFullBackupJsonString(context: Context, jsonString: String): PersistedAppState {
         val root = JSONObject(jsonString)
@@ -686,12 +767,25 @@ object AppStateStorage {
         val cleanedWorkServices = reloadedSettings.workServices.filterNot {
             it.id == "wrk_delivery" || it.name.trim().equals("доставка", ignoreCase = true)
         }
+        val preservedDriveSettings = if (reloadedSettings.uiSettings.googleDriveAccountEmail.isBlank() &&
+            current.uiSettings.googleDriveAccountEmail.isNotBlank()
+        ) {
+            reloadedSettings.uiSettings.copy(
+                googleDriveSyncEnabled = current.uiSettings.googleDriveSyncEnabled,
+                googleDriveAccountEmail = current.uiSettings.googleDriveAccountEmail,
+                googleDriveLastSyncMillis = current.uiSettings.googleDriveLastSyncMillis,
+                googleDriveLastStatus = current.uiSettings.googleDriveLastStatus
+            )
+        } else {
+            reloadedSettings.uiSettings
+        }
 
         val newState = reloadedSettings.copy(
             orders = mergedOrders.ifEmpty { current.orders },
             profileSystems = mergedProfiles.ifEmpty { current.profileSystems },
             stockRemnants = mergedStock,
             stockRubber = mergedRubber,
+            uiSettings = preservedDriveSettings,
             workServices = cleanedWorkServices,
             assemblyPricing = importedAssembly,
             orderExtraServices = importedOrderServices,
@@ -805,6 +899,8 @@ object AppStateStorage {
                 put("order_number", ord.orderNumber)
                 put("customer_name", ord.customerName)
                 put("status", ord.status.name)
+                put("is_archived", if (ord.isArchived) 1 else 0)
+                put("is_legacy_import", if (ord.isLegacyImport) 1 else 0)
                 put("json_payload", serializeOrder(ord).toString())
             }
             db.insertWithOnConflict("orders", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
@@ -974,6 +1070,32 @@ object AppStateStorage {
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
+        }
+    }
+
+    internal fun migrateDatabaseV7ToV8(db: SQLiteDatabase) {
+        db.beginTransaction()
+        try {
+            migrateDatabaseV7ToV8Internal(db)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    private fun migrateDatabaseV7ToV8Internal(db: SQLiteDatabase) {
+        val cols = mutableSetOf<String>()
+        db.rawQuery("PRAGMA table_info(orders)", null).use { c ->
+            val nameIdx = c.getColumnIndex("name")
+            while (c.moveToNext()) {
+                if (nameIdx >= 0) cols.add(c.getString(nameIdx))
+            }
+        }
+        if ("is_archived" !in cols) {
+            db.execSQL("ALTER TABLE orders ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0")
+        }
+        if ("is_legacy_import" !in cols) {
+            db.execSQL("ALTER TABLE orders ADD COLUMN is_legacy_import INTEGER NOT NULL DEFAULT 0")
         }
     }
 
@@ -1634,6 +1756,15 @@ object AppStateStorage {
             put("companyPhone", s.companyPhone)
             put("companyEmail", s.companyEmail)
             put("companyWeb", s.companyWeb)
+            put("autoArchiveAfterDays", s.autoArchiveAfterDays)
+            put("autoBackupEnabled", s.autoBackupEnabled)
+            put("autoBackupHour", s.autoBackupHour)
+            put("autoBackupLastRunMillis", s.autoBackupLastRunMillis ?: JSONObject.NULL)
+            put("autoBackupLastStatus", s.autoBackupLastStatus)
+            put("googleDriveSyncEnabled", s.googleDriveSyncEnabled)
+            put("googleDriveAccountEmail", s.googleDriveAccountEmail)
+            put("googleDriveLastSyncMillis", s.googleDriveLastSyncMillis ?: JSONObject.NULL)
+            put("googleDriveLastStatus", s.googleDriveLastStatus)
 
             val glzArr = JSONArray()
             bundle.glazingCatalog.forEach { g ->
@@ -1734,7 +1865,16 @@ object AppStateStorage {
                     companyAddress = o.optString("companyAddress", ""),
                     companyPhone = o.optString("companyPhone", ""),
                     companyEmail = o.optString("companyEmail", ""),
-                    companyWeb = o.optString("companyWeb", "")
+                    companyWeb = o.optString("companyWeb", ""),
+                    autoArchiveAfterDays = o.optInt("autoArchiveAfterDays", 30).coerceAtLeast(0),
+                    autoBackupEnabled = o.optBoolean("autoBackupEnabled", true),
+                    autoBackupHour = o.optInt("autoBackupHour", 2).coerceIn(0, 23),
+                    autoBackupLastRunMillis = if (o.isNull("autoBackupLastRunMillis") || !o.has("autoBackupLastRunMillis")) null else o.optLong("autoBackupLastRunMillis").takeIf { it > 0L },
+                    autoBackupLastStatus = o.optString("autoBackupLastStatus", ""),
+                    googleDriveSyncEnabled = o.optBoolean("googleDriveSyncEnabled", false),
+                    googleDriveAccountEmail = o.optString("googleDriveAccountEmail", ""),
+                    googleDriveLastSyncMillis = if (o.isNull("googleDriveLastSyncMillis") || !o.has("googleDriveLastSyncMillis")) null else o.optLong("googleDriveLastSyncMillis").takeIf { it > 0L },
+                    googleDriveLastStatus = o.optString("googleDriveLastStatus", "")
                 )
 
                 val glazingList = o.optJSONArray("glazingCatalog")?.let { arr ->
@@ -2133,6 +2273,13 @@ object AppStateStorage {
         put("floorAssemblyCount", ord.floorAssemblyCount)
         put("extraAssemblyOpsCost", ord.extraAssemblyOpsCost)
         put("extraAssemblyOpsNote", ord.extraAssemblyOpsNote)
+        put("isArchived", ord.isArchived)
+        put("archivedAtMillis", ord.archivedAtMillis ?: JSONObject.NULL)
+        put("closedAtMillis", ord.closedAtMillis ?: JSONObject.NULL)
+        put("isLegacyImport", ord.isLegacyImport)
+        put("legacySystemName", ord.legacySystemName ?: JSONObject.NULL)
+        put("legacyGlazingName", ord.legacyGlazingName ?: JSONObject.NULL)
+        put("legacyColorName", ord.legacyColorName ?: JSONObject.NULL)
         val selSrvArr = JSONArray()
         ord.selectedOrderServices.forEach { sel ->
             selSrvArr.put(
@@ -2215,6 +2362,9 @@ object AppStateStorage {
                     put("extBot", w.addons.extenderBottomMm)
                     put("extLeft", w.addons.extenderLeftMm)
                     put("extRight", w.addons.extenderRightMm)
+                    put("legacySystemName", w.legacySystemName ?: JSONObject.NULL)
+                    put("legacyGlazingName", w.legacyGlazingName ?: JSONObject.NULL)
+                    put("legacyColorName", w.legacyColorName ?: JSONObject.NULL)
                     put("topology", serializeTopology(w.topology))
                 }
             )
@@ -2285,7 +2435,10 @@ object AppStateStorage {
                         extenderBottomMm = wo.optInt("extBot", 0),
                         extenderLeftMm = wo.optInt("extLeft", 0),
                         extenderRightMm = wo.optInt("extRight", 0)
-                    )
+                    ),
+                    legacySystemName = if (wo.isNull("legacySystemName") || !wo.has("legacySystemName")) null else wo.optString("legacySystemName").takeIf { it.isNotBlank() },
+                    legacyGlazingName = if (wo.isNull("legacyGlazingName") || !wo.has("legacyGlazingName")) null else wo.optString("legacyGlazingName").takeIf { it.isNotBlank() },
+                    legacyColorName = if (wo.isNull("legacyColorName") || !wo.has("legacyColorName")) null else wo.optString("legacyColorName").takeIf { it.isNotBlank() }
                 )
             )
         }
@@ -2382,7 +2535,14 @@ object AppStateStorage {
             floorAssemblyCount = o.optInt("floorAssemblyCount", 0),
             extraAssemblyOpsCost = o.optDouble("extraAssemblyOpsCost", 0.0),
             extraAssemblyOpsNote = o.optString("extraAssemblyOpsNote", ""),
-            selectedOrderServices = parsedSelectedServices
+            selectedOrderServices = parsedSelectedServices,
+            isArchived = o.optBoolean("isArchived", false),
+            archivedAtMillis = if (o.isNull("archivedAtMillis") || !o.has("archivedAtMillis")) null else o.optLong("archivedAtMillis").takeIf { it > 0L },
+            closedAtMillis = if (o.isNull("closedAtMillis") || !o.has("closedAtMillis")) null else o.optLong("closedAtMillis").takeIf { it > 0L },
+            isLegacyImport = o.optBoolean("isLegacyImport", false),
+            legacySystemName = if (o.isNull("legacySystemName") || !o.has("legacySystemName")) null else o.optString("legacySystemName").takeIf { it.isNotBlank() },
+            legacyGlazingName = if (o.isNull("legacyGlazingName") || !o.has("legacyGlazingName")) null else o.optString("legacyGlazingName").takeIf { it.isNotBlank() },
+            legacyColorName = if (o.isNull("legacyColorName") || !o.has("legacyColorName")) null else o.optString("legacyColorName").takeIf { it.isNotBlank() }
         )
     }
 

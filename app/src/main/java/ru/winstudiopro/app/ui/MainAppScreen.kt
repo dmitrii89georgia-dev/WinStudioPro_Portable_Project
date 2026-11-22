@@ -23,6 +23,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import ru.winstudiopro.app.data.AppStateStorage
 import ru.winstudiopro.app.data.PersistedAppState
+import ru.winstudiopro.app.data.backup.BackupManager
+import ru.winstudiopro.app.domain.calculator.OrderArchiveHelper
 import ru.winstudiopro.app.domain.calculator.WarehouseInventoryHelper
 import ru.winstudiopro.app.domain.model.AppUiSettings
 import ru.winstudiopro.app.domain.model.AssemblyPricingCatalog
@@ -161,6 +163,14 @@ fun WinStudioProMainApp(
         mutableStateOf(orders.firstOrNull()?.id ?: "")
     }
     var activeWindowIndex by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(uiSettings.autoBackupEnabled, uiSettings.autoBackupHour) {
+        BackupManager.scheduleDailyAutoBackup(
+            context = context,
+            enabled = uiSettings.autoBackupEnabled,
+            targetHour = uiSettings.autoBackupHour
+        )
+    }
 
     // Лаунчер для импорта одного заказа из файла .json / .win
     val importOrderLauncher = rememberLauncherForActivityResult(
@@ -311,7 +321,8 @@ fun WinStudioProMainApp(
         var totalAddedRem = 0
         var totalRubberM = 0.0
 
-        val finalOrders = updatedOrders.map { newOrder ->
+        val transitionedOrders = OrderArchiveHelper.applyStatusTransitions(orders, updatedOrders)
+        val finalOrders = transitionedOrders.map { newOrder ->
             val oldOrder = oldById[newOrder.id]
             val enteredProduction = newOrder.status == OrderStatus.PRODUCTION &&
                 oldOrder?.status != OrderStatus.PRODUCTION &&

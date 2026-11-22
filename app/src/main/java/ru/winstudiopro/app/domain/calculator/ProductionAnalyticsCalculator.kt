@@ -72,7 +72,11 @@ object ProductionAnalyticsCalculator {
         cashTransactions: List<CashTransaction>,
         nowMillis: Long = System.currentTimeMillis()
     ): ProductionAnalyticsSnapshot {
-        val summariesByOrderId = orders.associate { order ->
+        // Исторические импортированные заказы (isLegacyImport = true) полностью исключаются
+        // из оперативной кассы и графиков текущего года
+        val currentBusinessOrders = orders.filterNot { it.isLegacyImport }
+
+        val summariesByOrderId = currentBusinessOrders.associate { order ->
             val winResults = order.windows.mapIndexed { idx, win ->
                 WindowBomAndCostEngine.calculateWindow(
                     window = win,
@@ -85,7 +89,10 @@ object ProductionAnalyticsCalculator {
                     hardwareBrandsCatalog = hardwareBrandsCatalog,
                     financialSchemesCatalog = finSchemeSettings.financialSchemes,
                     assemblyPricingCatalog = assemblyPricingCatalog,
-                    windowIndexInOrder = idx + 1
+                    windowIndexInOrder = idx + 1,
+                    orderLegacySystemName = order.legacySystemName,
+                    orderLegacyGlazingName = order.legacyGlazingName,
+                    orderLegacyColorName = order.legacyColorName
                 )
             }
             val summary = WindowBomAndCostEngine.calculateOrderFinancialSummary(
@@ -98,8 +105,9 @@ object ProductionAnalyticsCalculator {
             order.id to summary
         }
 
-        val activeOrders = orders.filter { it.status in ACTIVE_PRODUCTION_STATUSES }
-        val draftOrders = orders.filter { it.status in DRAFT_PREP_STATUSES }
+        // Архивные заказы не участвуют в блоке «Обязательства активных заказов»
+        val activeOrders = currentBusinessOrders.filter { !it.isArchived && it.status in ACTIVE_PRODUCTION_STATUSES }
+        val draftOrders = currentBusinessOrders.filter { !it.isArchived && it.status in DRAFT_PREP_STATUSES }
 
         var activeContractsTotal = 0.0
         var activePaidAdvances = 0.0
@@ -135,8 +143,8 @@ object ProductionAnalyticsCalculator {
         )
         val freeMoney = totalCashUsd - obligationsTotal
 
-        // Динамика выручки за последние 6 месяцев
-        val revenueOrders = orders.filter { it.status in REVENUE_STATUSES }
+        // Новые заказы, ушедшие в архив, продолжают учитываться в исторической выручке и маржинальности
+        val revenueOrders = currentBusinessOrders.filter { it.status in REVENUE_STATUSES }
         val monthlyBars = buildMonthlyRevenueBars(
             orders = revenueOrders,
             summariesByOrderId = summariesByOrderId,

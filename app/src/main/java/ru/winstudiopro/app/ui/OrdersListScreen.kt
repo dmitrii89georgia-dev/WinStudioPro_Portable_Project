@@ -37,8 +37,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import ru.winstudiopro.app.data.AppStateStorage
+import ru.winstudiopro.app.domain.calculator.OrderArchiveHelper
 import ru.winstudiopro.app.domain.model.*
 import ru.winstudiopro.app.ui.cad.WindowMiniThumbnail
+import ru.winstudiopro.app.ui.components.IosSegmentedControl
 import ru.winstudiopro.app.ui.i18n.LocalAppStrings
 import ru.winstudiopro.app.ui.i18n.normalizeCurrencyDisplay
 import ru.winstudiopro.app.ui.theme.LocalWinStudioPalette
@@ -46,6 +48,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
+
+private enum class OrdersListTab {
+    ACTIVE,
+    ARCHIVE
+}
 
 // =========================================================================================
 // ЭКРАН СПИСКА ЗАКАЗОВ (НОВЫЕ СВЕРХУ, ФИЛЬТР ПО СТАТУСАМ, СМАЙЛИКИ СРОКОВ, МИНИАТЮРЫ)
@@ -63,17 +70,28 @@ internal fun OrdersListScreen(
     val context = LocalContext.current
     val palette = LocalWinStudioPalette.current
     val strings = LocalAppStrings.current
+    var selectedTab by remember { mutableStateOf(OrdersListTab.ACTIVE) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedStatuses by remember {
         mutableStateOf(AppStateStorage.loadOrdersFilterStatuses(context))
     }
     var showFilterDialog by remember { mutableStateOf(false) }
     var contractDialogTargetOrder by remember { mutableStateOf<CustomerOrder?>(null) }
+    var deleteDraftTarget by remember { mutableStateOf<CustomerOrder?>(null) }
+    var archiveOrderTarget by remember { mutableStateOf<CustomerOrder?>(null) }
+    var deleteForeverTarget by remember { mutableStateOf<CustomerOrder?>(null) }
+
+    val activeOrdersCount = remember(orders) { orders.count { !it.isArchived } }
+    val archiveOrdersCount = remember(orders) { orders.count { it.isArchived } }
 
     // Заказы всегда отображаются в порядке от нового к старому (новый наверху)
-    val filtered = remember(orders, searchQuery, selectedStatuses) {
+    val filtered = remember(orders, selectedTab, searchQuery, selectedStatuses) {
         orders.filter { ord ->
-            ord.status in selectedStatuses && (
+            val tabMatches = when (selectedTab) {
+                OrdersListTab.ACTIVE -> !ord.isArchived && ord.status in selectedStatuses
+                OrdersListTab.ARCHIVE -> ord.isArchived
+            }
+            tabMatches && (
                 searchQuery.isBlank() ||
                     ord.orderNumber.contains(searchQuery, ignoreCase = true) ||
                     ord.customerName.contains(searchQuery, ignoreCase = true) ||
@@ -83,7 +101,7 @@ internal fun OrdersListScreen(
         }
     }
 
-    val isPartialFilter = selectedStatuses.size < OrderStatus.entries.size
+    val isPartialFilter = selectedTab == OrdersListTab.ACTIVE && selectedStatuses.size < OrderStatus.entries.size
 
     Column(
         modifier = Modifier
@@ -138,11 +156,28 @@ internal fun OrdersListScreen(
             }
         }
 
-        // Строка поиска + кнопка «Фильтр» справа
+        // Переключатель «Активные» / «Архив»
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            IosSegmentedControl(
+                items = listOf(
+                    OrdersListTab.ACTIVE to "${strings.ordersTabActive} ($activeOrdersCount)",
+                    OrdersListTab.ARCHIVE to "${strings.ordersTabArchive} ($archiveOrdersCount)"
+                ),
+                selectedItem = selectedTab,
+                onSelect = { selectedTab = it },
+                testTagPrefix = "orders_tab"
+            )
+        }
+
+        // Строка поиска + кнопка «Фильтр» справа (для активных заказов)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -158,38 +193,40 @@ internal fun OrdersListScreen(
                 singleLine = true
             )
 
-            Surface(
-                color = if (isPartialFilter) palette.accentBlue else palette.cardSurface,
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(
-                    width = if (isPartialFilter) 0.dp else 1.dp,
-                    color = if (isPartialFilter) Color.Transparent else palette.floatingBorder
-                ),
-                shadowElevation = if (palette.isDark) 0.dp else 1.5.dp,
-                modifier = Modifier
-                    .heightIn(min = 52.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .clickable { showFilterDialog = true }
-                    .testTag("orders_filter_button")
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+            if (selectedTab == OrdersListTab.ACTIVE) {
+                Surface(
+                    color = if (isPartialFilter) palette.accentBlue else palette.cardSurface,
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(
+                        width = if (isPartialFilter) 0.dp else 1.dp,
+                        color = if (isPartialFilter) Color.Transparent else palette.floatingBorder
+                    ),
+                    shadowElevation = if (palette.isDark) 0.dp else 1.5.dp,
+                    modifier = Modifier
+                        .heightIn(min = 52.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { showFilterDialog = true }
+                        .testTag("orders_filter_button")
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.FilterList,
-                        contentDescription = strings.filterBtn,
-                        tint = if (isPartialFilter) Color.White else palette.accentBlue,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text(
-                        text = if (isPartialFilter) "${strings.filterBtn} (${selectedStatuses.size})" else strings.filterBtn,
-                        color = if (isPartialFilter) Color.White else palette.textPrimary,
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1
-                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.FilterList,
+                            contentDescription = strings.filterBtn,
+                            tint = if (isPartialFilter) Color.White else palette.accentBlue,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = if (isPartialFilter) "${strings.filterBtn} (${selectedStatuses.size})" else strings.filterBtn,
+                            color = if (isPartialFilter) Color.White else palette.textPrimary,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1
+                        )
+                    }
                 }
             }
         }
@@ -206,13 +243,13 @@ internal fun OrdersListScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.FilterAltOff,
+                        imageVector = if (selectedTab == OrdersListTab.ARCHIVE) Icons.Rounded.Inventory2 else Icons.Rounded.FilterAltOff,
                         contentDescription = null,
                         tint = palette.textSecondary.copy(alpha = 0.6f),
                         modifier = Modifier.size(44.dp)
                     )
                     Text(
-                        text = strings.emptyFilterTitle,
+                        text = if (selectedTab == OrdersListTab.ARCHIVE) strings.emptyArchiveOrdersTitle else strings.emptyActiveOrdersTitle,
                         color = palette.textSecondary,
                         fontSize = 14.sp,
                         textAlign = TextAlign.Center
@@ -351,7 +388,11 @@ internal fun OrdersListScreen(
                                                         contractDialogTargetOrder = ord
                                                     } else {
                                                         onUpdateOrders(
-                                                            orders.map { if (it.id == ord.id) it.copy(status = st) else it }
+                                                            orders.map {
+                                                                if (it.id == ord.id) {
+                                                                    OrderArchiveHelper.withStatusTransition(it, st)
+                                                                } else it
+                                                            }
                                                         )
                                                     }
                                                 }
@@ -361,9 +402,45 @@ internal fun OrdersListScreen(
                                 }
                             }
 
+                            if (ord.isLegacyImport || ord.isArchived) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                val legacyInfo = listOfNotNull(
+                                    ord.legacySystemName ?: ord.windows.firstOrNull()?.legacySystemName,
+                                    ord.legacyColorName ?: ord.windows.firstOrNull()?.legacyColorName
+                                ).distinct().joinToString(" • ")
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    if (ord.isLegacyImport) {
+                                        Surface(
+                                            color = palette.accentOrange.copy(alpha = 0.16f),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text(
+                                                text = strings.legacyImportBadge,
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = palette.accentOrange,
+                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    if (legacyInfo.isNotBlank()) {
+                                        Text(
+                                            text = legacyInfo,
+                                            fontSize = 11.sp,
+                                            color = palette.textSecondary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+
                             Spacer(modifier = Modifier.height(6.dp))
 
-                            // Строка 2: Клиент, телефон, адрес + иконки Экспорт / Удалить
+                            // Строка 2: Клиент, телефон, адрес + безопасные кнопки действий
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -381,7 +458,10 @@ internal fun OrdersListScreen(
                                         color = palette.textSecondary
                                     )
                                 }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
                                     IconButton(
                                         onClick = { onExportOrder(ord) },
                                         modifier = Modifier.size(40.dp)
@@ -393,19 +473,53 @@ internal fun OrdersListScreen(
                                             modifier = Modifier.size(20.dp)
                                         )
                                     }
-                                    if (orders.size > 1) {
-                                        IconButton(
-                                            onClick = {
-                                                onUpdateOrders(orders.filterNot { it.id == ord.id })
-                                            },
-                                            modifier = Modifier.size(40.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Rounded.DeleteOutline,
-                                                contentDescription = strings.deleteWindowDesc,
-                                                tint = palette.accentRed,
-                                                modifier = Modifier.size(20.dp)
-                                            )
+                                    if (!ord.isArchived) {
+                                        if (ord.status == OrderStatus.DRAFT) {
+                                            if (orders.size > 1) {
+                                                IconButton(
+                                                    onClick = { deleteDraftTarget = ord },
+                                                    modifier = Modifier
+                                                        .size(40.dp)
+                                                        .testTag("order_delete_draft_btn_${ord.id}")
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.DeleteOutline,
+                                                        contentDescription = strings.deleteWindowDesc,
+                                                        tint = palette.accentRed,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
+                                            }
+                                        } else {
+                                            Surface(
+                                                color = palette.secondaryBackground,
+                                                shape = RoundedCornerShape(10.dp),
+                                                border = BorderStroke(0.8.dp, palette.floatingBorder),
+                                                modifier = Modifier
+                                                    .heightIn(min = 36.dp)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .clickable { archiveOrderTarget = ord }
+                                                    .testTag("order_archive_btn_${ord.id}")
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.Archive,
+                                                        contentDescription = strings.moveToArchiveBtn,
+                                                        tint = palette.textSecondary,
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                    Text(
+                                                        text = strings.moveToArchiveBtn,
+                                                        fontSize = 11.5.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = palette.textPrimary
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -451,6 +565,75 @@ internal fun OrdersListScreen(
                                     }
                                 }
                             }
+
+                            if (ord.isArchived) {
+                                Spacer(modifier = Modifier.height(10.dp))
+                                HorizontalDivider(color = palette.divider, thickness = 0.7.dp)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            val restored = OrderArchiveHelper.restoreFromArchiveToDraft(ord)
+                                            onUpdateOrders(orders.map { if (it.id == ord.id) restored else it })
+                                            selectedTab = OrdersListTab.ACTIVE
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 40.dp)
+                                            .testTag("archive_restore_btn_${ord.id}")
+                                    ) {
+                                        Text(
+                                            text = "↩ ${strings.restoreToWorkBtn}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            val cloned = OrderArchiveHelper.cloneArchiveOrderToNew(ord)
+                                            onUpdateOrders(listOf(cloned) + orders)
+                                            selectedTab = OrdersListTab.ACTIVE
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 40.dp)
+                                            .testTag("archive_clone_btn_${ord.id}")
+                                    ) {
+                                        Text(
+                                            text = "⧉ ${strings.cloneToNewOrderBtn}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    Button(
+                                        onClick = { deleteForeverTarget = ord },
+                                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentRed.copy(alpha = 0.14f)),
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                        modifier = Modifier
+                                            .heightIn(min = 40.dp)
+                                            .testTag("archive_delete_forever_btn_${ord.id}")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.DeleteForever,
+                                            contentDescription = strings.deleteForeverBtn,
+                                            tint = palette.accentRed,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -485,8 +668,7 @@ internal fun OrdersListScreen(
                 onUpdateOrders(
                     orders.map {
                         if (it.id == targetForContract.id) {
-                            it.copy(
-                                status = nextStatus,
+                            OrderArchiveHelper.withStatusTransition(it, nextStatus).copy(
                                 contractDateMillis = pickedDateMs,
                                 contractTermDays = termDays
                             )
@@ -494,6 +676,80 @@ internal fun OrdersListScreen(
                     }
                 )
                 contractDialogTargetOrder = null
+            }
+        )
+    }
+
+    val draftToDelete = deleteDraftTarget
+    if (draftToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { deleteDraftTarget = null },
+            title = { Text(strings.deleteDraftConfirmTitle, fontWeight = FontWeight.Bold) },
+            text = { Text("${draftToDelete.orderNumber}\n\n${strings.deleteDraftConfirmBody}") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onUpdateOrders(orders.filterNot { it.id == draftToDelete.id })
+                        deleteDraftTarget = null
+                    }
+                ) {
+                    Text(strings.deleteForeverBtn, color = palette.accentRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteDraftTarget = null }) {
+                    Text(strings.cancelBtn)
+                }
+            }
+        )
+    }
+
+    val orderToArchive = archiveOrderTarget
+    if (orderToArchive != null) {
+        AlertDialog(
+            onDismissRequest = { archiveOrderTarget = null },
+            title = { Text(strings.moveToArchiveConfirmTitle, fontWeight = FontWeight.Bold) },
+            text = { Text("${orderToArchive.orderNumber}\n\n${strings.moveToArchiveConfirmBody}") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val archived = OrderArchiveHelper.archiveOrder(orderToArchive)
+                        onUpdateOrders(orders.map { if (it.id == orderToArchive.id) archived else it })
+                        archiveOrderTarget = null
+                    },
+                    modifier = Modifier.testTag("archive_confirm_dialog_btn")
+                ) {
+                    Text(strings.moveToArchiveBtn, color = palette.accentBlue, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { archiveOrderTarget = null }) {
+                    Text(strings.cancelBtn)
+                }
+            }
+        )
+    }
+
+    val targetDeleteForever = deleteForeverTarget
+    if (targetDeleteForever != null) {
+        AlertDialog(
+            onDismissRequest = { deleteForeverTarget = null },
+            title = { Text(strings.deleteForeverConfirmTitle, color = palette.accentRed, fontWeight = FontWeight.Bold) },
+            text = { Text("${targetDeleteForever.orderNumber}\n\n${strings.deleteForeverConfirmBody}") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onUpdateOrders(orders.filterNot { it.id == targetDeleteForever.id })
+                        deleteForeverTarget = null
+                    }
+                ) {
+                    Text(strings.deleteForeverBtn, color = palette.accentRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteForeverTarget = null }) {
+                    Text(strings.cancelBtn)
+                }
             }
         )
     }

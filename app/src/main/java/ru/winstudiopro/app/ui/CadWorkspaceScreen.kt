@@ -99,17 +99,23 @@ internal fun CadEditorWorkspaceScreen(
     // Фактическая нижняя граница верхней плавающей панели для точного старта чертежа
     var topBarBottomPx by remember { mutableFloatStateOf(0f) }
 
-    val activeProfile = profileSystems.find { it.id == currentWindow.profileSystemId }
-        ?: profileSystems.firstOrNull()
-        ?: DefaultCatalogs.defaultProfileSystems().first()
+    val activeProfile = WindowBomAndCostEngine.resolveProfileSystemWithFallback(
+        window = currentWindow,
+        profileSystems = profileSystems,
+        orderLegacySystemName = order.legacySystemName
+    )
 
-    val activeGlazing = glazingCatalog.find { it.id == currentWindow.glazingId }
-        ?: glazingCatalog.first()
+    val activeGlazing = WindowBomAndCostEngine.resolveGlazingWithFallback(
+        window = currentWindow,
+        glazingCatalog = glazingCatalog,
+        orderLegacyGlazingName = order.legacyGlazingName
+    )
 
     val activeColor = WindowBomAndCostEngine.resolveWindowColor(
         window = currentWindow,
         profile = activeProfile,
-        legacyColorCatalog = colorCatalog
+        legacyColorCatalog = colorCatalog,
+        orderLegacyColorName = order.legacyColorName
     )
 
     // Расчёт всех конструкций текущего заказа в реальном времени (включая сборку, сухари, разное и монтаж из прайса)
@@ -135,9 +141,12 @@ internal fun CadEditorWorkspaceScreen(
                 extraAccessoriesCatalog = extraAccessoriesCatalog,
                 workServicesCatalog = workServicesCatalog,
                 hardwareBrandsCatalog = hardwareBrandsCatalog,
-                assemblyPricingCatalog = assemblyPricingCatalog,
                 financialSchemesCatalog = finSchemeSettings.financialSchemes,
-                windowIndexInOrder = idx + 1
+                assemblyPricingCatalog = assemblyPricingCatalog,
+                windowIndexInOrder = idx + 1,
+                orderLegacySystemName = order.legacySystemName,
+                orderLegacyGlazingName = order.legacyGlazingName,
+                orderLegacyColorName = order.legacyColorName
             )
         }
     }
@@ -2868,14 +2877,17 @@ private fun CustomerOrderDetailsDialog(
                     }
                     Button(
                         onClick = {
+                            val updatedWithTransition = ru.winstudiopro.app.domain.calculator.OrderArchiveHelper.withStatusTransition(
+                                order = order,
+                                newStatus = status
+                            )
                             onSave(
-                                order.copy(
+                                updatedWithTransition.copy(
                                     orderNumber = orderNumber.ifBlank { order.orderNumber },
                                     customerName = customerName.trim(),
                                     customerPhone = customerPhone.trim(),
                                     address = address.trim(),
                                     orderNote = comment.trim(),
-                                    status = status,
                                     contractDateMillis = contractDateMs,
                                     contractTermDays = contractTermDays
                                 )

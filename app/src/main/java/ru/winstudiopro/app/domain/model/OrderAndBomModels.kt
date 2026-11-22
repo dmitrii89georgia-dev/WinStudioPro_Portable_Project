@@ -157,7 +157,11 @@ data class WindowItem(
     val installationPricePerM2: Double = 15.0,
     val manualUnitPriceOverride: Double? = null,
     val note: String = "",
-    val assemblySchemeOverride: AssemblySchemeType? = null
+    val assemblySchemeOverride: AssemblySchemeType? = null,
+    // Текстовые названия материалов из импортированной старой базы (Fallback при отсутствии ID в прайсах)
+    val legacySystemName: String? = null,
+    val legacyGlazingName: String? = null,
+    val legacyColorName: String? = null
 )
 
 /**
@@ -230,6 +234,18 @@ data class ContractDeadlineState(
 
 /**
  * Заказ клиента (содержит произвольное количество окон/конструкций).
+ *
+ * Памятка для внешнего конвертера старых баз данных (формат `.winbackup.json`):
+ * чтобы исторические заказы сразу загружались в раздел «Архив», не искажали оперативную
+ * кассу/аналитику и открывались без добавления старых профилей в Прайсы, задайте в JSON заказа:
+ * - `"isArchived": true` — немедленное размещение заказа на вкладке «Архив»
+ * - `"isLegacyImport": true` — исключение заказа из кассы и графиков текущего года
+ * - `"archivedAtMillis": <epochMs>` / `"closedAtMillis": <epochMs>` — временные метки (опционально)
+ * - `"status": "CLOSED"` — статус закрытого заказа
+ * - В самом заказе и/или внутри каждой конструкции массива `"windows"`:
+ *   `"legacySystemName"`, `"legacyGlazingName"`, `"legacyColorName"` — оригинальные текстовые названия
+ *   (например, `"ПВХ Коричневый"`), а также сохраните `"topology"` и `"manualUnitPriceOverride"` /
+ *   `"manualOrderTotalOverride"` для фиксации исходных размеров и цен.
  */
 data class CustomerOrder(
     val id: String,
@@ -254,7 +270,15 @@ data class CustomerOrder(
     val floorAssemblyCount: Int = 0,
     val extraAssemblyOpsCost: Double = 0.0,
     val extraAssemblyOpsNote: String = "",
-    val selectedOrderServices: List<SelectedOrderService> = emptyList()
+    val selectedOrderServices: List<SelectedOrderService> = emptyList(),
+    // Модуль «Архив заказов» и импорт исторической базы
+    val isArchived: Boolean = false,
+    val archivedAtMillis: Long? = null,
+    val closedAtMillis: Long? = null,
+    val isLegacyImport: Boolean = false,
+    val legacySystemName: String? = null,
+    val legacyGlazingName: String? = null,
+    val legacyColorName: String? = null
 ) {
     fun computeDeadlineState(nowMillis: Long = System.currentTimeMillis()): ContractDeadlineState? {
         if (!status.showDeadlineSmiley) return null

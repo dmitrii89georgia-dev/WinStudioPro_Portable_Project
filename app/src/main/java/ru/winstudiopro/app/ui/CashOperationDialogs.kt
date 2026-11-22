@@ -81,7 +81,7 @@ internal fun rememberOrderLedgerSnapshots(
         cashAccounts,
         cashTransactions
     ) {
-        orders.map { order ->
+        orders.filterNot { it.isLegacyImport }.map { order ->
             val winResults = order.windows.mapIndexed { idx, win ->
                 WindowBomAndCostEngine.calculateWindow(
                     window = win,
@@ -450,7 +450,10 @@ internal fun QuickExpenseDialog(
                     }
                 }
 
-                if (orders.isNotEmpty()) {
+                val activeCashOrders = remember(orders) {
+                    orders.filterNot { it.isLegacyImport || it.isArchived }
+                }
+                if (activeCashOrders.isNotEmpty()) {
                     Text("Привязать к заказу (опционально):", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = palette.textSecondary)
                     Row(
                         modifier = Modifier
@@ -463,7 +466,7 @@ internal fun QuickExpenseDialog(
                             onClick = { selectedOrderId = null },
                             label = { Text("Общие цеховые", fontSize = 11.5.sp) }
                         )
-                        orders.take(12).forEach { ord ->
+                        activeCashOrders.take(12).forEach { ord ->
                             FilterChip(
                                 selected = selectedOrderId == ord.id,
                                 onClick = { selectedOrderId = ord.id },

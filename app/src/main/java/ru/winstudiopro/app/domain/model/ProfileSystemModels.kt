@@ -366,7 +366,18 @@ data class AppUiSettings(
     val companyAddress: String = "",
     val companyPhone: String = "",
     val companyEmail: String = "",
-    val companyWeb: String = ""
+    val companyWeb: String = "",
+    // Настройка автоархивации закрытых заказов: 14, 30 (по умолчанию), 60, 90 дней или 0 (отключено / вручную)
+    val autoArchiveAfterDays: Int = 30,
+    // Настройки ежедневного локального автобэкапа и облачной синхронизации с Google Диском
+    val autoBackupEnabled: Boolean = true,
+    val autoBackupHour: Int = 2,
+    val autoBackupLastRunMillis: Long? = null,
+    val autoBackupLastStatus: String = "",
+    val googleDriveSyncEnabled: Boolean = false,
+    val googleDriveAccountEmail: String = "",
+    val googleDriveLastSyncMillis: Long? = null,
+    val googleDriveLastStatus: String = ""
 )
 
 object DefaultCatalogs {
