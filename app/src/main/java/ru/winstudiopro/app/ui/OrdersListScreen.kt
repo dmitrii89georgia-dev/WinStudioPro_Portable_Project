@@ -323,11 +323,18 @@ internal fun OrdersListScreen(
                                         modifier = Modifier
                                             .heightIn(min = 34.dp)
                                             .clip(RoundedCornerShape(10.dp))
-                                            .clickable { statusDropdownExpanded = true }
+                                            .clickable(enabled = !ord.isArchived) {
+                                                statusDropdownExpanded = true
+                                            }
                                             .testTag("order_status_dropdown_${ord.id}")
                                     ) {
                                         Row(
-                                            modifier = Modifier.padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                                            modifier = Modifier.padding(
+                                                start = 10.dp,
+                                                end = if (ord.isArchived) 10.dp else 6.dp,
+                                                top = 6.dp,
+                                                bottom = 6.dp
+                                            ),
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(3.dp)
                                         ) {
@@ -338,17 +345,19 @@ internal fun OrdersListScreen(
                                                 fontWeight = FontWeight.Bold,
                                                 maxLines = 1
                                             )
-                                            Icon(
-                                                imageVector = Icons.Rounded.ArrowDropDown,
-                                                contentDescription = statusLabel,
-                                                tint = Color.White,
-                                                modifier = Modifier.size(18.dp)
-                                            )
+                                            if (!ord.isArchived) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.ArrowDropDown,
+                                                    contentDescription = statusLabel,
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
                                         }
                                     }
 
                                     DropdownMenu(
-                                        expanded = statusDropdownExpanded,
+                                        expanded = !ord.isArchived && statusDropdownExpanded,
                                         onDismissRequest = { statusDropdownExpanded = false }
                                     ) {
                                         OrderStatus.entries.forEach { st ->

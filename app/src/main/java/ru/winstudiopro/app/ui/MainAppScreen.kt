@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -21,11 +22,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import ru.winstudiopro.app.data.AppStateStorage
 import ru.winstudiopro.app.data.PersistedAppState
 import ru.winstudiopro.app.data.backup.BackupManager
 import ru.winstudiopro.app.domain.calculator.OrderArchiveHelper
 import ru.winstudiopro.app.domain.calculator.WarehouseInventoryHelper
+import ru.winstudiopro.app.domain.calculator.WindowBomAndCostEngine
 import ru.winstudiopro.app.domain.model.AppUiSettings
 import ru.winstudiopro.app.domain.model.AssemblyPricingCatalog
 import ru.winstudiopro.app.domain.model.CashAccount
@@ -164,6 +176,105 @@ fun WinStudioProMainApp(
     }
     var activeWindowIndex by remember { mutableIntStateOf(0) }
 
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val dbWriteLock = remember { Any() }
+    val ioScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
+    val dirtyOrdersForSave = remember { linkedMapOf<String, CustomerOrder>() }
+    var debouncedOrderSaveJob by remember { mutableStateOf<Job?>(null) }
+
+    fun buildPersistedSnapshot(
+        newProfiles: List<ProfileSystemSpec> = profileSystems,
+        newOrders: List<CustomerOrder> = orders,
+        newStock: List<StockRemnantBar> = stockRemnants,
+        newStockRubber: List<StockRubberItem> = stockRubber,
+        newSettings: AppUiSettings = uiSettings,
+        newGlazing: List<GlazingCatalogItem> = glazingCatalog,
+        newColors: List<ColorCatalogItem> = colorCatalog,
+        newHardwareBrands: List<HardwareBrandItem> = hardwareBrands,
+        newExtras: List<ExtraAccessoryItem> = extraAccessories,
+        newWorks: List<WorkServiceItem> = workServices,
+        newAssemblyPricing: AssemblyPricingCatalog = assemblyPricing,
+        newOrderExtraServices: List<OrderExtraServiceItem> = orderExtraServices,
+        newFinSchemeSettings: FinSchemeSettings = finSchemeSettings,
+        newCashAccounts: List<CashAccount> = cashAccounts,
+        newCashTransactions: List<CashTransaction> = cashTransactions,
+        newCashExpenseCategories: List<CashExpenseCategory> = cashExpenseCategories
+    ): PersistedAppState = PersistedAppState(
+        profileSystems = newProfiles,
+        orders = newOrders,
+        stockRemnants = newStock,
+        stockRubber = newStockRubber,
+        uiSettings = newSettings,
+        glazingCatalog = newGlazing,
+        colorCatalog = newColors,
+        hardwareBrands = newHardwareBrands,
+        extraAccessories = newExtras,
+        workServices = newWorks,
+        assemblyPricing = newAssemblyPricing,
+        orderExtraServices = newOrderExtraServices,
+        finSchemeSettings = newFinSchemeSettings,
+        cashAccounts = newCashAccounts,
+        cashTransactions = newCashTransactions,
+        cashExpenseCategories = newCashExpenseCategories
+    )
+
+    fun flushPendingOrderSaves() {
+        debouncedOrderSaveJob?.cancel()
+        debouncedOrderSaveJob = null
+        val pendingList = synchronized(dbWriteLock) {
+            if (dirtyOrdersForSave.isEmpty()) emptyList()
+            else dirtyOrdersForSave.values.toList().also { dirtyOrdersForSave.clear() }
+        }
+        if (pendingList.isNotEmpty()) {
+            synchronized(dbWriteLock) {
+                pendingList.forEach { ord ->
+                    AppStateStorage.upsertOrderToDb(context, ord)
+                }
+            }
+        }
+    }
+
+    fun scheduleDebouncedOrderSave(order: CustomerOrder) {
+        synchronized(dbWriteLock) {
+            dirtyOrdersForSave[order.id] = order
+        }
+        debouncedOrderSaveJob?.cancel()
+        debouncedOrderSaveJob = ioScope.launch {
+            delay(450L)
+            val pendingList = synchronized(dbWriteLock) {
+                if (dirtyOrdersForSave.isEmpty()) emptyList()
+                else dirtyOrdersForSave.values.toList().also { dirtyOrdersForSave.clear() }
+            }
+            if (pendingList.isNotEmpty()) {
+                synchronized(dbWriteLock) {
+                    pendingList.forEach { ord ->
+                        AppStateStorage.upsertOrderToDb(context, ord)
+                    }
+                }
+            }
+        }
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                flushPendingOrderSaves()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            flushPendingOrderSaves()
+            ioScope.cancel()
+        }
+    }
+
+    LaunchedEffect(screenMode) {
+        if (screenMode != AppScreenMode.CAD_WORKSPACE) {
+            flushPendingOrderSaves()
+        }
+    }
+
     LaunchedEffect(uiSettings.autoBackupEnabled, uiSettings.autoBackupHour) {
         BackupManager.scheduleDailyAutoBackup(
             context = context,
@@ -181,29 +292,18 @@ fun WinStudioProMainApp(
                 val jsonText = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
                 if (!jsonText.isNullOrBlank()) {
                     val importedOrder = AppStateStorage.importOrderFromJsonString(jsonText)
+                    flushPendingOrderSaves()
                     val updatedOrders = listOf(importedOrder) + orders.filter { it.id != importedOrder.id }
                     orders = updatedOrders
-                    AppStateStorage.saveState(
-                        context = context,
-                        state = PersistedAppState(
-                            profileSystems = profileSystems,
-                            orders = updatedOrders,
-                            stockRemnants = stockRemnants,
-                            stockRubber = stockRubber,
-                            uiSettings = uiSettings,
-                            glazingCatalog = glazingCatalog,
-                            colorCatalog = colorCatalog,
-                            hardwareBrands = hardwareBrands,
-                            extraAccessories = extraAccessories,
-                            workServices = workServices,
-                            assemblyPricing = assemblyPricing,
-                            orderExtraServices = orderExtraServices,
-                            finSchemeSettings = finSchemeSettings,
-                            cashAccounts = cashAccounts,
-                            cashTransactions = cashTransactions,
-                            cashExpenseCategories = cashExpenseCategories
-                        )
-                    )
+                    ioScope.launch {
+                        synchronized(dbWriteLock) {
+                            AppStateStorage.upsertOrderToDb(
+                                context = context,
+                                order = importedOrder,
+                                insertAtTop = true
+                            )
+                        }
+                    }
                     activeOrderId = importedOrder.id
                     activeWindowIndex = 0
                     screenMode = AppScreenMode.CAD_WORKSPACE
@@ -252,10 +352,9 @@ fun WinStudioProMainApp(
         }
     }
 
-    // Автосохранение в SQLite при любых изменениях состояния и прайсов
-    fun persistAll(
+    // Автосохранение справочников, склада, кассы и настроек в SQLite на IO без перезаписи таблицы orders
+    fun persistNonOrderState(
         newProfiles: List<ProfileSystemSpec> = profileSystems,
-        newOrders: List<CustomerOrder> = orders,
         newStock: List<StockRemnantBar> = stockRemnants,
         newStockRubber: List<StockRubberItem> = stockRubber,
         newSettings: AppUiSettings = uiSettings,
@@ -272,7 +371,6 @@ fun WinStudioProMainApp(
         newCashExpenseCategories: List<CashExpenseCategory> = cashExpenseCategories
     ) {
         profileSystems = newProfiles
-        orders = newOrders
         stockRemnants = newStock
         stockRubber = newStockRubber
         uiSettings = newSettings
@@ -287,41 +385,46 @@ fun WinStudioProMainApp(
         cashAccounts = newCashAccounts
         cashTransactions = newCashTransactions
         cashExpenseCategories = newCashExpenseCategories
-        AppStateStorage.saveState(
-            context = context,
-            state = PersistedAppState(
-                profileSystems = newProfiles,
-                orders = newOrders,
-                stockRemnants = newStock,
-                stockRubber = newStockRubber,
-                uiSettings = newSettings,
-                glazingCatalog = newGlazing,
-                colorCatalog = newColors,
-                hardwareBrands = newHardwareBrands,
-                extraAccessories = newExtras,
-                workServices = newWorks,
-                assemblyPricing = newAssemblyPricing,
-                orderExtraServices = newOrderExtraServices,
-                finSchemeSettings = newFinSchemeSettings,
-                cashAccounts = newCashAccounts,
-                cashTransactions = newCashTransactions,
-                cashExpenseCategories = newCashExpenseCategories
-            )
+        val snapshot = buildPersistedSnapshot(
+            newProfiles = newProfiles,
+            newStock = newStock,
+            newStockRubber = newStockRubber,
+            newSettings = newSettings,
+            newGlazing = newGlazing,
+            newColors = newColors,
+            newHardwareBrands = newHardwareBrands,
+            newExtras = newExtras,
+            newWorks = newWorks,
+            newAssemblyPricing = newAssemblyPricing,
+            newOrderExtraServices = newOrderExtraServices,
+            newFinSchemeSettings = newFinSchemeSettings,
+            newCashAccounts = newCashAccounts,
+            newCashTransactions = newCashTransactions,
+            newCashExpenseCategories = newCashExpenseCategories
         )
+        ioScope.launch {
+            synchronized(dbWriteLock) {
+                AppStateStorage.saveNonOrderState(context = context, state = snapshot)
+            }
+        }
     }
 
     // Автоматическое списание профилей, деловых остатков и резины при переводе заказа в «Производство»
     fun handleOrdersUpdateWithStockDeduction(updatedOrders: List<CustomerOrder>) {
-        val oldById = orders.associateBy { it.id }
-        var curBars = stockRemnants
-        var curRubber = stockRubber
+        flushPendingOrderSaves()
+        val oldOrders = orders
+        val oldById = oldOrders.associateBy { it.id }
+        val stockBarsBefore = stockRemnants
+        val stockRubberBefore = stockRubber
+        var curBars = stockBarsBefore
+        var curRubber = stockRubberBefore
         var totalDeductedOrders = 0
         var totalConsumedFull = 0
         var totalConsumedRem = 0
         var totalAddedRem = 0
         var totalRubberM = 0.0
 
-        val transitionedOrders = OrderArchiveHelper.applyStatusTransitions(orders, updatedOrders)
+        val transitionedOrders = OrderArchiveHelper.applyStatusTransitions(oldOrders, updatedOrders)
         val finalOrders = transitionedOrders.map { newOrder ->
             val oldOrder = oldById[newOrder.id]
             val enteredProduction = newOrder.status == OrderStatus.PRODUCTION &&
@@ -337,6 +440,8 @@ fun WinStudioProMainApp(
                     extraAccessoriesCatalog = extraAccessories,
                     workServicesCatalog = workServices,
                     hardwareBrandsCatalog = hardwareBrands,
+                    assemblyPricingCatalog = assemblyPricing,
+                    financialSchemesCatalog = finSchemeSettings.financialSchemes,
                     currentStockBars = curBars,
                     currentStockRubber = curRubber
                 )
@@ -353,11 +458,35 @@ fun WinStudioProMainApp(
             }
         }
 
-        persistAll(
-            newOrders = finalOrders,
-            newStock = curBars,
-            newStockRubber = curRubber
-        )
+        orders = finalOrders
+        stockRemnants = curBars
+        stockRubber = curRubber
+
+        val finalIds = finalOrders.map { it.id }.toSet()
+        val deletedIds = oldById.keys - finalIds
+        val changedOrders = finalOrders.filter { oldById[it.id] != it }
+        val stockChanged = (curBars != stockBarsBefore || curRubber != stockRubberBefore)
+        val nonOrderSnapshot = if (stockChanged) {
+            buildPersistedSnapshot(newOrders = finalOrders, newStock = curBars, newStockRubber = curRubber)
+        } else null
+
+        ioScope.launch {
+            synchronized(dbWriteLock) {
+                deletedIds.forEach { delId ->
+                    AppStateStorage.deleteOrderFromDb(context, delId)
+                }
+                changedOrders.forEach { chOrder ->
+                    AppStateStorage.upsertOrderToDb(
+                        context = context,
+                        order = chOrder,
+                        insertAtTop = oldById[chOrder.id] == null
+                    )
+                }
+                if (nonOrderSnapshot != null) {
+                    AppStateStorage.saveNonOrderState(context = context, state = nonOrderSnapshot)
+                }
+            }
+        }
 
         if (totalDeductedOrders > 0) {
             val rubberMsg = String.format(Locale.US, "%.1f", totalRubberM)
@@ -373,6 +502,7 @@ fun WinStudioProMainApp(
     // Сразу открывается 2D-редактор с рамой 1500x1500 и номером "Заказ №(дата и время)".
     // По умолчанию выбирается созданная пользователем профильная система (если есть), а не тестовая.
     fun createNewOrderAndOpenEditor() {
+        flushPendingOrderSaves()
         val defaultSys = profileSystems.find { it.id == finSchemeSettings.defaultProfileSystemId }
             ?: profileSystems.lastOrNull { it.id != "al_test_system" }
             ?: profileSystems.firstOrNull()
@@ -380,7 +510,7 @@ fun WinStudioProMainApp(
         val nowStamp = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date())
         val todayStr = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date())
 
-        val firstWindow = WindowItem(
+        val rawFirstWindow = WindowItem(
             id = UUID.randomUUID().toString(),
             name = "Окно 1",
             quantity = 1,
@@ -390,6 +520,7 @@ fun WinStudioProMainApp(
             glazingId = glazingCatalog.firstOrNull { it.id != "none" }?.id ?: "sp_24",
             colorId = defaultSys.colors.firstOrNull()?.id ?: "col_anthracite"
         )
+        val firstWindow = WindowBomAndCostEngine.applyDefaultHardwareIfMissing(rawFirstWindow, hardwareBrands)
 
         val newOrder = CustomerOrder(
             id = UUID.randomUUID().toString(),
@@ -405,8 +536,16 @@ fun WinStudioProMainApp(
         )
 
         // Новые заказы всегда добавляются НАВЕРХ списка (от нового к старому)
-        val updatedOrders = listOf(newOrder) + orders
-        persistAll(newOrders = updatedOrders)
+        orders = listOf(newOrder) + orders
+        ioScope.launch {
+            synchronized(dbWriteLock) {
+                AppStateStorage.upsertOrderToDb(
+                    context = context,
+                    order = newOrder,
+                    insertAtTop = true
+                )
+            }
+        }
         activeOrderId = newOrder.id
         activeWindowIndex = 0
         screenMode = AppScreenMode.CAD_WORKSPACE
@@ -415,6 +554,9 @@ fun WinStudioProMainApp(
     // Системный жест «Назад» (свайп с края экрана на телефоне):
     // возвращает на предыдущий экран вместо сворачивания приложения!
     BackHandler(enabled = screenMode != AppScreenMode.METRO_HOME) {
+        if (screenMode == AppScreenMode.CAD_WORKSPACE) {
+            flushPendingOrderSaves()
+        }
         screenMode = when (screenMode) {
             AppScreenMode.WORKSHOP_CUTTING,
             AppScreenMode.GLAZING_ORDER_EDITOR,
@@ -486,7 +628,7 @@ fun WinStudioProMainApp(
                                     finSchemeSettings = finSchemeSettings,
                                     onDismiss = { homeQuickOpMode = null },
                                     onConfirmTransaction = { tx ->
-                                        persistAll(newCashTransactions = listOf(tx) + cashTransactions)
+                                        persistNonOrderState(newCashTransactions = listOf(tx) + cashTransactions)
                                         homeQuickOpMode = null
                                         Toast.makeText(context, "Приход проведён", Toast.LENGTH_SHORT).show()
                                     }
@@ -500,7 +642,7 @@ fun WinStudioProMainApp(
                                     orders = orders,
                                     onDismiss = { homeQuickOpMode = null },
                                     onConfirmTransaction = { tx ->
-                                        persistAll(newCashTransactions = listOf(tx) + cashTransactions)
+                                        persistNonOrderState(newCashTransactions = listOf(tx) + cashTransactions)
                                         homeQuickOpMode = null
                                         Toast.makeText(context, "Расход списан", Toast.LENGTH_SHORT).show()
                                     }
@@ -513,7 +655,7 @@ fun WinStudioProMainApp(
                                     finSchemeSettings = finSchemeSettings,
                                     onDismiss = { homeQuickOpMode = null },
                                     onConfirmTransaction = { tx ->
-                                        persistAll(newCashTransactions = listOf(tx) + cashTransactions)
+                                        persistNonOrderState(newCashTransactions = listOf(tx) + cashTransactions)
                                         homeQuickOpMode = null
                                         Toast.makeText(context, "Перевод выполнен", Toast.LENGTH_SHORT).show()
                                     }
@@ -545,13 +687,36 @@ fun WinStudioProMainApp(
                                 uiSettings = uiSettings,
                                 onSelectWindowIndex = { idx -> activeWindowIndex = idx },
                                 onUpdateOrder = { updatedOrder ->
+                                    val oldOrder = orders.find { it.id == updatedOrder.id }
+                                    val requiresImmediateTransition =
+                                        oldOrder == null ||
+                                            oldOrder.status != updatedOrder.status ||
+                                            oldOrder.isArchived != updatedOrder.isArchived ||
+                                            (updatedOrder.status == OrderStatus.PRODUCTION && !updatedOrder.stockDeductedForProduction)
                                     val newList = orders.map { if (it.id == updatedOrder.id) updatedOrder else it }
-                                    handleOrdersUpdateWithStockDeduction(newList)
+                                    if (requiresImmediateTransition) {
+                                        handleOrdersUpdateWithStockDeduction(newList)
+                                    } else {
+                                        orders = newList
+                                        scheduleDebouncedOrderSave(updatedOrder)
+                                    }
                                 },
-                                onBackToHome = { screenMode = AppScreenMode.METRO_HOME },
-                                onOpenWorkshopCutting = { screenMode = AppScreenMode.WORKSHOP_CUTTING },
-                                onOpenGlazingOrder = { screenMode = AppScreenMode.GLAZING_ORDER_EDITOR },
-                                onOpenHardwareOrder = { screenMode = AppScreenMode.HARDWARE_ORDER_EDITOR },
+                                onBackToHome = {
+                                    flushPendingOrderSaves()
+                                    screenMode = AppScreenMode.METRO_HOME
+                                },
+                                onOpenWorkshopCutting = {
+                                    flushPendingOrderSaves()
+                                    screenMode = AppScreenMode.WORKSHOP_CUTTING
+                                },
+                                onOpenGlazingOrder = {
+                                    flushPendingOrderSaves()
+                                    screenMode = AppScreenMode.GLAZING_ORDER_EDITOR
+                                },
+                                onOpenHardwareOrder = {
+                                    flushPendingOrderSaves()
+                                    screenMode = AppScreenMode.HARDWARE_ORDER_EDITOR
+                                },
                                 onOpenPdfFile = onOpenPdfFile,
                                 onSharePdfFile = onSharePdfFile
                             )
@@ -583,12 +748,12 @@ fun WinStudioProMainApp(
                             currencySymbol = normalizeCurrencyDisplay(uiSettings.currencySymbol),
                             defaultProfileSystemId = finSchemeSettings.defaultProfileSystemId,
                             onSetDefaultProfileSystem = { sysId ->
-                                persistAll(
+                                persistNonOrderState(
                                     newFinSchemeSettings = finSchemeSettings.copy(defaultProfileSystemId = sysId)
                                 )
                             },
                             onBack = { screenMode = AppScreenMode.METRO_HOME },
-                            onSaveProfiles = { updated -> persistAll(newProfiles = updated) }
+                            onSaveProfiles = { updated -> persistNonOrderState(newProfiles = updated) }
                         )
                     }
 
@@ -604,14 +769,92 @@ fun WinStudioProMainApp(
                             finSchemeSettings = finSchemeSettings,
                             currencySymbol = normalizeCurrencyDisplay(uiSettings.currencySymbol),
                             onBack = { screenMode = AppScreenMode.METRO_HOME },
-                            onSaveProfiles = { updated -> persistAll(newProfiles = updated) },
-                            onSaveGlazing = { updated -> persistAll(newGlazing = updated) },
-                            onSaveHardware = { updated -> persistAll(newHardwareBrands = updated) },
-                            onSaveExtras = { updated -> persistAll(newExtras = updated) },
-                            onSaveWorks = { updated -> persistAll(newWorks = updated) },
-                            onSaveAssemblyPricing = { updated -> persistAll(newAssemblyPricing = updated) },
-                            onSaveOrderExtraServices = { updated -> persistAll(newOrderExtraServices = updated) },
-                            onSaveFinSchemeSettings = { updated -> persistAll(newFinSchemeSettings = updated) }
+                            onSaveProfiles = { updated -> persistNonOrderState(newProfiles = updated) },
+                            onSaveGlazing = { updated -> persistNonOrderState(newGlazing = updated) },
+                            onSaveHardware = { updated -> persistNonOrderState(newHardwareBrands = updated) },
+                            onSaveExtras = { updated ->
+                                val removedIds = extraAccessories.map { it.id }.toSet() - updated.map { it.id }.toSet()
+                                if (removedIds.isNotEmpty()) {
+                                    flushPendingOrderSaves()
+                                    val changedOrders = mutableListOf<CustomerOrder>()
+                                    val cleanedOrders = orders.map { ord ->
+                                        var winChanged = false
+                                        val cleanedWindows = ord.windows.map { win ->
+                                            if (win.selectedExtraIds.any { it in removedIds }) {
+                                                winChanged = true
+                                                win.copy(selectedExtraIds = win.selectedExtraIds.filterNot { it in removedIds })
+                                            } else win
+                                        }
+                                        if (winChanged) ord.copy(windows = cleanedWindows).also { changedOrders.add(it) } else ord
+                                    }
+                                    orders = cleanedOrders
+                                    extraAccessories = updated
+                                    val snapshot = buildPersistedSnapshot(newOrders = cleanedOrders, newExtras = updated)
+                                    ioScope.launch {
+                                        synchronized(dbWriteLock) {
+                                            changedOrders.forEach { AppStateStorage.upsertOrderToDb(context, it) }
+                                            AppStateStorage.saveNonOrderState(context, snapshot)
+                                        }
+                                    }
+                                } else {
+                                    persistNonOrderState(newExtras = updated)
+                                }
+                            },
+                            onSaveWorks = { updated ->
+                                val removedIds = workServices.map { it.id }.toSet() - updated.map { it.id }.toSet()
+                                if (removedIds.isNotEmpty()) {
+                                    flushPendingOrderSaves()
+                                    val changedOrders = mutableListOf<CustomerOrder>()
+                                    val cleanedOrders = orders.map { ord ->
+                                        var winChanged = false
+                                        val cleanedWindows = ord.windows.map { win ->
+                                            if (win.selectedWorkIds.any { it in removedIds }) {
+                                                winChanged = true
+                                                win.copy(selectedWorkIds = win.selectedWorkIds.filterNot { it in removedIds })
+                                            } else win
+                                        }
+                                        if (winChanged) ord.copy(windows = cleanedWindows).also { changedOrders.add(it) } else ord
+                                    }
+                                    orders = cleanedOrders
+                                    workServices = updated
+                                    val snapshot = buildPersistedSnapshot(newOrders = cleanedOrders, newWorks = updated)
+                                    ioScope.launch {
+                                        synchronized(dbWriteLock) {
+                                            changedOrders.forEach { AppStateStorage.upsertOrderToDb(context, it) }
+                                            AppStateStorage.saveNonOrderState(context, snapshot)
+                                        }
+                                    }
+                                } else {
+                                    persistNonOrderState(newWorks = updated)
+                                }
+                            },
+                            onSaveAssemblyPricing = { updated -> persistNonOrderState(newAssemblyPricing = updated) },
+                            onSaveOrderExtraServices = { updated ->
+                                val removedIds = orderExtraServices.map { it.id }.toSet() - updated.map { it.id }.toSet()
+                                if (removedIds.isNotEmpty()) {
+                                    flushPendingOrderSaves()
+                                    val changedOrders = mutableListOf<CustomerOrder>()
+                                    val cleanedOrders = orders.map { ord ->
+                                        if (ord.selectedOrderServices.any { it.serviceId in removedIds }) {
+                                            ord.copy(
+                                                selectedOrderServices = ord.selectedOrderServices.filterNot { it.serviceId in removedIds }
+                                            ).also { changedOrders.add(it) }
+                                        } else ord
+                                    }
+                                    orders = cleanedOrders
+                                    orderExtraServices = updated
+                                    val snapshot = buildPersistedSnapshot(newOrders = cleanedOrders, newOrderExtraServices = updated)
+                                    ioScope.launch {
+                                        synchronized(dbWriteLock) {
+                                            changedOrders.forEach { AppStateStorage.upsertOrderToDb(context, it) }
+                                            AppStateStorage.saveNonOrderState(context, snapshot)
+                                        }
+                                    }
+                                } else {
+                                    persistNonOrderState(newOrderExtraServices = updated)
+                                }
+                            },
+                            onSaveFinSchemeSettings = { updated -> persistNonOrderState(newFinSchemeSettings = updated) }
                         )
                     }
 
@@ -621,8 +864,8 @@ fun WinStudioProMainApp(
                             stockBars = stockRemnants,
                             stockRubber = stockRubber,
                             onBack = { screenMode = AppScreenMode.METRO_HOME },
-                            onSaveStock = { updated -> persistAll(newStock = updated) },
-                            onSaveRubberStock = { updatedRubber -> persistAll(newStockRubber = updatedRubber) }
+                            onSaveStock = { updated -> persistNonOrderState(newStock = updated) },
+                            onSaveRubberStock = { updatedRubber -> persistNonOrderState(newStockRubber = updatedRubber) }
                         )
                     }
 
@@ -642,10 +885,10 @@ fun WinStudioProMainApp(
                             cashAccounts = cashAccounts,
                             cashTransactions = cashTransactions,
                             cashExpenseCategories = cashExpenseCategories,
-                            onSaveFinSchemeSettings = { updated -> persistAll(newFinSchemeSettings = updated) },
-                            onSaveCashAccounts = { updated -> persistAll(newCashAccounts = updated) },
-                            onSaveCashTransactions = { updated -> persistAll(newCashTransactions = updated) },
-                            onSaveCashExpenseCategories = { updated -> persistAll(newCashExpenseCategories = updated) },
+                            onSaveFinSchemeSettings = { updated -> persistNonOrderState(newFinSchemeSettings = updated) },
+                            onSaveCashAccounts = { updated -> persistNonOrderState(newCashAccounts = updated) },
+                            onSaveCashTransactions = { updated -> persistNonOrderState(newCashTransactions = updated) },
+                            onSaveCashExpenseCategories = { updated -> persistNonOrderState(newCashExpenseCategories = updated) },
                             onBack = { screenMode = AppScreenMode.METRO_HOME }
                         )
                     }
@@ -676,13 +919,21 @@ fun WinStudioProMainApp(
                             settings = uiSettings,
                             onBack = { screenMode = AppScreenMode.METRO_HOME },
                             onUpdateSettingsLive = { newSettings ->
-                                persistAll(newSettings = newSettings)
+                                persistNonOrderState(newSettings = newSettings)
                             },
                             onApplyCurrencyToAllOrders = { cur ->
+                                flushPendingOrderSaves()
                                 val updatedOrders = orders.map { it.copy(currencySymbol = cur) }
-                                persistAll(newOrders = updatedOrders)
+                                orders = updatedOrders
+                                val snapshot = buildPersistedSnapshot(newOrders = updatedOrders)
+                                ioScope.launch {
+                                    synchronized(dbWriteLock) {
+                                        AppStateStorage.saveState(context = context, state = snapshot)
+                                    }
+                                }
                             },
                             onExportBackup = {
+                                flushPendingOrderSaves()
                                 val file = AppStateStorage.createFullBackupFile(context)
                                 onShareExportFile(file, "Полный бэкап WinStudio Pro")
                             },
@@ -715,7 +966,7 @@ fun WinStudioProMainApp(
                                     handleOrdersUpdateWithStockDeduction(newList)
                                 },
                                 onBackToCad = { screenMode = AppScreenMode.CAD_WORKSPACE },
-                                onSaveStockRemnants = { updatedStock -> persistAll(newStock = updatedStock) },
+                                onSaveStockRemnants = { updatedStock -> persistNonOrderState(newStock = updatedStock) },
                                 onOpenPdfFile = onOpenPdfFile
                             )
                         } else {

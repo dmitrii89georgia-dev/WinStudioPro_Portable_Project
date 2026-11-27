@@ -352,4 +352,62 @@ class OrderStatusAndStorageRobolectricTest {
         assertEquals(45.0, restored.orders.first().extraAssemblyOpsCost, 0.001)
         assertEquals("Нестандартные углы", restored.orders.first().extraAssemblyOpsNote)
     }
+
+    @Test
+    fun `incremental upsertOrderToDb deleteOrderFromDb and emptied seeded catalogs persist reliably`() {
+        val state = AppStateStorage.loadState(context)
+        val initialCount = state.orders.size
+
+        val newOrder = CustomerOrder(
+            id = "inc_order_1",
+            orderNumber = "INC-001",
+            customerName = "Иван",
+            customerPhone = "+7900",
+            address = "Москва",
+            createdDate = "27.11.2026",
+            windows = listOf(
+                state.orders.first().windows.first().copy(
+                    id = "inc_win_1",
+                    doorHardwareId = "hw_door_base",
+                    sashHardwareId = "hw_maco",
+                    transomHardwareId = "hw_transom_base"
+                )
+            )
+        )
+        AppStateStorage.upsertOrderToDb(context, newOrder, insertAtTop = true)
+
+        var reloaded = AppStateStorage.loadState(context)
+        assertEquals(initialCount + 1, reloaded.orders.size)
+        assertEquals("inc_order_1", reloaded.orders.first().id)
+        assertEquals("hw_door_base", reloaded.orders.first().windows.first().doorHardwareId)
+        assertEquals("hw_maco", reloaded.orders.first().windows.first().sashHardwareId)
+        assertEquals("hw_transom_base", reloaded.orders.first().windows.first().transomHardwareId)
+
+        // Обновление существующего заказа сохраняет его позицию и не дублирует запись
+        AppStateStorage.upsertOrderToDb(context, newOrder.copy(customerName = "Пётр"), insertAtTop = false)
+        reloaded = AppStateStorage.loadState(context)
+        assertEquals(initialCount + 1, reloaded.orders.size)
+        assertEquals("inc_order_1", reloaded.orders.first().id)
+        assertEquals("Пётр", reloaded.orders.first().customerName)
+
+        // Удаление одного заказа оставляет остальные на месте
+        AppStateStorage.deleteOrderFromDb(context, "inc_order_1")
+        reloaded = AppStateStorage.loadState(context)
+        assertEquals(initialCount, reloaded.orders.size)
+        assertFalse(reloaded.orders.any { it.id == "inc_order_1" })
+
+        // Полная очистка каталогов extraAccessories / workServices / orderExtraServices не должна возвращать дефолты
+        AppStateStorage.saveNonOrderState(
+            context,
+            reloaded.copy(
+                extraAccessories = emptyList(),
+                workServices = emptyList(),
+                orderExtraServices = emptyList()
+            )
+        )
+        val afterClear = AppStateStorage.loadState(context)
+        assertTrue(afterClear.extraAccessories.isEmpty())
+        assertTrue(afterClear.workServices.isEmpty())
+        assertTrue(afterClear.orderExtraServices.isEmpty())
+    }
 }

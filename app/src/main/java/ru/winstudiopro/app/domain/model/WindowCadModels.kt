@@ -117,6 +117,7 @@ data class OpeningProperties(
     val isReverseDoorSash: Boolean = false,
     val isSandwichFilling: Boolean = false,
     val hasMosquitoNet: Boolean = false,
+    val mosquitoNetType: MosquitoNetType? = null,
     val hasHorizontalSashImpost: Boolean = false,
     val sashImpostHeightFromBottomMm: Float = 800f,
     val bottomPartIsSandwich: Boolean = false,
@@ -125,6 +126,9 @@ data class OpeningProperties(
     val paneSandwichFlags: List<Boolean> = emptyList(),
     val shtulpSplitRatio: Float = 0.5f
 ) {
+    fun effectiveMosquitoNetType(): MosquitoNetType? =
+        mosquitoNetType ?: if (hasMosquitoNet) MosquitoNetType.WINDOW else null
+
     fun effectiveSashImpostMode(): SashImpostMode = when {
         sashImpostMode != SashImpostMode.NONE -> sashImpostMode
         hasHorizontalSashImpost -> SashImpostMode.H1

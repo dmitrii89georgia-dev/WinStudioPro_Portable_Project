@@ -223,13 +223,151 @@ class WindowBomAndCostEngineTest {
 
         val brand = hwBrands.first { it.id != "hw_none" }
         val resIncluded = WindowBomAndCostEngine.calculateWindow(
-            window = baseWin.copy(hardwareBrandId = brand.id),
+            window = baseWin.copy(hardwareBrandId = brand.id, sashHardwareId = brand.id),
             profileSystems = profiles,
             glazingCatalog = glazing,
             colorCatalog = colors,
             sillsCatalog = sills,
             hardwareBrandsCatalog = hwBrands
         )
-        assertEquals(profile.priceMechanicTiltTurn + brand.priceMultiplierOrAddon, resIncluded.costHardware, 0.001)
+        assertEquals(brand.priceMultiplierOrAddon, resIncluded.costHardware, 0.001)
+    }
+
+    @Test
+    fun `3-group hardware resolves DOOR SASH TRANSOM separately keeps assembly labor on hw_none and routes tilt-turn to SASH`() {
+        val profiles = DefaultCatalogs.defaultProfileSystems()
+        val profile = profiles.first()
+        val glazing = DefaultCatalogs.defaultGlazingItems()
+        val colors = DefaultCatalogs.defaultColors()
+        val sills = DefaultCatalogs.defaultSills()
+        val hwBrands = DefaultCatalogs.defaultHardwareBrands()
+        val asmCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog()
+
+        // 3 проёма: 1) Поворотная с маркером двери (DOOR), 2) Поворотно-откидная с маркером двери (SASH!), 3) Фрамуга (TRANSOM)
+        var topo = WindowCadOperations.splitOpening(
+            WindowCadOperations.single1500Topology(),
+            "op1",
+            ImpostDirection.VERTICAL,
+            3
+        )
+        val ops = topo.allOpenings.sortedBy { it.leftMm }
+        topo = WindowCadOperations.updateOpeningProperties(
+            topo,
+            ops[0].id,
+            OpeningProperties(openingType = SashOpeningType.TURN_RIGHT, isDoorSash = true)
+        )
+        topo = WindowCadOperations.updateOpeningProperties(
+            topo,
+            ops[1].id,
+            OpeningProperties(openingType = SashOpeningType.TILT_TURN_LEFT, isDoorSash = true)
+        )
+        topo = WindowCadOperations.updateOpeningProperties(
+            topo,
+            ops[2].id,
+            OpeningProperties(openingType = SashOpeningType.TRANSOM_BOTTOM)
+        )
+
+        val doorBrand = hwBrands.first { it.group == ru.winstudiopro.app.domain.model.HardwareGroup.DOOR && it.id != "hw_none" }
+        val sashBrand = hwBrands.first { it.group == ru.winstudiopro.app.domain.model.HardwareGroup.SASH && it.id != "hw_none" }
+        val transomBrand = hwBrands.first { it.group == ru.winstudiopro.app.domain.model.HardwareGroup.TRANSOM && it.id != "hw_none" }
+
+        val winAllSelected = WindowItem(
+            id = "w_3grp",
+            name = "Смешанная конструкция",
+            quantity = 1,
+            topology = topo,
+            profileSystemId = profile.id,
+            glazingId = "sp_24",
+            colorId = profile.colors.first().id,
+            doorHardwareId = doorBrand.id,
+            sashHardwareId = sashBrand.id,
+            transomHardwareId = transomBrand.id
+        )
+
+        val resAll = WindowBomAndCostEngine.calculateWindow(
+            window = winAllSelected,
+            profileSystems = profiles,
+            glazingCatalog = glazing,
+            colorCatalog = colors,
+            sillsCatalog = sills,
+            hardwareBrandsCatalog = hwBrands,
+            assemblyPricingCatalog = asmCatalog
+        )
+        val expectedSum = doorBrand.priceMultiplierOrAddon + sashBrand.priceMultiplierOrAddon + transomBrand.priceMultiplierOrAddon
+        assertEquals(expectedSum, resAll.costHardware, 0.001)
+        assertEquals(3, resAll.hardwareSpecs.size)
+
+        // Убираем только дверную фурнитуру (hw_none): стоимость материала двери = 0, но ЗП сборщика остаётся прежней!
+        val resDoorClient = WindowBomAndCostEngine.calculateWindow(
+            window = winAllSelected.copy(doorHardwareId = "hw_none"),
+            profileSystems = profiles,
+            glazingCatalog = glazing,
+            colorCatalog = colors,
+            sillsCatalog = sills,
+            hardwareBrandsCatalog = hwBrands,
+            assemblyPricingCatalog = asmCatalog
+        )
+        assertEquals(
+            sashBrand.priceMultiplierOrAddon + transomBrand.priceMultiplierOrAddon,
+            resDoorClient.costHardware,
+            0.001
+        )
+        assertEquals(resAll.costAssembly, resDoorClient.costAssembly, 0.001)
+        assertEquals(3, resDoorClient.hardwareSpecs.size)
+    }
+
+    @Test
+    fun `BLIND_SASH does not add rebate rubber perimeter`() {
+        val profiles = DefaultCatalogs.defaultProfileSystems()
+        val profile = profiles.first()
+        val glazing = DefaultCatalogs.defaultGlazingItems()
+        val colors = DefaultCatalogs.defaultColors()
+        val sills = DefaultCatalogs.defaultSills()
+
+        val fixedTopo = WindowCadOperations.single1500Topology()
+        val blindSashTopo = WindowCadOperations.updateOpeningProperties(
+            fixedTopo,
+            "op1",
+            OpeningProperties(openingType = SashOpeningType.BLIND_SASH)
+        )
+        val turnSashTopo = WindowCadOperations.updateOpeningProperties(
+            fixedTopo,
+            "op1",
+            OpeningProperties(openingType = SashOpeningType.TURN_RIGHT)
+        )
+
+        val resFixed = WindowBomAndCostEngine.calculateWindow(
+            window = WindowItem("wf", "Глухарь", 1, fixedTopo, profile.id, "sp_24", profile.colors.first().id),
+            profileSystems = profiles, glazingCatalog = glazing, colorCatalog = colors, sillsCatalog = sills
+        )
+        val resBlind = WindowBomAndCostEngine.calculateWindow(
+            window = WindowItem("wb", "Глух.ств", 1, blindSashTopo, profile.id, "sp_24", profile.colors.first().id),
+            profileSystems = profiles, glazingCatalog = glazing, colorCatalog = colors, sillsCatalog = sills
+        )
+        val resTurn = WindowBomAndCostEngine.calculateWindow(
+            window = WindowItem("wt", "Повор", 1, turnSashTopo, profile.id, "sp_24", profile.colors.first().id),
+            profileSystems = profiles, glazingCatalog = glazing, colorCatalog = colors, sillsCatalog = sills
+        )
+
+        assertTrue(resBlind.rubberPerimeterM < resTurn.rubberPerimeterM)
+        assertTrue(resTurn.rubberPerimeterM > resFixed.rubberPerimeterM + 4.0)
+    }
+
+    @Test
+    fun `resolveOrderServicePrice returns 0 for deleted service even with customPriceOverride and reconciles manual overrides`() {
+        val catalog = listOf(
+            ru.winstudiopro.app.domain.model.OrderExtraServiceItem("srv_1", "Доставка", 50.0)
+        )
+        val deletedSelection = ru.winstudiopro.app.domain.model.SelectedOrderService(
+            serviceId = "srv_deleted",
+            customPriceOverride = 120.0
+        )
+        assertEquals(0.0, WindowBomAndCostEngine.resolveOrderServicePrice(deletedSelection, catalog), 0.001)
+
+        val activeSelection = ru.winstudiopro.app.domain.model.SelectedOrderService(
+            serviceId = "srv_1",
+            customPriceOverride = 80.0
+        )
+        assertEquals(80.0, WindowBomAndCostEngine.resolveOrderServicePrice(activeSelection, catalog), 0.001)
     }
 }

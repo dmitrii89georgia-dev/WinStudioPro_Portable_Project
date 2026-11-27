@@ -229,6 +229,133 @@ object WindowBomAndCostEngine {
         return "Белый" to 0xFFFFFFFFL
     }
 
+    /**
+     * Определяет группу фурнитуры (Дверная / Створка / Форточка) для конкретного проёма по типу открывания и маркеру двери.
+     * Поворотно-откидные створки всегда относятся к группе «Створка», даже при маркере двери и в любом профиле.
+     * Дверная группа применяется для поворотных и штульповых створок при наличии маркера двери.
+     * Форточка применяется для откидных фрамуг (вверх/вниз).
+     */
+    fun resolveOpeningHardwareGroup(props: OpeningProperties): HardwareGroup? {
+        if (!props.openingType.hasSashProfile || props.openingType == SashOpeningType.BLIND_SASH) {
+            return null
+        }
+        return when (props.openingType) {
+            SashOpeningType.TRANSOM_TOP,
+            SashOpeningType.TRANSOM_BOTTOM -> HardwareGroup.TRANSOM
+
+            SashOpeningType.TILT_TURN_LEFT,
+            SashOpeningType.TILT_TURN_RIGHT,
+            SashOpeningType.SHTULP_TILTTURN_L_PASSIVE_R,
+            SashOpeningType.SHTULP_PASSIVE_L_TILTTURN_R,
+            SashOpeningType.SHTULP_TILTTURN_L_TURN_R,
+            SashOpeningType.SHTULP_TURN_L_TILTTURN_R -> HardwareGroup.SASH
+
+            SashOpeningType.TURN_LEFT,
+            SashOpeningType.TURN_RIGHT,
+            SashOpeningType.SHTULP_TURN_L_PASSIVE_R,
+            SashOpeningType.SHTULP_PASSIVE_L_TURN_R,
+            SashOpeningType.SHTULP_TURN_TURN -> {
+                if (props.isDoorSash || props.isReverseDoorSash) HardwareGroup.DOOR else HardwareGroup.SASH
+            }
+
+            else -> HardwareGroup.SASH
+        }
+    }
+
+    fun resolveWindowHardwareGroupId(window: WindowItem, group: HardwareGroup): String? = when (group) {
+        HardwareGroup.DOOR -> window.doorHardwareId
+        HardwareGroup.SASH -> window.sashHardwareId
+        HardwareGroup.TRANSOM -> window.transomHardwareId
+    }
+
+    /**
+     * Возвращает выбранную фурнитуру для указанной группы либо null, если выбрано «Не учитывать».
+     */
+    fun resolveGroupHardwareBrand(
+        window: WindowItem,
+        group: HardwareGroup,
+        hardwareBrandsCatalog: List<HardwareBrandItem>
+    ): HardwareBrandItem? {
+        val explicitId = resolveWindowHardwareGroupId(window, group)
+        if (explicitId != null) {
+            if (explicitId == "hw_none") return null
+            return hardwareBrandsCatalog.find { it.id == explicitId }
+        }
+        if (window.hardwareBrandId == "hw_none") return null
+        val legacyBrand = hardwareBrandsCatalog.find { it.id == window.hardwareBrandId }
+        if (legacyBrand != null) return legacyBrand
+        return hardwareBrandsCatalog.firstOrNull { it.group == group && it.isDefault && it.id != "hw_none" }
+            ?: hardwareBrandsCatalog.firstOrNull { it.group == group && it.id != "hw_none" }
+    }
+
+    /**
+     * Заполняет незаданные группы фурнитуры значениями по умолчанию для новой или обновлённой конструкции.
+     */
+    fun applyDefaultHardwareIfMissing(
+        window: WindowItem,
+        hardwareBrandsCatalog: List<HardwareBrandItem>
+    ): WindowItem {
+        val defDoor = hardwareBrandsCatalog.firstOrNull { it.group == HardwareGroup.DOOR && it.isDefault && it.id != "hw_none" }?.id
+            ?: hardwareBrandsCatalog.firstOrNull { it.group == HardwareGroup.DOOR && it.id != "hw_none" }?.id
+        val defSash = hardwareBrandsCatalog.firstOrNull { it.group == HardwareGroup.SASH && it.isDefault && it.id != "hw_none" }?.id
+            ?: hardwareBrandsCatalog.firstOrNull { it.group == HardwareGroup.SASH && it.id != "hw_none" }?.id
+        val defTransom = hardwareBrandsCatalog.firstOrNull { it.group == HardwareGroup.TRANSOM && it.isDefault && it.id != "hw_none" }?.id
+            ?: hardwareBrandsCatalog.firstOrNull { it.group == HardwareGroup.TRANSOM && it.id != "hw_none" }?.id
+        return window.copy(
+            doorHardwareId = window.doorHardwareId ?: defDoor ?: "hw_none",
+            sashHardwareId = window.sashHardwareId ?: defSash ?: "hw_none",
+            transomHardwareId = window.transomHardwareId ?: defTransom ?: "hw_none"
+        )
+    }
+
+    /**
+     * Расчёт размера москитной сетки по проёму с учётом ПОЛНОЙ ширины профиля рамы (A3) и импоста (B3/2).
+     */
+    fun calculateMosquitoNetSizeMm(
+        frame: FrameBlockNode,
+        op: OpeningCellNode,
+        profile: ProfileSystemSpec
+    ): Pair<Int, Int> {
+        val frameFullA3 = profile.frameFullWidthA3Mm.takeIf { it > 0f }
+            ?: (profile.frameWidthMm + profile.frameRebateHeightA2Mm)
+        val halfImpFullB3 = (profile.impostFullWidthB3Mm.takeIf { it > 0f }
+            ?: (profile.impostWidthMm + 2f * profile.impostRebateHeightB2Mm)) / 2f
+        val leftDed = if (abs(op.leftMm - frame.leftMm) < 2f) frameFullA3 else halfImpFullB3
+        val rightDed = if (abs(op.rightMm - frame.rightMm) < 2f) frameFullA3 else halfImpFullB3
+        val topDed = if (abs(op.topMm - frame.topMm) < 2f) frameFullA3 else halfImpFullB3
+        val botDed = if (abs(op.bottomMm - frame.bottomMm) < 2f) frameFullA3 else halfImpFullB3
+        val clearW = max(100f, op.widthMm - leftDed - rightDed).roundToInt()
+        val clearH = max(100f, op.heightMm - topDed - botDed).roundToInt()
+        return clearW to clearH
+    }
+
+    /**
+     * Подбирает модель москитной сетки для конкретного типа (О / Д / П) или null, если выбрано «не учитывать».
+     */
+    fun resolveMosquitoSystemForType(
+        window: WindowItem,
+        netType: MosquitoNetType,
+        mosquitoSystemsCatalog: List<MosquitoSystemItem>
+    ): MosquitoSystemItem? {
+        val explicitId = when (netType) {
+            MosquitoNetType.WINDOW -> window.mosquitoWindowId
+            MosquitoNetType.DOOR -> window.mosquitoDoorId
+            MosquitoNetType.PLISSE -> window.mosquitoPlisseId
+        }
+        if (explicitId != null) {
+            if (explicitId == "msq_none") return null
+            return mosquitoSystemsCatalog.find { it.id == explicitId }
+                ?: mosquitoSystemsCatalog.firstOrNull { it.netType == netType && it.isDefault && it.id != "msq_none" }
+                ?: mosquitoSystemsCatalog.firstOrNull { it.netType == netType && it.id != "msq_none" }
+        }
+        if (window.mosquitoSystemId != "msq_none" && window.mosquitoSystemId.isNotBlank()) {
+            val legacy = mosquitoSystemsCatalog.find { it.id == window.mosquitoSystemId }
+            if (legacy != null && legacy.netType == netType) return legacy
+        }
+        return mosquitoSystemsCatalog.firstOrNull { it.netType == netType && it.isDefault && it.id != "msq_none" }
+            ?: mosquitoSystemsCatalog.firstOrNull { it.netType == netType && it.id != "msq_none" }
+    }
+
     fun calculateWindow(
         window: WindowItem,
         profileSystems: List<ProfileSystemSpec>,
@@ -243,7 +370,9 @@ object WindowBomAndCostEngine {
         assemblyPricingCatalog: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog(),
         orderLegacySystemName: String? = null,
         orderLegacyGlazingName: String? = null,
-        orderLegacyColorName: String? = null
+        orderLegacyColorName: String? = null,
+        mosquitoSystemsCatalog: List<MosquitoSystemItem> = DefaultCatalogs.defaultMosquitoSystems(),
+        mosquitoPricingMode: MosquitoPricingMode = MosquitoPricingMode.CLIENT
     ): WindowCalculationResult {
         val winNum = if (windowIndexInOrder > 0) {
             windowIndexInOrder
@@ -281,8 +410,6 @@ object WindowBomAndCostEngine {
         val innerSill = sillsCatalog.find { it.id == window.innerSillId }
         val outerSill = sillsCatalog.find { it.id == window.outerSillId }
         val finScheme = financialSchemesCatalog.find { it.id == window.financialSchemeId }
-        val hwBrand = hardwareBrandsCatalog.find { it.id == window.hardwareBrandId }
-        val mosqSys = DefaultCatalogs.defaultMosquitoSystems().find { it.id == window.mosquitoSystemId }
 
         val qty = window.quantity.coerceAtLeast(1)
         val weld2Sides = (2f * profile.effectiveWeldAllowancePerCornerMm).roundToInt()
@@ -309,7 +436,10 @@ object WindowBomAndCostEngine {
         var glazingAreaM2 = 0.0
         var sandwichAreaM2 = 0.0
         var hardwareCostTotal = 0.0
-        var mosquitoCostTotal = 0.0
+        var mosquitoDealerCostTotal = 0.0
+        var mosquitoClientCostTotal = 0.0
+        var mosquitoAreaTotal = 0.0
+        var mosquitoCountTotal = 0
         var glazingBarsLengthM = 0.0
 
         val frames = window.topology.frames
@@ -630,8 +760,8 @@ object WindowBomAndCostEngine {
                             sashPerimeterM += leafPerimM
                             windowSashLeavesTotalCount += mult
                         }
-                        rubberPerimeterM += leafPerimM * 2.0
                         if (props.openingType != SashOpeningType.BLIND_SASH) {
+                            rubberPerimeterM += leafPerimM * 2.0
                             rebateRubberPerUnitM += leafPerimM
                         }
 
@@ -837,46 +967,52 @@ object WindowBomAndCostEngine {
                     val repLeafH = leafSpecs.first().outerHMm.roundToInt()
                     val falzW = (repLeafW - 16).coerceAtLeast(250)
                     val falzH = (repLeafH - 16).coerceAtLeast(250)
-                    val isHardwareExcluded = window.hardwareBrandId == "hw_none" || hwBrand?.id == "hw_none"
-                    val baseSetPrice = if (isHardwareExcluded) {
-                        0.0
+                    // Фурнитура берётся исключительно из справочника «Фурнитура» по группе (Дверная / Створка / Форточка);
+                    // при выборе «не учитывать» цена материала = 0, но запись в hardwareSpecs сохраняется для учёта сборки.
+                    val hwGroup = resolveOpeningHardwareGroup(props)
+                    val resolvedGroupBrand = if (hwGroup != null) {
+                        resolveGroupHardwareBrand(window, hwGroup, hardwareBrandsCatalog)
                     } else {
-                        when {
-                            props.isDoorSash -> profile.priceDoorHardware
-                            props.openingType == SashOpeningType.BLIND_SASH -> 0.0
-                            props.openingType == SashOpeningType.TURN_LEFT || props.openingType == SashOpeningType.TURN_RIGHT -> profile.priceMechanicTurn
-                            props.openingType == SashOpeningType.TILT_TURN_LEFT || props.openingType == SashOpeningType.TILT_TURN_RIGHT -> profile.priceMechanicTiltTurn
-                            props.openingType == SashOpeningType.TRANSOM_BOTTOM || props.openingType == SashOpeningType.TRANSOM_TOP -> profile.priceMechanicTransom
-                            isDoubleShtulp -> profile.priceMechanicShtulp
-                            props.openingType == SashOpeningType.SLIDING_LEFT || props.openingType == SashOpeningType.SLIDING_RIGHT || isVertDouble -> profile.priceMechanicSliding
-                            else -> 0.0
-                        }
+                        null
                     }
-                    val brandAddon = if (!isHardwareExcluded && hwBrand != null) hwBrand.priceMultiplierOrAddon else 0.0
-                    val setPrice = baseSetPrice + brandAddon
+                    val setPrice = resolvedGroupBrand?.priceMultiplierOrAddon ?: 0.0
                     val rangeGroup = "FFB ${((falzW / 200) * 200)}..${((falzW / 200) + 1) * 200} / FFH ${((falzH / 200) * 200)}..${((falzH / 200) + 1) * 200}"
+                    val isDoorAny = props.isDoorSash || props.isReverseDoorSash
                     hardwareSpecs.add(
                         SashHardwareSpecItem(
                             windowName = window.name,
                             cellLabel = cellCode,
                             openingType = props.openingType,
-                            isDoor = props.isDoorSash,
+                            isDoor = isDoorAny,
                             falzWidthMm = falzW,
                             falzHeightMm = falzH,
                             quantity = qty,
-                            hasMosquitoNet = props.hasMosquitoNet,
+                            hasMosquitoNet = props.effectiveMosquitoNetType() != null,
                             sizeRangeGroup = rangeGroup,
                             costPerSet = setPrice
                         )
                     )
                     hardwareCostTotal += setPrice
+                }
 
-                    if (props.hasMosquitoNet) {
-                        val repW = leafSpecs.first().outerWMm.roundToInt()
-                        val repH = leafSpecs.first().outerHMm.roundToInt()
-                        val mosqArea = (repW.toDouble() * repH.toDouble()) / 1_000_000.0
-                        val rate = if (mosqSys != null && mosqSys.id != "msq_none") mosqSys.pricePerM2 else 15.0
-                        mosquitoCostTotal += max(10.0, mosqArea * rate)
+                // Расчёт москитной сетки (для любого проёма с отмеченным типом О / Д / П)
+                val netType = props.effectiveMosquitoNetType()
+                if (netType != null) {
+                    val (mosqW, mosqH) = calculateMosquitoNetSizeMm(frame, op, profile)
+                    val rawArea = (mosqW.toDouble() * mosqH.toDouble()) / 1_000_000.0
+                    val billableArea = max(1.0, rawArea)
+                    val mosqItem = resolveMosquitoSystemForType(window, netType, mosquitoSystemsCatalog)
+                    mosquitoCountTotal += 1
+                    mosquitoAreaTotal += billableArea
+                    if (mosqItem != null) {
+                        val dCost = billableArea * mosqItem.dealerPricePerM2
+                        val cCost = when (mosquitoPricingMode) {
+                            MosquitoPricingMode.CLIENT -> billableArea * mosqItem.clientPricePerM2
+                            MosquitoPricingMode.DEALER -> dCost
+                            MosquitoPricingMode.GIFT -> 0.0
+                        }
+                        mosquitoDealerCostTotal += dCost
+                        mosquitoClientCostTotal += cCost
                     }
                 }
 
@@ -1028,7 +1164,7 @@ object WindowBomAndCostEngine {
         val materialsAndWorksCost = costFrame + costImposts + costSashesOnly + costDoorSashesOnly +
             costShtulp + costCornerProfile + costExtenderProfile +
             costCornerConnectors + costShtapikAndRubber + costGlazingAndSandwich + hardwareCostTotal +
-            mosquitoCostTotal + addonsCost + extrasAndWorksCost + costColorMarkup
+            mosquitoDealerCostTotal + addonsCost + extrasAndWorksCost + costColorMarkup
 
         val costAssembly = if (isNoSystemSelected) {
             0.0
@@ -1052,13 +1188,14 @@ object WindowBomAndCostEngine {
         }
 
         val unitPrimeCost = materialsAndWorksCost + costAssembly
-        val rawUnitCost = unitPrimeCost
+        val primeWithoutMosq = (unitPrimeCost - mosquitoDealerCostTotal).coerceAtLeast(0.0)
 
         val discPct = finScheme?.discountPercent ?: 0.0
         val markupPct = finScheme?.markupPercent ?: 0.0
-        val afterMarkupCost = if (markupPct > 0.0) rawUnitCost * (1.0 + markupPct / 100.0) else rawUnitCost
+        val afterMarkupWithoutMosq = if (markupPct > 0.0) primeWithoutMosq * (1.0 + markupPct / 100.0) else primeWithoutMosq
+        val afterMarkupCost = afterMarkupWithoutMosq + mosquitoClientCostTotal
         val discountedUnitCost = if (discPct > 0.0) {
-            afterMarkupCost * (1.0 - discPct / 100.0)
+            afterMarkupWithoutMosq * (1.0 - discPct / 100.0) + mosquitoClientCostTotal
         } else {
             afterMarkupCost
         }
@@ -1103,9 +1240,13 @@ object WindowBomAndCostEngine {
             costSandwichOnly = costSandwichOnly,
             costGlazingAndSandwich = costGlazingAndSandwich,
             costHardware = hardwareCostTotal,
-            costMosquitoNets = mosquitoCostTotal,
+            costMosquitoNets = mosquitoClientCostTotal,
+            costMosquitoDealer = mosquitoDealerCostTotal,
+            costMosquitoClient = mosquitoClientCostTotal,
+            mosquitoAreaM2 = mosquitoAreaTotal,
+            mosquitoCount = mosquitoCountTotal,
             costSillsAndAddons = addonsCost,
-            costExtrasOnly = costExtrasOnly + addonsCost + mosquitoCostTotal,
+            costExtrasOnly = costExtrasOnly + addonsCost,
             costWorksOnly = costWorksOnly,
             costExtrasAndWorks = extrasAndWorksCost,
             costColorMarkup = costColorMarkup,
@@ -1197,9 +1338,8 @@ object WindowBomAndCostEngine {
         selected: SelectedOrderService,
         catalog: List<OrderExtraServiceItem>
     ): Double {
-        return selected.customPriceOverride
-            ?: catalog.find { it.id == selected.serviceId }?.defaultPrice
-            ?: 0.0
+        val catalogItem = catalog.find { it.id == selected.serviceId } ?: return 0.0
+        return selected.customPriceOverride ?: catalogItem.defaultPrice
     }
 
     fun calculateOrderFinancialSummary(
@@ -1251,18 +1391,33 @@ object WindowBomAndCostEngine {
                 1.0 / winCountSafe
             }
             val winFullPrimeLine = winDirectPrimeLine + orderExtrasLevelCost * share
+            val mosqDealerLine = res.costMosquitoDealer * qty
+            val mosqClientLine = res.costMosquitoClient * qty
+            val windowFinBaseWithoutMosq = (res.unitPrimeCost - res.costMosquitoDealer).coerceAtLeast(0.0)
+            val rawUnitWithoutMosq = (res.rawUnitCostBeforeDiscount - res.costMosquitoClient).coerceAtLeast(0.0)
+            val schemeMarkupMultiplier = if (windowFinBaseWithoutMosq > 0.0) {
+                (rawUnitWithoutMosq / windowFinBaseWithoutMosq).coerceAtLeast(0.0)
+            } else {
+                1.0
+            }
             val itemDiscPct = if (res.discountPercentApplied > 0.0) {
                 res.discountPercentApplied
             } else {
                 order.discountPercent
             }.coerceIn(0.0, 99.0)
 
-            val lineBaseSale = if (w.manualUnitPriceOverride != null) {
-                w.manualUnitPriceOverride * qty + res.costCustomPainting
+            val isManualUnit = w.manualUnitPriceOverride != null
+            val winBasePrimeForMarkup = (winFullPrimeLine - mosqDealerLine).coerceAtLeast(0.0)
+            val lineBaseSale = if (isManualUnit) {
+                w.manualUnitPriceOverride!! * qty + res.costCustomPainting
             } else {
-                winFullPrimeLine * effectiveMarkupMultiplier
+                winBasePrimeForMarkup * effectiveMarkupMultiplier * schemeMarkupMultiplier + mosqClientLine
             }
-            val lineDiscountedSale = lineBaseSale * (1.0 - itemDiscPct / 100.0)
+            val lineDiscountedSale = if (isManualUnit) {
+                lineBaseSale
+            } else {
+                (winBasePrimeForMarkup * effectiveMarkupMultiplier * schemeMarkupMultiplier) * (1.0 - itemDiscPct / 100.0) + mosqClientLine
+            }
 
             totalWindowsBaseCost += lineBaseSale
             totalWindowsDiscountedCost += lineDiscountedSale
@@ -1273,7 +1428,7 @@ object WindowBomAndCostEngine {
                     primeCostLine = winFullPrimeLine,
                     unitBaseSale = lineBaseSale / qty,
                     lineBaseSale = lineBaseSale,
-                    discountPercent = itemDiscPct,
+                    discountPercent = if (isManualUnit) 0.0 else itemDiscPct,
                     unitDiscountedSale = lineDiscountedSale / qty,
                     lineDiscountedSale = lineDiscountedSale
                 )
@@ -1285,21 +1440,25 @@ object WindowBomAndCostEngine {
         } else {
             totalWindowsBaseCost
         }
-        val orderSaleAfterDiscountBeforeVat = if (windowResults.isEmpty()) {
+        val computedNetAfterDiscount = if (windowResults.isEmpty()) {
             orderSaleBeforeDiscountAndVat * (1.0 - order.discountPercent.coerceIn(0.0, 99.0) / 100.0)
         } else {
             totalWindowsDiscountedCost
         }
-        val discountAmount = (orderSaleBeforeDiscountAndVat - orderSaleAfterDiscountBeforeVat).coerceAtLeast(0.0)
-        val vatAmount = orderSaleAfterDiscountBeforeVat * (order.taxVatPercent / 100.0)
-        val totalWithVat = order.manualOrderTotalOverride ?: (orderSaleAfterDiscountBeforeVat + vatAmount)
-
+        val discountAmount = (orderSaleBeforeDiscountAndVat - computedNetAfterDiscount).coerceAtLeast(0.0)
+        val vatDivisor = 1.0 + order.taxVatPercent / 100.0
         val effectiveNetAfterDiscount = if (order.manualOrderTotalOverride != null) {
-            val vatDivisor = 1.0 + order.taxVatPercent / 100.0
             if (vatDivisor > 0.0) order.manualOrderTotalOverride / vatDivisor else order.manualOrderTotalOverride
         } else {
-            orderSaleAfterDiscountBeforeVat
+            computedNetAfterDiscount
         }
+        val vatAmount = if (order.manualOrderTotalOverride != null) {
+            (order.manualOrderTotalOverride - effectiveNetAfterDiscount).coerceAtLeast(0.0)
+        } else {
+            computedNetAfterDiscount * (order.taxVatPercent / 100.0)
+        }
+        val totalWithVat = order.manualOrderTotalOverride ?: (computedNetAfterDiscount + vatAmount)
+
         val isBelowPrimeCost = finSchemeSettings.warnBelowPrimeCost &&
             orderPrimeCost > 0.0 &&
             effectiveNetAfterDiscount < (orderPrimeCost - 0.005)
@@ -1315,7 +1474,7 @@ object WindowBomAndCostEngine {
             totalOrderServicesCost = totalOrderServicesCost,
             orderPrimeCost = orderPrimeCost,
             orderSaleBeforeDiscountAndVat = orderSaleBeforeDiscountAndVat,
-            orderSaleAfterDiscountBeforeVat = orderSaleAfterDiscountBeforeVat,
+            orderSaleAfterDiscountBeforeVat = effectiveNetAfterDiscount,
             discountAmount = discountAmount,
             vatAmount = vatAmount,
             totalWithVat = totalWithVat,

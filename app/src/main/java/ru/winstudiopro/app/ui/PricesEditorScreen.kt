@@ -7,6 +7,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -15,6 +16,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,6 +39,14 @@ import java.util.UUID
 // =========================================================================================
 // ЭКРАН ПРАЙСОВ ($) — РЕДАКТОР ЦЕН ПРОФИЛЕЙ, СУХАРЕЙ, СТЕКЛОПАКЕТОВ, ФУРНИТУРЫ, РАЗНОГО И РАБОТ
 // =========================================================================================
+private fun <T> List<T>.moveCatalogItem(fromIndex: Int, toIndex: Int): List<T> {
+    if (fromIndex !in indices || toIndex !in indices || fromIndex == toIndex) return this
+    val mutable = toMutableList()
+    val item = mutable.removeAt(fromIndex)
+    mutable.add(toIndex, item)
+    return mutable
+}
+
 private enum class PriceCatalogTab(val titleRu: String) {
     PROFILES_AND_CLEATS("Профили и сухари"),
     GLAZING("Стеклопакеты"),
@@ -187,10 +200,6 @@ internal fun PricesEditorScreen(
                     var pCleatDoorSash by remember(activeSys.id) { mutableStateOf(activeSys.priceCornerConnectorDoorSash.toString()) }
                     var pImpConn by remember(activeSys.id) { mutableStateOf(activeSys.priceImpostConnector.toString()) }
 
-                    var pHwTurn by remember(activeSys.id) { mutableStateOf(activeSys.priceMechanicTurn.toString()) }
-                    var pHwTiltTurn by remember(activeSys.id) { mutableStateOf(activeSys.priceMechanicTiltTurn.toString()) }
-                    var pHwDoor by remember(activeSys.id) { mutableStateOf(activeSys.priceDoorHardware.toString()) }
-
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -323,42 +332,6 @@ internal fun PricesEditorScreen(
                                     )
                                 }
 
-                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = palette.divider)
-                                Text(
-                                    "3. Базовые механизмы открывания ($currencySymbol/компл.)",
-                                    fontWeight = FontWeight.Bold,
-                                    color = palette.accentBlue
-                                )
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    OutlinedTextField(
-                                        value = pHwTurn,
-                                        onValueChange = { pHwTurn = it },
-                                        label = { Text("Поворот. ($currencySymbol)") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier.weight(1f),
-                                        singleLine = true
-                                    )
-                                    OutlinedTextField(
-                                        value = pHwTiltTurn,
-                                        onValueChange = { pHwTiltTurn = it },
-                                        label = { Text("Пов.-отк. ($currencySymbol)") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier.weight(1f),
-                                        singleLine = true
-                                    )
-                                    OutlinedTextField(
-                                        value = pHwDoor,
-                                        onValueChange = { pHwDoor = it },
-                                        label = { Text("Дверной ($currencySymbol)") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier.weight(1f),
-                                        singleLine = true
-                                    )
-                                }
-
                                 Button(
                                     onClick = {
                                         val updated = activeSys.copy(
@@ -371,10 +344,7 @@ internal fun PricesEditorScreen(
                                             priceCornerConnectorFrame = pCleatFrame.replace(',', '.').toDoubleOrNull() ?: activeSys.priceCornerConnectorFrame,
                                             priceCornerConnectorSash = pCleatSash.replace(',', '.').toDoubleOrNull() ?: activeSys.priceCornerConnectorSash,
                                             priceCornerConnectorDoorSash = pCleatDoorSash.replace(',', '.').toDoubleOrNull() ?: activeSys.priceCornerConnectorDoorSash,
-                                            priceImpostConnector = pImpConn.replace(',', '.').toDoubleOrNull() ?: activeSys.priceImpostConnector,
-                                            priceMechanicTurn = pHwTurn.replace(',', '.').toDoubleOrNull() ?: activeSys.priceMechanicTurn,
-                                            priceMechanicTiltTurn = pHwTiltTurn.replace(',', '.').toDoubleOrNull() ?: activeSys.priceMechanicTiltTurn,
-                                            priceDoorHardware = pHwDoor.replace(',', '.').toDoubleOrNull() ?: activeSys.priceDoorHardware
+                                            priceImpostConnector = pImpConn.replace(',', '.').toDoubleOrNull() ?: activeSys.priceImpostConnector
                                         )
                                         onSaveProfiles(profileSystems.map { if (it.id == updated.id) updated else it })
                                         savedToast = "Прайс профильной системы «${updated.name}» сохранён!"
@@ -494,6 +464,7 @@ internal fun PricesEditorScreen(
             PriceCatalogTab.HARDWARE -> {
                 var newHwName by remember { mutableStateOf("") }
                 var newHwPrice by remember { mutableStateOf("25") }
+                var newHwGroup by remember { mutableStateOf(HardwareGroup.SASH) }
 
                 LazyColumn(
                     modifier = Modifier
@@ -510,7 +481,7 @@ internal fun PricesEditorScreen(
                         ) {
                             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Text(
-                                    "Добавить марку фурнитуры в прайс",
+                                    "Добавить фурнитуру в прайс",
                                     fontWeight = FontWeight.Bold,
                                     color = palette.accentBlue
                                 )
@@ -526,48 +497,162 @@ internal fun PricesEditorScreen(
                                     OutlinedTextField(
                                         value = newHwPrice,
                                         onValueChange = { newHwPrice = it },
-                                        label = { Text("Надбавка ($currencySymbol)") },
+                                        label = { Text("Цена ($currencySymbol)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(0.9f),
                                         singleLine = true
                                     )
+                                }
+                                Text(
+                                    "Вид открывания (группа)",
+                                    fontSize = 11.5.sp,
+                                    color = palette.textSecondary,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        HardwareGroup.entries.forEach { grp ->
+                                            val sel = newHwGroup == grp
+                                            FilterChip(
+                                                selected = sel,
+                                                onClick = { newHwGroup = grp },
+                                                label = {
+                                                    Text(
+                                                        grp.titleRu,
+                                                        fontSize = 11.5.sp,
+                                                        color = if (sel) Color.White else palette.textPrimary
+                                                    )
+                                                },
+                                                shape = RoundedCornerShape(10.dp),
+                                                colors = FilterChipDefaults.filterChipColors(
+                                                    selectedContainerColor = palette.accentBlue,
+                                                    containerColor = palette.secondaryBackground
+                                                ),
+                                                modifier = Modifier.testTag("hw_add_group_${grp.name}")
+                                            )
+                                        }
+                                    }
                                     Button(
                                         onClick = {
                                             if (newHwName.isNotBlank()) {
                                                 val p = newHwPrice.replace(',', '.').toDoubleOrNull() ?: 0.0
+                                                val hasDefaultInGroup = hardwareBrands.any {
+                                                    it.id != "hw_none" && it.group == newHwGroup && it.isDefault
+                                                }
                                                 val item = HardwareBrandItem(
                                                     id = "hw_${UUID.randomUUID().toString().take(6)}",
                                                     name = newHwName.trim(),
-                                                    priceMultiplierOrAddon = p
+                                                    priceMultiplierOrAddon = p,
+                                                    group = newHwGroup,
+                                                    isDefault = !hasDefaultInGroup
                                                 )
                                                 onSaveHardware(hardwareBrands + item)
+                                                savedToast = "Добавлена фурнитура «${item.name}» (${newHwGroup.titleRu})"
                                                 newHwName = ""
                                             }
                                         },
                                         shape = RoundedCornerShape(12.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
-                                        modifier = Modifier.height(48.dp)
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 48.dp)
+                                            .testTag("hw_add_button")
                                     ) {
                                         Icon(Icons.Rounded.Add, contentDescription = strings.saveBtn, tint = Color.White)
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Добавить в «${newHwGroup.titleRu}»", color = Color.White, fontWeight = FontWeight.SemiBold)
                                     }
                                 }
                             }
                         }
                     }
 
-                    items(hardwareBrands.filter { it.id != "hw_none" }, key = { it.id }) { item ->
-                        EditablePriceRowCard(
-                            title = item.name,
-                            subtitle = "Надбавка за комплект створки ($currencySymbol)",
-                            initialPrice = item.priceMultiplierOrAddon,
-                            currencySymbol = currencySymbol,
-                            onSavePrice = { newP ->
-                                onSaveHardware(hardwareBrands.map { if (it.id == item.id) it.copy(priceMultiplierOrAddon = newP) else it })
-                                savedToast = "Обновлена цена фурнитуры «${item.name}»"
-                            },
-                            onDelete = { onSaveHardware(hardwareBrands.filterNot { it.id == item.id }) }
-                        )
+                    HardwareGroup.entries.forEach { grp ->
+                        val groupItems = hardwareBrands.filter { it.id != "hw_none" && it.group == grp }
+                        val groupDesc = when (grp) {
+                            HardwareGroup.DOOR -> "Для дверей (поворотное и штульп при маркере «Дверь»)"
+                            HardwareGroup.SASH -> "Для створок (все поворотно-откидные и оконные поворот./штульп)"
+                            HardwareGroup.TRANSOM -> "Для форточек (откидное открывание вверх/вниз)"
+                        }
+                        item(key = "hw_hdr_${grp.name}") {
+                            Surface(
+                                color = palette.secondaryBackground,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                    Text(
+                                        text = "${grp.titleRu} (${groupItems.size})",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = palette.accentBlue
+                                    )
+                                    Text(
+                                        text = groupDesc,
+                                        fontSize = 11.sp,
+                                        color = palette.textSecondary
+                                    )
+                                }
+                            }
+                        }
+                        if (groupItems.isEmpty()) {
+                            item(key = "hw_empty_${grp.name}") {
+                                Text(
+                                    text = "Нет позиций в группе «${grp.titleRu}» — добавьте строку выше.",
+                                    fontSize = 12.sp,
+                                    color = palette.textSecondary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        } else {
+                            items(groupItems, key = { it.id }) { item ->
+                                EditablePriceRowCard(
+                                    title = item.name,
+                                    subtitle = if (item.isDefault) {
+                                        "По умолчанию для группы «${grp.titleRu}» • $currencySymbol/компл."
+                                    } else {
+                                        "Комплект группы «${grp.titleRu}» ($currencySymbol)"
+                                    },
+                                    initialPrice = item.priceMultiplierOrAddon,
+                                    currencySymbol = currencySymbol,
+                                    isDefaultInGroup = item.isDefault,
+                                    onToggleDefault = {
+                                        val updated = hardwareBrands.map { hw ->
+                                            when {
+                                                hw.id == item.id -> hw.copy(isDefault = true)
+                                                hw.group == grp -> hw.copy(isDefault = false)
+                                                else -> hw
+                                            }
+                                        }
+                                        onSaveHardware(updated)
+                                        savedToast = "«${item.name}» выбрана по умолчанию для «${grp.titleRu}»"
+                                    },
+                                    onSavePrice = { newP ->
+                                        onSaveHardware(hardwareBrands.map { if (it.id == item.id) it.copy(priceMultiplierOrAddon = newP) else it })
+                                        savedToast = "Обновлена цена фурнитуры «${item.name}»"
+                                    },
+                                    onDelete = {
+                                        val filtered = hardwareBrands.filterNot { it.id == item.id }
+                                        val finalHw = if (item.isDefault) {
+                                            val replacementId = filtered.firstOrNull { it.id != "hw_none" && it.group == grp }?.id
+                                            filtered.map { if (it.id == replacementId) it.copy(isDefault = true) else it }
+                                        } else {
+                                            filtered
+                                        }
+                                        onSaveHardware(finalHw)
+                                        savedToast = "Удалена фурнитура «${item.name}»"
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -665,7 +750,7 @@ internal fun PricesEditorScreen(
                         }
                     }
 
-                    items(extraAccessories, key = { it.id }) { item ->
+                    itemsIndexed(extraAccessories, key = { _, item -> item.id }) { idx, item ->
                         EditablePriceRowCard(
                             title = item.name,
                             subtitle = "Расчёт: за 1 ${item.rateType.labelRu}",
@@ -680,6 +765,12 @@ internal fun PricesEditorScreen(
                                 onSaveExtras(extraAccessories.map { if (it.id == item.id) it.copy(rateType = newRt) else it })
                                 savedToast = "Единица расчёта «${item.name}»: за ${newRt.labelRu}"
                             },
+                            onMoveUp = if (idx > 0) {
+                                { onSaveExtras(extraAccessories.moveCatalogItem(idx, idx - 1)) }
+                            } else null,
+                            onMoveDown = if (idx < extraAccessories.lastIndex) {
+                                { onSaveExtras(extraAccessories.moveCatalogItem(idx, idx + 1)) }
+                            } else null,
                             onDelete = { onSaveExtras(extraAccessories.filterNot { it.id == item.id }) }
                         )
                     }
@@ -779,7 +870,7 @@ internal fun PricesEditorScreen(
                         }
                     }
 
-                    items(workServices, key = { it.id }) { item ->
+                    itemsIndexed(workServices, key = { _, item -> item.id }) { idx, item ->
                         EditablePriceRowCard(
                             title = item.name,
                             subtitle = "Расчёт: за 1 ${item.rateType.labelRu}",
@@ -794,6 +885,12 @@ internal fun PricesEditorScreen(
                                 onSaveWorks(workServices.map { if (it.id == item.id) it.copy(rateType = newRt) else it })
                                 savedToast = "Единица расчёта «${item.name}»: за ${newRt.labelRu}"
                             },
+                            onMoveUp = if (idx > 0) {
+                                { onSaveWorks(workServices.moveCatalogItem(idx, idx - 1)) }
+                            } else null,
+                            onMoveDown = if (idx < workServices.lastIndex) {
+                                { onSaveWorks(workServices.moveCatalogItem(idx, idx + 1)) }
+                            } else null,
                             onDelete = { onSaveWorks(workServices.filterNot { it.id == item.id }) }
                         )
                     }
@@ -826,6 +923,9 @@ internal fun PricesEditorScreen(
                 FinSchemeTabContent(
                     finSchemeSettings = finSchemeSettings,
                     currencySymbol = currencySymbol,
+                    onAutoSave = { updated ->
+                        onSaveFinSchemeSettings(updated)
+                    },
                     onSave = { updated ->
                         onSaveFinSchemeSettings(updated)
                         savedToast = "Настройки «Фин схема» сохранены (коэфф. ×${String.format(java.util.Locale.US, "%.2f", updated.baseMarkupMultiplier)})"
@@ -1292,7 +1392,7 @@ private fun OrderExtraServicesTabContent(
             }
         }
 
-        items(services, key = { it.id }) { srv ->
+        itemsIndexed(services, key = { _, srv -> srv.id }) { idx, srv ->
             EditablePriceRowCard(
                 title = srv.name,
                 subtitle = if (srv.applyToWholeOrder) "На весь заказ • по умолчанию" else "На заказ",
@@ -1302,6 +1402,12 @@ private fun OrderExtraServicesTabContent(
                     val updated = services.map { if (it.id == srv.id) it.copy(defaultPrice = newP) else it }
                     onSaveServices(updated, "Обновлена базовая цена услуги «${srv.name}»")
                 },
+                onMoveUp = if (idx > 0) {
+                    { onSaveServices(services.moveCatalogItem(idx, idx - 1), "Порядок услуг обновлён") }
+                } else null,
+                onMoveDown = if (idx < services.lastIndex) {
+                    { onSaveServices(services.moveCatalogItem(idx, idx + 1), "Порядок услуг обновлён") }
+                } else null,
                 onDelete = {
                     onSaveServices(services.filterNot { it.id == srv.id }, "Услуга «${srv.name}» удалена")
                 }
@@ -1319,6 +1425,10 @@ private fun EditablePriceRowCard(
     onSavePrice: (Double) -> Unit,
     selectedRateType: UnitRateType? = null,
     onSelectRateType: ((UnitRateType) -> Unit)? = null,
+    isDefaultInGroup: Boolean? = null,
+    onToggleDefault: (() -> Unit)? = null,
+    onMoveUp: (() -> Unit)? = null,
+    onMoveDown: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null
 ) {
     val palette = LocalWinStudioPalette.current
@@ -1327,7 +1437,10 @@ private fun EditablePriceRowCard(
     Surface(
         color = palette.cardSurface,
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(0.8.dp, palette.floatingBorder),
+        border = BorderStroke(
+            width = if (isDefaultInGroup == true) 1.2.dp else 0.8.dp,
+            color = if (isDefaultInGroup == true) palette.accentBlue else palette.floatingBorder
+        ),
         shadowElevation = if (palette.isDark) 0.dp else 1.5.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -1340,11 +1453,42 @@ private fun EditablePriceRowCard(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                if (onMoveUp != null || onMoveDown != null) {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        IconButton(
+                            onClick = { onMoveUp?.invoke() },
+                            enabled = onMoveUp != null,
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.KeyboardArrowUp,
+                                contentDescription = "Вверх",
+                                tint = if (onMoveUp != null) palette.accentBlue else palette.divider,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = { onMoveDown?.invoke() },
+                            enabled = onMoveDown != null,
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.KeyboardArrowDown,
+                                contentDescription = "Вниз",
+                                tint = if (onMoveDown != null) palette.accentBlue else palette.divider,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
                 Column(modifier = Modifier.weight(1.2f)) {
                     Text(title, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, color = palette.textPrimary)
-                    Text(subtitle, fontSize = 11.5.sp, color = palette.textSecondary)
+                    Text(subtitle, fontSize = 11.5.sp, color = if (isDefaultInGroup == true) palette.accentBlue else palette.textSecondary)
                 }
                 OutlinedTextField(
                     value = priceText,
@@ -1366,6 +1510,15 @@ private fun EditablePriceRowCard(
                     modifier = Modifier.height(44.dp)
                 ) {
                     Text(strings.okBtn, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                }
+                if (onToggleDefault != null) {
+                    IconButton(onClick = onToggleDefault, modifier = Modifier.size(40.dp)) {
+                        Icon(
+                            imageVector = if (isDefaultInGroup == true) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+                            contentDescription = "По умолчанию",
+                            tint = if (isDefaultInGroup == true) palette.accentOrange else palette.textSecondary
+                        )
+                    }
                 }
                 if (onDelete != null) {
                     IconButton(onClick = onDelete, modifier = Modifier.size(40.dp)) {
@@ -1408,19 +1561,20 @@ private fun EditablePriceRowCard(
 private fun FinSchemeTabContent(
     finSchemeSettings: FinSchemeSettings,
     currencySymbol: String,
+    onAutoSave: (FinSchemeSettings) -> Unit = {},
     onSave: (FinSchemeSettings) -> Unit
 ) {
     val palette = LocalWinStudioPalette.current
-    var markupText by remember(finSchemeSettings) {
+    var markupText by remember {
         mutableStateOf(String.format(java.util.Locale.US, "%.2f", finSchemeSettings.baseMarkupMultiplier))
     }
-    var markupPresets by remember(finSchemeSettings) {
+    var markupPresets by remember {
         mutableStateOf(finSchemeSettings.markupPresets)
     }
-    var financialSchemes by remember(finSchemeSettings) {
+    var financialSchemes by remember {
         mutableStateOf(finSchemeSettings.financialSchemes)
     }
-    var defaultVatText by remember(finSchemeSettings) {
+    var defaultVatText by remember {
         mutableStateOf(
             if (finSchemeSettings.defaultVatPercent % 1.0 == 0.0) {
                 finSchemeSettings.defaultVatPercent.toInt().toString()
@@ -1429,7 +1583,7 @@ private fun FinSchemeTabContent(
             }
         )
     }
-    var warnBelowPrimeCost by remember(finSchemeSettings) {
+    var warnBelowPrimeCost by remember {
         mutableStateOf(finSchemeSettings.warnBelowPrimeCost)
     }
 
@@ -1443,6 +1597,21 @@ private fun FinSchemeTabContent(
     val markupPct = ((parsedMarkup - 1.0) * 100.0).coerceAtLeast(0.0)
     val parsedVat = defaultVatText.replace(',', '.').toDoubleOrNull()?.coerceIn(0.0, 50.0)
         ?: finSchemeSettings.defaultVatPercent
+
+    val latestFinSettings by rememberUpdatedState(finSchemeSettings)
+    val latestOnAutoSave by rememberUpdatedState(onAutoSave)
+    LaunchedEffect(parsedMarkup, financialSchemes, parsedVat, warnBelowPrimeCost) {
+        val next = latestFinSettings.copy(
+            baseMarkupMultiplier = parsedMarkup,
+            markupPresets = markupPresets,
+            financialSchemes = financialSchemes,
+            defaultVatPercent = parsedVat,
+            warnBelowPrimeCost = warnBelowPrimeCost
+        )
+        if (next != latestFinSettings) {
+            latestOnAutoSave(next)
+        }
+    }
 
     Column(
         modifier = Modifier

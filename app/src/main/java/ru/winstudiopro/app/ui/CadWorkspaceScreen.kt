@@ -269,6 +269,9 @@ internal fun CadEditorWorkspaceScreen(
                 customPaintingCost = if (applyColors) currentWindow.customPaintingCost else win.customPaintingCost,
                 customColorUseRawForStock = if (applyColors) currentWindow.customColorUseRawForStock else win.customColorUseRawForStock,
                 hardwareBrandId = if (applyHardware) currentWindow.hardwareBrandId else win.hardwareBrandId,
+                doorHardwareId = if (applyHardware) currentWindow.doorHardwareId else win.doorHardwareId,
+                sashHardwareId = if (applyHardware) currentWindow.sashHardwareId else win.sashHardwareId,
+                transomHardwareId = if (applyHardware) currentWindow.transomHardwareId else win.transomHardwareId,
                 mosquitoSystemId = if (applyHardware) currentWindow.mosquitoSystemId else win.mosquitoSystemId,
                 financialSchemeId = if (applyFinancials) currentWindow.financialSchemeId else win.financialSchemeId,
                 selectedExtraIds = if (applyExtrasAndWorks) filteredExtrasForAll else win.selectedExtraIds,
@@ -283,14 +286,17 @@ internal fun CadEditorWorkspaceScreen(
     // Добавление новой конструкции 1500x1500 через "+" С НАСЛЕДОВАНИЕМ базовых настроек, но БЕЗ переноса доборов/угловиков!
     fun addNewWindowInheritingSettings() {
         val nextNum = windows.size + 1
-        val newWin = currentWindow.copy(
-            id = UUID.randomUUID().toString(),
-            name = "Окно $nextNum",
-            quantity = 1,
-            manualUnitPriceOverride = null,
-            selectedExtraIds = currentWindow.selectedExtraIds.filterNot { it == "ext_corner" },
-            addons = WindowPerimeterAddons(),
-            topology = WindowCadOperations.single1500Topology()
+        val newWin = WindowBomAndCostEngine.applyDefaultHardwareIfMissing(
+            currentWindow.copy(
+                id = UUID.randomUUID().toString(),
+                name = "Окно $nextNum",
+                quantity = 1,
+                manualUnitPriceOverride = null,
+                selectedExtraIds = currentWindow.selectedExtraIds.filterNot { it == "ext_corner" },
+                addons = WindowPerimeterAddons(),
+                topology = WindowCadOperations.single1500Topology()
+            ),
+            hardwareBrandsCatalog
         )
         val updated = windows + newWin
         onUpdateOrder(order.copy(windows = updated, customCuttingAllocations = null))
@@ -592,8 +598,15 @@ internal fun CadEditorWorkspaceScreen(
                 }
 
                 // ПРАВЫЕ КОМПАКТНЫЕ ИНФОРМАЦИОННЫЕ ПЛАШКИ (СМЕЩЕНЫ НИЖЕ ПЛАВАЮЩЕЙ ВЕРХНЕЙ ПАНЕЛИ)
-                val hwName = hardwareBrandsCatalog
-                    .find { it.id == currentWindow.hardwareBrandId }?.name ?: strings.notAccounted
+                val activeHwGroups = currentWindow.topology.frames
+                    .flatMap { it.openings }
+                    .mapNotNull { WindowBomAndCostEngine.resolveOpeningHardwareGroup(it.properties) }
+                    .distinct()
+                val activeHwBadges = activeHwGroups.mapNotNull { grp ->
+                    WindowBomAndCostEngine.resolveGroupHardwareBrand(currentWindow, grp, hardwareBrandsCatalog)?.let { brand ->
+                        grp to brand
+                    }
+                }
                 val finName = finSchemeSettings.financialSchemes
                     .find { it.id == currentWindow.financialSchemeId }?.name
                 val badgesTopPadDp = with(density) { topBarBottomPx.toDp() }.let {
@@ -626,8 +639,15 @@ internal fun CadEditorWorkspaceScreen(
                     if (currentWindow.colorId != "none") {
                         CanvasReadOnlyInfoBadge(label = activeColor.name, bgColor = Color(0xFF475569))
                     }
-                    if (currentWindow.hardwareBrandId != "hw_none") {
-                        CanvasReadOnlyInfoBadge(label = hwName, bgColor = palette.accentIndigo)
+                    if (activeHwBadges.size == 1 && activeHwGroups.size == 1) {
+                        CanvasReadOnlyInfoBadge(label = activeHwBadges.first().second.name, bgColor = palette.accentIndigo)
+                    } else {
+                        activeHwBadges.forEach { (grp, brand) ->
+                            CanvasReadOnlyInfoBadge(
+                                label = "${grp.titleRu}: ${brand.name}",
+                                bgColor = palette.accentIndigo
+                            )
+                        }
                     }
                     if (currentWindow.addons.hasCornerProfile || currentWindow.selectedExtraIds.contains("ext_corner")) {
                         CanvasReadOnlyInfoBadge(label = "Угловик", bgColor = Color(0xFF00838F))
@@ -1004,7 +1024,7 @@ internal fun CadEditorWorkspaceScreen(
                             modifier = Modifier.testTag("cad_menu_workshop_task")
                         ) {
                             showLeftBlueMenu = false
-                            val usableRemnants = stockRemnants.filter { !it.isFullStockBar }
+                            val usableRemnants = stockRemnants.filter { !it.isFullStockBar && it.quantity > 0 }
                             val autoResult = WindowBomAndCostEngine.optimizeOrderProfileCutting(
                                 windowResults = allWindowResults,
                                 stockRemnants = usableRemnants,
@@ -1160,7 +1180,24 @@ internal fun CadEditorWorkspaceScreen(
                             SplitOperation.SPLIT_H3 -> WindowCadOperations.splitOpening(topo, targetCell.id, ImpostDirection.HORIZONTAL, 3)
                         }
                     }
-                    win.copy(topology = topo)
+                    // Если пользователь включил в конструкции открывание новой группы, а её выбор ещё не задан — подставляем фурнитуру по умолчанию
+                    val targetGroup = WindowBomAndCostEngine.resolveOpeningHardwareGroup(newProps)
+                    var updatedWin = win.copy(topology = topo)
+                    if (targetGroup != null && WindowBomAndCostEngine.resolveWindowHardwareGroupId(updatedWin, targetGroup) == null) {
+                        val defaultForGroup = hardwareBrandsCatalog.firstOrNull {
+                            it.id != "hw_none" && it.group == targetGroup && it.isDefault
+                        }?.id ?: hardwareBrandsCatalog.firstOrNull {
+                            it.id != "hw_none" && it.group == targetGroup
+                        }?.id
+                        if (defaultForGroup != null) {
+                            updatedWin = when (targetGroup) {
+                                HardwareGroup.DOOR -> updatedWin.copy(doorHardwareId = defaultForGroup)
+                                HardwareGroup.SASH -> updatedWin.copy(sashHardwareId = defaultForGroup)
+                                HardwareGroup.TRANSOM -> updatedWin.copy(transomHardwareId = defaultForGroup)
+                            }
+                        }
+                    }
+                    updatedWin
                 }
                 activeCellForModal = null
             }
@@ -1474,9 +1511,13 @@ private fun DynamicBottomCostScrollBar(
     val isManualPrice = currentResult.windowItem.manualUnitPriceOverride != null
     val winBreakdown = orderFinancialSummary.windowBreakdownFor(currentResult.windowItem.id)
     val winSaleAfterDiscount = winBreakdown?.lineDiscountedSale
-        ?: ((currentResult.windowItem.manualUnitPriceOverride ?: currentResult.rawUnitCostBeforeDiscount) *
-            curQty * (1.0 - (if (currentResult.discountPercentApplied > 0.0) currentResult.discountPercentApplied else order.discountPercent) / 100.0) +
-            currentResult.costCustomPainting)
+        ?: if (isManualPrice) {
+            currentResult.lineTotalCost
+        } else {
+            currentResult.rawUnitCostBeforeDiscount *
+                curQty * (1.0 - (if (currentResult.discountPercentApplied > 0.0) currentResult.discountPercentApplied else order.discountPercent) / 100.0) +
+                currentResult.costCustomPainting
+        }
     val winSaleWithVat = winSaleAfterDiscount * (1.0 + order.taxVatPercent / 100.0)
 
     val orderSaleAfterDiscount = orderFinancialSummary.orderSaleAfterDiscountBeforeVat
@@ -2196,20 +2237,73 @@ private fun RightWindowSettingsDrawerContent(
                 )
             }
 
-            // 9. ФУРНИТУРА
+            // 9. ФУРНИТУРА (динамически по группам открывания, присутствующим в текущей конструкции)
+            val presentGroupsSet = windowItem.topology.frames
+                .flatMap { it.openings }
+                .mapNotNull { WindowBomAndCostEngine.resolveOpeningHardwareGroup(it.properties) }
+                .toSet()
+            val presentGroups = HardwareGroup.entries.filter { it in presentGroupsSet }
             DrawerGrayHeader(
                 title = strings.hardwareLabel,
                 actionText = if (totalWindowsCount > 1) strings.applyShort else null,
                 onAction = { onApplyToAllWindows(false, false, false, true, false, false, false) }
             )
-            hardwareBrands.forEach { hw ->
-                val selected = windowItem.hardwareBrandId == hw.id
-                DrawerRadioOptionRow(
-                    label = hw.name,
-                    subtitle = if (hw.id == "hw_none") null else "+${hw.priceMultiplierOrAddon.roundToInt()} $displayCurrency",
-                    selected = selected,
-                    onClick = { onUpdateWindow(windowItem.copy(hardwareBrandId = hw.id)) }
+            if (presentGroups.isEmpty()) {
+                Text(
+                    text = "В конструкции нет открывающихся створок, дверей или форточек.",
+                    fontSize = 11.5.sp,
+                    color = palette.textSecondary,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
                 )
+            } else {
+                fun updateGroupHardware(group: HardwareGroup, selectedHwId: String): WindowItem {
+                    return when (group) {
+                        HardwareGroup.DOOR -> windowItem.copy(doorHardwareId = selectedHwId)
+                        HardwareGroup.SASH -> windowItem.copy(
+                            sashHardwareId = selectedHwId,
+                            hardwareBrandId = selectedHwId
+                        )
+                        HardwareGroup.TRANSOM -> windowItem.copy(transomHardwareId = selectedHwId)
+                    }
+                }
+
+                presentGroups.forEach { grp ->
+                    val groupItems = hardwareBrands.filter { it.id != "hw_none" && it.group == grp }
+                    val explicitId = WindowBomAndCostEngine.resolveWindowHardwareGroupId(windowItem, grp)
+                    val resolvedBrand = WindowBomAndCostEngine.resolveGroupHardwareBrand(windowItem, grp, hardwareBrands)
+                    val isNoneSelected = explicitId == "hw_none" || (explicitId == null && windowItem.hardwareBrandId == "hw_none")
+
+                    Surface(
+                        color = palette.secondaryBackground.copy(alpha = 0.7f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = grp.titleRu,
+                            color = palette.accentBlue,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
+                    DrawerRadioOptionRow(
+                        label = strings.notAccounted,
+                        subtitle = "Без цены материала (работа по установке в сборке остаётся)",
+                        selected = isNoneSelected,
+                        modifier = Modifier.testTag("drawer_hw_${grp.name}_none"),
+                        onClick = { onUpdateWindow(updateGroupHardware(grp, "hw_none")) }
+                    )
+                    groupItems.forEach { hw ->
+                        val selected = !isNoneSelected && resolvedBrand?.id == hw.id
+                        DrawerRadioOptionRow(
+                            label = hw.name,
+                            subtitle = "${hw.priceMultiplierOrAddon.roundToInt()} $displayCurrency" + if (hw.isDefault) " • по умолчанию" else "",
+                            selected = selected,
+                            modifier = Modifier.testTag("drawer_hw_${grp.name}_${hw.id}"),
+                            onClick = { onUpdateWindow(updateGroupHardware(grp, hw.id)) }
+                        )
+                    }
+                }
             }
 
             // 10. РАЗНОЕ (Угловик и Доборный профиль 90° — только для активной конструкции + прочие аксессуары)

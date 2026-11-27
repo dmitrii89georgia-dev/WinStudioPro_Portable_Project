@@ -72,7 +72,9 @@ object WarehouseInventoryHelper {
         workServicesCatalog: List<WorkServiceItem>,
         hardwareBrandsCatalog: List<HardwareBrandItem>,
         currentStockBars: List<StockRemnantBar>,
-        currentStockRubber: List<StockRubberItem>
+        currentStockRubber: List<StockRubberItem>,
+        financialSchemesCatalog: List<FinancialSchemeItem> = DefaultCatalogs.defaultFinancialSchemes(),
+        assemblyPricingCatalog: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog()
     ): ProductionDeductionResult {
         if (order.stockDeductedForProduction) {
             return ProductionDeductionResult(
@@ -96,7 +98,12 @@ object WarehouseInventoryHelper {
                 extraAccessoriesCatalog = extraAccessoriesCatalog,
                 workServicesCatalog = workServicesCatalog,
                 hardwareBrandsCatalog = hardwareBrandsCatalog,
-                windowIndexInOrder = idx + 1
+                financialSchemesCatalog = financialSchemesCatalog,
+                windowIndexInOrder = idx + 1,
+                assemblyPricingCatalog = assemblyPricingCatalog,
+                orderLegacySystemName = order.legacySystemName,
+                orderLegacyGlazingName = order.legacyGlazingName,
+                orderLegacyColorName = order.legacyColorName
             )
         }
 

@@ -60,7 +60,8 @@ class CadGeometryAndPricingV6Test {
             topology = asymTopo,
             profileSystemId = baseProfile.id,
             glazingId = "sp_24",
-            colorId = baseProfile.colors.first().id
+            colorId = baseProfile.colors.first().id,
+            sashHardwareId = "hw_maco"
         )
         val res = WindowBomAndCostEngine.calculateWindow(
             window = win,

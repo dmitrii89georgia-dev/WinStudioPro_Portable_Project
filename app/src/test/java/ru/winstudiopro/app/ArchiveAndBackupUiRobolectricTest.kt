@@ -3,6 +3,7 @@ package ru.winstudiopro.app
 import android.content.Context
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -66,6 +67,9 @@ class ArchiveAndBackupUiRobolectricTest {
         composeRule.onNodeWithTag("archive_restore_btn_$seededNonDraftId").assertIsDisplayed()
         composeRule.onNodeWithTag("archive_clone_btn_$seededNonDraftId").assertIsDisplayed()
         composeRule.onNodeWithTag("archive_delete_forever_btn_$seededNonDraftId").assertIsDisplayed()
+
+        // На архивном заказе смена статуса отключена
+        composeRule.onNodeWithTag("order_status_dropdown_$seededNonDraftId").assertIsNotEnabled()
 
         // Возвращаем в работу -> статус становится DRAFT и появляется кнопка удаления черновика
         composeRule.onNodeWithTag("archive_restore_btn_$seededNonDraftId").performClick()

@@ -149,7 +149,13 @@ data class WindowItem(
     val outerSillId: String = "sill_out_none",
     val financialSchemeId: String = "fin_none",
     val hardwareBrandId: String = "hw_none",
+    val doorHardwareId: String? = null,
+    val sashHardwareId: String? = null,
+    val transomHardwareId: String? = null,
     val mosquitoSystemId: String = "msq_none",
+    val mosquitoWindowId: String? = null,
+    val mosquitoDoorId: String? = null,
+    val mosquitoPlisseId: String? = null,
     val selectedExtraIds: List<String> = emptyList(),
     val selectedWorkIds: List<String> = emptyList(),
     val addons: WindowPerimeterAddons = WindowPerimeterAddons(hasSeatProfile = false),
@@ -233,6 +239,18 @@ data class ContractDeadlineState(
 )
 
 /**
+ * Режим расчёта москитных сеток в заказе (переключатель К — Д — П):
+ * - CLIENT ("К"): в клиентскую цену идёт клиентская стоимость, в себестоимость — дилерская
+ * - DEALER ("Д"): и в клиентскую, и в себестоимость идёт дилерская стоимость
+ * - GIFT ("П"): для клиента 0, но в себестоимость заказа включается дилерская стоимость
+ */
+enum class MosquitoPricingMode(val shortBadge: String, val titleRu: String) {
+    CLIENT("К", "Клиентская"),
+    DEALER("Д", "Дилерская"),
+    GIFT("П", "Подарок")
+}
+
+/**
  * Заказ клиента (содержит произвольное количество окон/конструкций).
  *
  * Памятка для внешнего конвертера старых баз данных (формат `.winbackup.json`):
@@ -278,7 +296,8 @@ data class CustomerOrder(
     val isLegacyImport: Boolean = false,
     val legacySystemName: String? = null,
     val legacyGlazingName: String? = null,
-    val legacyColorName: String? = null
+    val legacyColorName: String? = null,
+    val mosquitoPricingMode: MosquitoPricingMode = MosquitoPricingMode.CLIENT
 ) {
     fun computeDeadlineState(nowMillis: Long = System.currentTimeMillis()): ContractDeadlineState? {
         if (!status.showDeadlineSmiley) return null
@@ -423,7 +442,11 @@ data class WindowCalculationResult(
     val shtulpLengthM: Double = 0.0,
     val costShtulp: Double = 0.0,
     val costCornerProfile: Double = 0.0,
-    val costExtenderProfile: Double = 0.0
+    val costExtenderProfile: Double = 0.0,
+    val costMosquitoDealer: Double = 0.0,
+    val costMosquitoClient: Double = 0.0,
+    val mosquitoAreaM2: Double = 0.0,
+    val mosquitoCount: Int = 0
 )
 
 data class WindowTurnkeyPriceBreakdown(

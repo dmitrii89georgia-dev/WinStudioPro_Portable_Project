@@ -110,6 +110,30 @@ data class ProfileSupplierOrderLine(
 }
 
 /**
+ * Позиция в редакторе «Заказ москитных сеток».
+ */
+data class MosquitoOrderItem(
+    val id: String,
+    val rowIndex: Int,
+    val windowIndex: Int,
+    val windowName: String,
+    val cellLabel: String,
+    val netType: MosquitoNetType,
+    val systemName: String,
+    val widthMm: Int,
+    val heightMm: Int,
+    val colorName: String,
+    val quantity: Int,
+    val singleAreaM2: Double,
+    val billableAreaM2: Double,
+    val note: String = "",
+    val isSelected: Boolean = true
+) {
+    val sizeText: String
+        get() = "$widthMm × $heightMm мм"
+}
+
+/**
  * Помощник формирования редактируемых заказов:
  * 1) Заказ стеклопакетов и сэндвич-панелей;
  * 2) Заказ фурнитуры;
@@ -184,9 +208,6 @@ object OrderProcurementHelper {
             val win = res.windowItem
             val profile = res.profileSystem
             val qty = win.quantity.coerceAtLeast(1)
-            val brandName = hardwareBrandsCatalog.find { it.id == win.hardwareBrandId }?.name
-                ?.takeIf { win.hardwareBrandId != "hw_none" }
-                ?: "Стандарт"
 
             val frames = win.topology.frames.sortedBy { it.leftMm }
             var cellOrderInWin = 0
@@ -199,9 +220,15 @@ object OrderProcurementHelper {
                 )
                 sortedOpenings.forEachIndexed { opIdx, op ->
                     val props = op.properties
-                    if (!props.openingType.hasSashProfile || props.openingType == SashOpeningType.BLIND_SASH) {
-                        return@forEachIndexed
-                    }
+                    val hwGroup = WindowBomAndCostEngine.resolveOpeningHardwareGroup(props)
+                        ?: return@forEachIndexed
+                    val resolvedBrand = WindowBomAndCostEngine.resolveGroupHardwareBrand(
+                        window = win,
+                        group = hwGroup,
+                        hardwareBrandsCatalog = hardwareBrandsCatalog
+                    ) ?: return@forEachIndexed
+                    val brandName = resolvedBrand.name
+
                     cellOrderInWin += 1
                     val leftDed = if (abs(op.leftMm - frame.leftMm) < 2f) profile.frameWidthMm else profile.impostWidthMm / 2f
                     val rightDed = if (abs(op.rightMm - frame.rightMm) < 2f) profile.frameWidthMm else profile.impostWidthMm / 2f
@@ -252,6 +279,69 @@ object OrderProcurementHelper {
                             sideLabel = resolveSideLabel(props.openingType),
                             brandName = brandName,
                             quantity = qty,
+                            isSelected = true
+                        )
+                    )
+                }
+            }
+        }
+        return result
+    }
+
+    fun buildMosquitoOrderItems(
+        windowResults: List<WindowCalculationResult>,
+        mosquitoSystemsCatalog: List<MosquitoSystemItem>
+    ): List<MosquitoOrderItem> {
+        val result = mutableListOf<MosquitoOrderItem>()
+        var rowNum = 1
+
+        windowResults.forEachIndexed { winIdx, res ->
+            val win = res.windowItem
+            val profile = res.profileSystem
+            val qty = win.quantity.coerceAtLeast(1)
+            val frames = win.topology.frames.sortedBy { it.leftMm }
+            var cellOrderInWin = 0
+
+            frames.forEach { frame ->
+                val sortedOpenings = frame.openings.sortedWith(
+                    compareBy<OpeningCellNode>(
+                        { (it.leftMm / 5f).roundToInt() },
+                        { (it.topMm / 5f).roundToInt() }
+                    )
+                )
+                sortedOpenings.forEachIndexed { opIdx, op ->
+                    val netType = op.properties.effectiveMosquitoNetType() ?: return@forEachIndexed
+                    val sysItem = WindowBomAndCostEngine.resolveMosquitoSystemForType(
+                        window = win,
+                        netType = netType,
+                        mosquitoSystemsCatalog = mosquitoSystemsCatalog
+                    ) ?: return@forEachIndexed
+
+                    cellOrderInWin += 1
+                    val (wMm, hMm) = WindowBomAndCostEngine.calculateMosquitoNetSizeMm(
+                        frame = frame,
+                        op = op,
+                        profile = profile
+                    )
+                    val rawArea = (wMm.toDouble() * hMm.toDouble()) / 1_000_000.0
+                    val billableArea = max(1.0, rawArea)
+
+                    result.add(
+                        MosquitoOrderItem(
+                            id = "msq_${winIdx}_${cellOrderInWin}_${op.id}",
+                            rowIndex = rowNum++,
+                            windowIndex = winIdx + 1,
+                            windowName = win.name,
+                            cellLabel = "Пр.${opIdx + 1}",
+                            netType = netType,
+                            systemName = sysItem.name,
+                            widthMm = wMm,
+                            heightMm = hMm,
+                            colorName = res.cutColorName,
+                            quantity = qty,
+                            singleAreaM2 = rawArea,
+                            billableAreaM2 = billableArea,
+                            note = win.note,
                             isSelected = true
                         )
                     )

@@ -26,6 +26,7 @@ data class PersistedAppState(
     val glazingCatalog: List<GlazingCatalogItem> = DefaultCatalogs.defaultGlazingItems(),
     val colorCatalog: List<ColorCatalogItem> = DefaultCatalogs.defaultColors(),
     val hardwareBrands: List<HardwareBrandItem> = DefaultCatalogs.defaultHardwareBrands(),
+    val mosquitoSystems: List<MosquitoSystemItem> = DefaultCatalogs.defaultMosquitoSystems(),
     val extraAccessories: List<ExtraAccessoryItem> = DefaultCatalogs.defaultExtraAccessories(),
     val workServices: List<WorkServiceItem> = DefaultCatalogs.defaultWorkServices(),
     val assemblyPricing: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog(),
@@ -302,6 +303,7 @@ object AppStateStorage {
                 glazingCatalog = finalBundle.glazingCatalog,
                 colorCatalog = finalBundle.colorCatalog,
                 hardwareBrands = finalBundle.hardwareBrands,
+                mosquitoSystems = finalBundle.mosquitoSystems,
                 extraAccessories = finalBundle.extraAccessories,
                 workServices = finalBundle.workServices,
                 assemblyPricing = assemblyPricing,
@@ -451,6 +453,7 @@ object AppStateStorage {
                 glazingCatalog = settingsBundle.glazingCatalog,
                 colorCatalog = settingsBundle.colorCatalog,
                 hardwareBrands = settingsBundle.hardwareBrands,
+                mosquitoSystems = settingsBundle.mosquitoSystems,
                 extraAccessories = settingsBundle.extraAccessories,
                 workServices = settingsBundle.workServices,
                 assemblyPricing = assemblyPricing,
@@ -490,6 +493,7 @@ object AppStateStorage {
                         glazingCatalog = state.glazingCatalog,
                         colorCatalog = state.colorCatalog,
                         hardwareBrands = state.hardwareBrands,
+                        mosquitoSystems = state.mosquitoSystems,
                         extraAccessories = state.extraAccessories,
                         workServices = state.workServices,
                         v6CatalogsSeeded = true,
@@ -503,6 +507,114 @@ object AppStateStorage {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save state to SQLite", e)
+        }
+    }
+
+    /**
+     * Быстрое сохранение только справочников, склада, кассы и настроек без перезаписи таблицы orders.
+     */
+    fun saveNonOrderState(context: Context, state: PersistedAppState) {
+        try {
+            val dbHelper = WinStudioSqliteHelper(context)
+            val db = dbHelper.writableDatabase
+            db.beginTransaction()
+            try {
+                saveProfilesToDb(db, state.profileSystems)
+                saveStockToDb(db, state.stockRemnants)
+                saveStockRubberToDb(db, state.stockRubber)
+                saveAssemblyPricingToDb(db, state.assemblyPricing)
+                saveOrderExtraServicesToDb(db, state.orderExtraServices)
+                saveCashAccountsToDb(db, state.cashAccounts)
+                saveCashTransactionsToDb(db, state.cashTransactions)
+                saveCashExpenseCategoriesToDb(db, state.cashExpenseCategories)
+                saveSettingsBundleToDb(
+                    db,
+                    SettingsAndCatalogsBundle(
+                        uiSettings = state.uiSettings,
+                        glazingCatalog = state.glazingCatalog,
+                        colorCatalog = state.colorCatalog,
+                        hardwareBrands = state.hardwareBrands,
+                        mosquitoSystems = state.mosquitoSystems,
+                        extraAccessories = state.extraAccessories,
+                        workServices = state.workServices,
+                        v6CatalogsSeeded = true,
+                        finSchemeSettings = state.finSchemeSettings,
+                        v7CashSeeded = true
+                    )
+                )
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save non-order state to SQLite", e)
+        }
+    }
+
+    /**
+     * Точечное обновление или вставка одного заказа в SQLite без полной очистки и перезаписи всех заказов.
+     */
+    fun upsertOrderToDb(
+        context: Context,
+        order: CustomerOrder,
+        insertAtTop: Boolean = true
+    ) {
+        try {
+            val dbHelper = WinStudioSqliteHelper(context)
+            val db = dbHelper.writableDatabase
+            db.beginTransaction()
+            try {
+                val existingSortOrder = db.rawQuery(
+                    "SELECT sort_order FROM orders WHERE id = ?",
+                    arrayOf(order.id)
+                ).use { c -> if (c.moveToFirst()) c.getInt(0) else null }
+
+                val sortOrder = existingSortOrder ?: if (insertAtTop) {
+                    db.rawQuery("SELECT COALESCE(MIN(sort_order), 1) - 1 FROM orders", null).use { c ->
+                        if (c.moveToFirst()) c.getInt(0) else 0
+                    }
+                } else {
+                    db.rawQuery("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM orders", null).use { c ->
+                        if (c.moveToFirst()) c.getInt(0) else 0
+                    }
+                }
+
+                val cv = ContentValues().apply {
+                    put("id", order.id)
+                    put("sort_order", sortOrder)
+                    put("order_number", order.orderNumber)
+                    put("customer_name", order.customerName)
+                    put("status", order.status.name)
+                    put("is_archived", if (order.isArchived) 1 else 0)
+                    put("is_legacy_import", if (order.isLegacyImport) 1 else 0)
+                    put("json_payload", serializeOrder(order).toString())
+                }
+                db.insertWithOnConflict("orders", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to upsert order ${order.id} to SQLite", e)
+        }
+    }
+
+    /**
+     * Точечное удаление одного заказа из SQLite.
+     */
+    fun deleteOrderFromDb(context: Context, orderId: String) {
+        try {
+            val dbHelper = WinStudioSqliteHelper(context)
+            val db = dbHelper.writableDatabase
+            db.beginTransaction()
+            try {
+                db.delete("orders", "id = ?", arrayOf(orderId))
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete order $orderId from SQLite", e)
         }
     }
 
@@ -852,7 +964,7 @@ object AppStateStorage {
                 windows = listOf(
                     WindowItem(
                         id = "win_item_1",
-                        name = "Окно 1",
+                        name = "Конструкция 1",
                         quantity = 1,
                         topology = w1,
                         profileSystemId = "al_test_system",
@@ -1737,6 +1849,7 @@ object AppStateStorage {
         val glazingCatalog: List<GlazingCatalogItem> = DefaultCatalogs.defaultGlazingItems(),
         val colorCatalog: List<ColorCatalogItem> = DefaultCatalogs.defaultColors(),
         val hardwareBrands: List<HardwareBrandItem> = DefaultCatalogs.defaultHardwareBrands(),
+        val mosquitoSystems: List<MosquitoSystemItem> = DefaultCatalogs.defaultMosquitoSystems(),
         val extraAccessories: List<ExtraAccessoryItem> = DefaultCatalogs.defaultExtraAccessories(),
         val workServices: List<WorkServiceItem> = DefaultCatalogs.defaultWorkServices(),
         val v6CatalogsSeeded: Boolean = false,
@@ -1801,10 +1914,27 @@ object AppStateStorage {
                         put("id", h.id)
                         put("name", h.name)
                         put("priceMultiplierOrAddon", h.priceMultiplierOrAddon)
+                        put("group", h.group.name)
+                        put("isDefault", h.isDefault)
                     }
                 )
             }
             put("hardwareBrands", hwArr)
+
+            val msqArr = JSONArray()
+            bundle.mosquitoSystems.forEach { m ->
+                msqArr.put(
+                    JSONObject().apply {
+                        put("id", m.id)
+                        put("name", m.name)
+                        put("netType", m.netType.name)
+                        put("dealerPricePerM2", m.dealerPricePerM2)
+                        put("clientPricePerM2", m.clientPricePerM2)
+                        put("isDefault", m.isDefault)
+                    }
+                )
+            }
+            put("mosquitoSystems", msqArr)
 
             val extArr = JSONArray()
             bundle.extraAccessories.forEach { e ->
@@ -1877,6 +2007,8 @@ object AppStateStorage {
                     googleDriveLastStatus = o.optString("googleDriveLastStatus", "")
                 )
 
+                val v6Seeded = o.optBoolean("v6CatalogsSeeded", false)
+
                 val glazingList = o.optJSONArray("glazingCatalog")?.let { arr ->
                     val list = mutableListOf<GlazingCatalogItem>()
                     for (i in 0 until arr.length()) {
@@ -1892,7 +2024,7 @@ object AppStateStorage {
                             )
                         )
                     }
-                    list.ifEmpty { null }
+                    if (!v6Seeded && list.isEmpty()) null else list
                 } ?: DefaultCatalogs.defaultGlazingItems()
 
                 val colorList = o.optJSONArray("colorCatalog")?.let { arr ->
@@ -1908,22 +2040,53 @@ object AppStateStorage {
                             )
                         )
                     }
-                    list.ifEmpty { null }
+                    if (!v6Seeded && list.isEmpty()) null else list
                 } ?: DefaultCatalogs.defaultColors()
 
                 val hwList = o.optJSONArray("hardwareBrands")?.let { arr ->
                     val list = mutableListOf<HardwareBrandItem>()
+                    var hasGroupMetadata = false
                     for (i in 0 until arr.length()) {
                         val item = arr.getJSONObject(i)
+                        if (item.has("group")) hasGroupMetadata = true
+                        val grp = try {
+                            HardwareGroup.valueOf(item.optString("group", "SASH"))
+                        } catch (_: Exception) {
+                            HardwareGroup.SASH
+                        }
                         list.add(
                             HardwareBrandItem(
                                 id = item.getString("id"),
                                 name = item.getString("name"),
-                                priceMultiplierOrAddon = item.optDouble("priceMultiplierOrAddon", 0.0)
+                                priceMultiplierOrAddon = item.optDouble("priceMultiplierOrAddon", 0.0),
+                                group = grp,
+                                isDefault = item.optBoolean("isDefault", false)
                             )
                         )
                     }
-                    list.ifEmpty { null }
+                    if (!v6Seeded && list.isEmpty()) {
+                        null
+                    } else if (!hasGroupMetadata && list.isNotEmpty()) {
+                        // Миграция старых баз без поля group: сохраняем текущие позиции в группе Створка и добавляем базовые группы Дверная/Форточка
+                        val hasSashDefault = list.any { it.group == HardwareGroup.SASH && it.isDefault }
+                        val migratedSash = list.mapIndexed { idx, item ->
+                            if (!hasSashDefault && item.id != "hw_none" && (item.id == "hw_maco" || (list.none { it.id == "hw_maco" } && idx == list.indexOfFirst { it.id != "hw_none" }))) {
+                                item.copy(isDefault = true)
+                            } else {
+                                item
+                            }
+                        }.toMutableList()
+                        val defaults = DefaultCatalogs.defaultHardwareBrands()
+                        if (migratedSash.none { it.group == HardwareGroup.DOOR && it.id != "hw_none" }) {
+                            migratedSash.addAll(defaults.filter { it.group == HardwareGroup.DOOR })
+                        }
+                        if (migratedSash.none { it.group == HardwareGroup.TRANSOM && it.id != "hw_none" }) {
+                            migratedSash.addAll(defaults.filter { it.group == HardwareGroup.TRANSOM })
+                        }
+                        migratedSash
+                    } else {
+                        list
+                    }
                 } ?: DefaultCatalogs.defaultHardwareBrands()
 
                 val extList = o.optJSONArray("extraAccessories")?.let { arr ->
@@ -1944,7 +2107,7 @@ object AppStateStorage {
                             )
                         )
                     }
-                    list.ifEmpty { null }
+                    if (!v6Seeded && list.isEmpty()) null else list
                 } ?: DefaultCatalogs.defaultExtraAccessories()
 
                 val wrkList = o.optJSONArray("workServices")?.let { arr ->
@@ -1965,17 +2128,53 @@ object AppStateStorage {
                             )
                         )
                     }
-                    list.ifEmpty { null }
+                    if (!v6Seeded && list.isEmpty()) null else list
                 } ?: DefaultCatalogs.defaultWorkServices()
+
+                val msqList = o.optJSONArray("mosquitoSystems")?.let { arr ->
+                    val list = mutableListOf<MosquitoSystemItem>()
+                    for (i in 0 until arr.length()) {
+                        val item = arr.getJSONObject(i)
+                        val name = item.getString("name")
+                        val id = item.getString("id")
+                        val fallbackType = when {
+                            name.contains("плиссе", ignoreCase = true) || id.contains("plisse", ignoreCase = true) -> MosquitoNetType.PLISSE
+                            name.contains("двер", ignoreCase = true) || id.contains("door", ignoreCase = true) -> MosquitoNetType.DOOR
+                            else -> MosquitoNetType.WINDOW
+                        }
+                        val netType = try {
+                            if (item.has("netType") && !item.isNull("netType")) {
+                                MosquitoNetType.valueOf(item.optString("netType"))
+                            } else fallbackType
+                        } catch (_: Exception) {
+                            fallbackType
+                        }
+                        val legacyPrice = item.optDouble("pricePerM2", 0.0)
+                        val clientPrice = if (item.has("clientPricePerM2")) item.optDouble("clientPricePerM2", legacyPrice) else legacyPrice
+                        val dealerPrice = if (item.has("dealerPricePerM2")) item.optDouble("dealerPricePerM2", clientPrice) else clientPrice
+                        list.add(
+                            MosquitoSystemItem(
+                                id = id,
+                                name = name,
+                                netType = netType,
+                                dealerPricePerM2 = dealerPrice,
+                                clientPricePerM2 = clientPrice,
+                                isDefault = item.optBoolean("isDefault", false)
+                            )
+                        )
+                    }
+                    list.ifEmpty { null }
+                } ?: DefaultCatalogs.defaultMosquitoSystems()
 
                 return SettingsAndCatalogsBundle(
                     uiSettings = uiSettings,
                     glazingCatalog = glazingList,
                     colorCatalog = colorList,
                     hardwareBrands = hwList,
+                    mosquitoSystems = msqList,
                     extraAccessories = extList,
                     workServices = wrkList,
-                    v6CatalogsSeeded = o.optBoolean("v6CatalogsSeeded", false),
+                    v6CatalogsSeeded = v6Seeded,
                     finSchemeSettings = parseFinSchemeSettings(o.optJSONObject("finSchemeSettings")),
                     v7CashSeeded = o.optBoolean("v7CashSeeded", false)
                 )
@@ -2280,6 +2479,7 @@ object AppStateStorage {
         put("legacySystemName", ord.legacySystemName ?: JSONObject.NULL)
         put("legacyGlazingName", ord.legacyGlazingName ?: JSONObject.NULL)
         put("legacyColorName", ord.legacyColorName ?: JSONObject.NULL)
+        put("mosquitoPricingMode", ord.mosquitoPricingMode.name)
         val selSrvArr = JSONArray()
         ord.selectedOrderServices.forEach { sel ->
             selSrvArr.put(
@@ -2345,7 +2545,13 @@ object AppStateStorage {
                     put("outerSillId", w.outerSillId)
                     put("financialSchemeId", w.financialSchemeId)
                     put("hardwareBrandId", w.hardwareBrandId)
+                    put("doorHardwareId", w.doorHardwareId ?: JSONObject.NULL)
+                    put("sashHardwareId", w.sashHardwareId ?: JSONObject.NULL)
+                    put("transomHardwareId", w.transomHardwareId ?: JSONObject.NULL)
                     put("mosquitoSystemId", w.mosquitoSystemId)
+                    put("mosquitoWindowId", w.mosquitoWindowId ?: JSONObject.NULL)
+                    put("mosquitoDoorId", w.mosquitoDoorId ?: JSONObject.NULL)
+                    put("mosquitoPlisseId", w.mosquitoPlisseId ?: JSONObject.NULL)
                     put("selectedExtraIds", JSONArray(w.selectedExtraIds))
                     put("selectedWorkIds", JSONArray(w.selectedWorkIds))
                     put("note", w.note)
@@ -2388,6 +2594,9 @@ object AppStateStorage {
             if (worksArr != null) {
                 for (k in 0 until worksArr.length()) workList.add(worksArr.getString(k))
             }
+            val doorHw = if (wo.isNull("doorHardwareId") || !wo.has("doorHardwareId")) null else wo.optString("doorHardwareId").takeIf { it.isNotBlank() }
+            val sashHw = if (wo.isNull("sashHardwareId") || !wo.has("sashHardwareId")) null else wo.optString("sashHardwareId").takeIf { it.isNotBlank() }
+            val transomHw = if (wo.isNull("transomHardwareId") || !wo.has("transomHardwareId")) null else wo.optString("transomHardwareId").takeIf { it.isNotBlank() }
             windows.add(
                 WindowItem(
                     id = wo.getString("id"),
@@ -2409,7 +2618,13 @@ object AppStateStorage {
                     outerSillId = wo.optString("outerSillId", "sill_out_none"),
                     financialSchemeId = wo.optString("financialSchemeId", "fin_none"),
                     hardwareBrandId = wo.optString("hardwareBrandId", "hw_none"),
+                    doorHardwareId = doorHw,
+                    sashHardwareId = sashHw,
+                    transomHardwareId = transomHw,
                     mosquitoSystemId = wo.optString("mosquitoSystemId", "msq_none"),
+                    mosquitoWindowId = if (wo.isNull("mosquitoWindowId") || !wo.has("mosquitoWindowId")) null else wo.optString("mosquitoWindowId").takeIf { it.isNotBlank() },
+                    mosquitoDoorId = if (wo.isNull("mosquitoDoorId") || !wo.has("mosquitoDoorId")) null else wo.optString("mosquitoDoorId").takeIf { it.isNotBlank() },
+                    mosquitoPlisseId = if (wo.isNull("mosquitoPlisseId") || !wo.has("mosquitoPlisseId")) null else wo.optString("mosquitoPlisseId").takeIf { it.isNotBlank() },
                     selectedExtraIds = extraList,
                     selectedWorkIds = workList,
                     note = wo.optString("note", ""),
@@ -2542,7 +2757,12 @@ object AppStateStorage {
             isLegacyImport = o.optBoolean("isLegacyImport", false),
             legacySystemName = if (o.isNull("legacySystemName") || !o.has("legacySystemName")) null else o.optString("legacySystemName").takeIf { it.isNotBlank() },
             legacyGlazingName = if (o.isNull("legacyGlazingName") || !o.has("legacyGlazingName")) null else o.optString("legacyGlazingName").takeIf { it.isNotBlank() },
-            legacyColorName = if (o.isNull("legacyColorName") || !o.has("legacyColorName")) null else o.optString("legacyColorName").takeIf { it.isNotBlank() }
+            legacyColorName = if (o.isNull("legacyColorName") || !o.has("legacyColorName")) null else o.optString("legacyColorName").takeIf { it.isNotBlank() },
+            mosquitoPricingMode = try {
+                MosquitoPricingMode.valueOf(o.optString("mosquitoPricingMode", "CLIENT"))
+            } catch (_: Exception) {
+                MosquitoPricingMode.CLIENT
+            }
         )
     }
 
@@ -2563,7 +2783,9 @@ object AppStateStorage {
                         put("isDoorSash", op.properties.isDoorSash)
                         put("isReverseDoorSash", op.properties.isReverseDoorSash)
                         put("isSandwichFilling", op.properties.isSandwichFilling)
-                        put("hasMosquitoNet", op.properties.hasMosquitoNet)
+                        val msqType = op.properties.effectiveMosquitoNetType()
+                        put("hasMosquitoNet", msqType != null)
+                        put("mosquitoNetType", msqType?.name ?: JSONObject.NULL)
                         put("hasHorizontalSashImpost", op.properties.hasHorizontalSashImpost)
                         put("sashImpostHeightFromBottomMm", op.properties.sashImpostHeightFromBottomMm.toDouble())
                         put("bottomPartIsSandwich", op.properties.bottomPartIsSandwich)
@@ -2637,6 +2859,16 @@ object AppStateStorage {
                     emptyList()
                 }
                 val splitRatio = oo.optDouble("shtulpSplitRatio", 0.5).toFloat().coerceIn(0.15f, 0.85f)
+                val rawHasMsq = oo.optBoolean("hasMosquitoNet", false)
+                val parsedMsqType = if (oo.has("mosquitoNetType") && !oo.isNull("mosquitoNetType")) {
+                    try {
+                        MosquitoNetType.valueOf(oo.optString("mosquitoNetType"))
+                    } catch (_: Exception) {
+                        if (rawHasMsq) MosquitoNetType.WINDOW else null
+                    }
+                } else {
+                    if (rawHasMsq) MosquitoNetType.WINDOW else null
+                }
                 openings.add(
                     OpeningCellNode(
                         id = oo.getString("id"),
@@ -2650,7 +2882,8 @@ object AppStateStorage {
                             isDoorSash = oo.optBoolean("isDoorSash", false),
                             isReverseDoorSash = oo.optBoolean("isReverseDoorSash", false),
                             isSandwichFilling = oo.optBoolean("isSandwichFilling", false),
-                            hasMosquitoNet = oo.optBoolean("hasMosquitoNet", false),
+                            hasMosquitoNet = parsedMsqType != null,
+                            mosquitoNetType = parsedMsqType,
                             hasHorizontalSashImpost = oo.optBoolean("hasHorizontalSashImpost", false),
                             sashImpostHeightFromBottomMm = oo.optDouble("sashImpostHeightFromBottomMm", 800.0).toFloat(),
                             bottomPartIsSandwich = oo.optBoolean("bottomPartIsSandwich", false),

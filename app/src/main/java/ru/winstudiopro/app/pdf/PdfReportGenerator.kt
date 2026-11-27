@@ -224,9 +224,9 @@ object PdfReportGenerator {
                     listOf("${fmtMoney2(res.costCustomPainting)} ${normalizeCurrencyDisplay(order.currencySymbol)}")
                 )
             }
-            val hwBrand = hardwareBrandsCatalog.find { it.id == wItem.hardwareBrandId }
-            if (hwBrand != null && hwBrand.id != "hw_none") {
-                drawCategoryAndItems("фурнитура", listOf(hwBrand.name))
+            val hwNames = resolveWindowHardwareLabels(wItem, hardwareBrandsCatalog)
+            if (hwNames.isNotEmpty()) {
+                drawCategoryAndItems("фурнитура", hwNames)
             }
             val selectedExtras = buildList {
                 if (wItem.addons.hasCornerProfile) add("Угловик (1 шт.)")
@@ -2259,6 +2259,28 @@ object PdfReportGenerator {
         val priceRows: List<Pair<String, String>>
     )
 
+    private fun resolveWindowHardwareLabels(
+        wItem: WindowItem,
+        hardwareBrandsCatalog: List<HardwareBrandItem>
+    ): List<String> {
+        val groupsPresent = wItem.topology.frames
+            .flatMap { it.openings }
+            .mapNotNull { WindowBomAndCostEngine.resolveOpeningHardwareGroup(it.properties) }
+            .distinct()
+        if (groupsPresent.isEmpty()) return emptyList()
+        val resolved = groupsPresent.mapNotNull { grp ->
+            WindowBomAndCostEngine.resolveGroupHardwareBrand(wItem, grp, hardwareBrandsCatalog)?.let { brand ->
+                grp to brand
+            }
+        }
+        if (resolved.isEmpty()) return emptyList()
+        return if (groupsPresent.size == 1 && resolved.size == 1) {
+            listOf(resolved.first().second.name)
+        } else {
+            resolved.map { (grp, brand) -> "${grp.titleRu}: ${brand.name}" }
+        }
+    }
+
     fun buildCompactProposalCellModel(
         indexOneBased: Int,
         order: CustomerOrder,
@@ -2279,11 +2301,14 @@ object PdfReportGenerator {
             "Профиль: —"
         }
         val glzLine = "Заполнение: ${res.glazing.name}"
-        val hwBrand = hardwareBrandsCatalog.find { it.id == wItem.hardwareBrandId }
-        val hwLine = if (hwBrand != null && hwBrand.id != "hw_none") {
-            "Фурнитура: ${hwBrand.name}"
-        } else {
-            "Фурнитура: стандарт"
+        val hwSummaryLabels = resolveWindowHardwareLabels(wItem, hardwareBrandsCatalog)
+        val hasActiveOpenings = wItem.topology.frames.any { f ->
+            f.openings.any { WindowBomAndCostEngine.resolveOpeningHardwareGroup(it.properties) != null }
+        }
+        val hwLine = when {
+            hwSummaryLabels.isNotEmpty() -> "Фурнитура: ${hwSummaryLabels.joinToString(", ")}"
+            hasActiveOpenings -> "Фурнитура: клиентская"
+            else -> "Фурнитура: —"
         }
 
         val extras = mutableListOf<String>()

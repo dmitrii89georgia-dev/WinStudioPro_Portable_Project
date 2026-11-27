@@ -255,10 +255,18 @@ data class FinancialSchemeItem(
     val markupPercent: Double = 0.0
 )
 
+enum class HardwareGroup(val titleRu: String) {
+    DOOR("Дверная"),
+    SASH("Створка"),
+    TRANSOM("Форточка")
+}
+
 data class HardwareBrandItem(
     val id: String,
     val name: String,
-    val priceMultiplierOrAddon: Double = 0.0
+    val priceMultiplierOrAddon: Double = 0.0,
+    val group: HardwareGroup = HardwareGroup.SASH,
+    val isDefault: Boolean = false
 )
 
 enum class UnitRateType(val labelRu: String) {
@@ -341,11 +349,23 @@ data class SelectedOrderService(
     val customPriceOverride: Double? = null
 )
 
+enum class MosquitoNetType(val shortBadge: String, val titleRu: String) {
+    WINDOW("О", "Оконная"),
+    DOOR("Д", "Дверная"),
+    PLISSE("П", "Плиссе")
+}
+
 data class MosquitoSystemItem(
     val id: String,
     val name: String,
+    val netType: MosquitoNetType = MosquitoNetType.WINDOW,
+    val dealerPricePerM2: Double = 0.0,
+    val clientPricePerM2: Double = 0.0,
+    val isDefault: Boolean = false
+) {
     val pricePerM2: Double
-)
+        get() = clientPricePerM2
+}
 
 enum class AppThemeMode(val titleRu: String) {
     LIGHT("Светлая (Классическая)"),
@@ -471,14 +491,17 @@ object DefaultCatalogs {
     )
 
     fun defaultHardwareBrands(): List<HardwareBrandItem> = listOf(
-        HardwareBrandItem("hw_none", "не учитывать", 0.0),
-        HardwareBrandItem("hw_acado", "acado", 12.0),
-        HardwareBrandItem("hw_maco", "maco", 25.0),
-        HardwareBrandItem("hw_roto", "roto", 28.0),
-        HardwareBrandItem("hw_roto_patio", "roto patio", 85.0),
-        HardwareBrandItem("hw_siegenia", "siegenia", 24.0),
-        HardwareBrandItem("hw_white_1", "белая тип 1", 18.0),
-        HardwareBrandItem("hw_white_2", "белая тип 2", 22.0)
+        HardwareBrandItem("hw_none", "не учитывать", 0.0, HardwareGroup.SASH, false),
+        HardwareBrandItem("hw_acado", "acado", 12.0, HardwareGroup.SASH, false),
+        HardwareBrandItem("hw_maco", "maco", 25.0, HardwareGroup.SASH, true),
+        HardwareBrandItem("hw_roto", "roto", 28.0, HardwareGroup.SASH, false),
+        HardwareBrandItem("hw_roto_patio", "roto patio", 85.0, HardwareGroup.SASH, false),
+        HardwareBrandItem("hw_siegenia", "siegenia", 24.0, HardwareGroup.SASH, false),
+        HardwareBrandItem("hw_white_1", "белая тип 1", 18.0, HardwareGroup.SASH, false),
+        HardwareBrandItem("hw_white_2", "белая тип 2", 22.0, HardwareGroup.SASH, false),
+        HardwareBrandItem("hw_door_base", "дверная базовая", 45.0, HardwareGroup.DOOR, true),
+        HardwareBrandItem("hw_door_roto", "roto door", 65.0, HardwareGroup.DOOR, false),
+        HardwareBrandItem("hw_transom_base", "форточная базовая", 18.0, HardwareGroup.TRANSOM, true)
     )
 
     fun defaultExtraAccessories(): List<ExtraAccessoryItem> = listOf(
@@ -509,12 +532,12 @@ object DefaultCatalogs {
     )
 
     fun defaultMosquitoSystems(): List<MosquitoSystemItem> = listOf(
-        MosquitoSystemItem("msq_none", "не учитывать", 0.0),
-        MosquitoSystemItem("msq_anticat", "сетка антикошка", 25.0),
-        MosquitoSystemItem("msq_white", "сетка белая", 15.0),
-        MosquitoSystemItem("msq_brown", "сетка коричневая", 17.0),
-        MosquitoSystemItem("msq_window", "сетка окно", 16.0),
-        MosquitoSystemItem("msq_plisse", "сетка плиссе", 30.0),
-        MosquitoSystemItem("msq_gray", "сетка серая", 16.0)
+        MosquitoSystemItem("msq_none", "не учитывать", MosquitoNetType.WINDOW, 0.0, 0.0, false),
+        MosquitoSystemItem("msq_window_std", "Оконная стандарт", MosquitoNetType.WINDOW, 10.0, 16.0, true),
+        MosquitoSystemItem("msq_white", "Оконная белая", MosquitoNetType.WINDOW, 9.5, 15.0, false),
+        MosquitoSystemItem("msq_anticat", "Оконная антикошка", MosquitoNetType.WINDOW, 16.0, 25.0, false),
+        MosquitoSystemItem("msq_door_std", "Дверная на петлях", MosquitoNetType.DOOR, 18.0, 28.0, true),
+        MosquitoSystemItem("msq_door_brown", "Дверная коричневая", MosquitoNetType.DOOR, 20.0, 32.0, false),
+        MosquitoSystemItem("msq_plisse_std", "Плиссе стандарт", MosquitoNetType.PLISSE, 22.0, 35.0, true)
     )
 }

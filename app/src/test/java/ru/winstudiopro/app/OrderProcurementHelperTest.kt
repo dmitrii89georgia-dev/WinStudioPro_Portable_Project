@@ -53,7 +53,7 @@ class OrderProcurementHelperTest {
             profileSystemId = alProfile.id,
             glazingId = "sp_24",
             colorId = alProfile.colors.first().id,
-            hardwareBrandId = hardwareBrands.first().id
+            sashHardwareId = hardwareBrands.first { it.id != "hw_none" }.id
         )
         val res = WindowBomAndCostEngine.calculateWindow(
             window = win,
@@ -77,6 +77,19 @@ class OrderProcurementHelperTest {
         assertEquals(2, hwRows[0].quantity)
         assertTrue(hwRows[0].falzWidthMm > 400 && hwRows[0].falzHeightMm > 800)
         assertTrue(hwRows[0].isSelected)
+
+        // При выборе "Не учитывать" (hw_none) створка не попадает в заказ фурнитуры (нет фиктивной строки "Стандарт")
+        val noneWin = win.copy(sashHardwareId = "hw_none", hardwareBrandId = "hw_none")
+        val noneRes = WindowBomAndCostEngine.calculateWindow(
+            window = noneWin,
+            profileSystems = profiles,
+            glazingCatalog = glazing,
+            colorCatalog = colors,
+            sillsCatalog = sills,
+            hardwareBrandsCatalog = hardwareBrands
+        )
+        val noneHwRows = OrderProcurementHelper.buildHardwareOrderItems(listOf(noneRes), hardwareBrands)
+        assertTrue(noneHwRows.isEmpty())
     }
 
     @Test

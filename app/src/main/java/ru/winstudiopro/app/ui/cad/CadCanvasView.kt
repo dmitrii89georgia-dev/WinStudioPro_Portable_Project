@@ -40,6 +40,11 @@ private data class RectHotspot(
     val action: () -> Unit
 )
 
+private class HotspotStore {
+    var circles: List<CircleHotspot> = emptyList()
+    var rects: List<RectHotspot> = emptyList()
+}
+
 /**
  * Интерактивный 2D САПР-холст с правильным порядком слоёв (Z-Order),
  * честной шириной дверного профиля, 5 вариантами внутренних импостов, штульпом и размерными цепочками.
@@ -66,8 +71,7 @@ fun InteractiveWindowCadCanvas(
     bottomSafeInsetPx: Float = 0f,
     modifier: Modifier = Modifier
 ) {
-    var circleHotspots by remember { mutableStateOf<List<CircleHotspot>>(emptyList()) }
-    var rectHotspots by remember { mutableStateOf<List<RectHotspot>>(emptyList()) }
+    val hotspotStore = remember { HotspotStore() }
 
     val latestTopology by rememberUpdatedState(topology)
     val latestOnOpenCellDialog by rememberUpdatedState(onOpenCellDialog)
@@ -89,14 +93,14 @@ fun InteractiveWindowCadCanvas(
             .pointerInput(topology, showControls) {
                 detectTapGestures { tap ->
                     // Проверяем кружки (priorityCircles идут ПОСЛЕ centerOpeningCircles -> срабатывают первыми)
-                    val hitCircle = circleHotspots.lastOrNull { c ->
+                    val hitCircle = hotspotStore.circles.lastOrNull { c ->
                         hypot(tap.x - c.center.x, tap.y - c.center.y) <= c.hitRadius
                     }
                     if (hitCircle != null) {
                         hitCircle.action()
                         return@detectTapGestures
                     }
-                    val hitRect = rectHotspots.lastOrNull { r -> r.rect.contains(tap) }
+                    val hitRect = hotspotStore.rects.lastOrNull { r -> r.rect.contains(tap) }
                     if (hitRect != null) {
                         hitRect.action()
                     }
@@ -963,8 +967,8 @@ fun InteractiveWindowCadCanvas(
         }
 
         // priorityCircles идут ПОСЛЕ centerOpeningCircles -> при пересечении угловых/удаляющих кнопок с 2× центром побеждают приоритетные!
-        circleHotspots = centerOpeningCircles + priorityCircles
-        rectHotspots = newRects
+        hotspotStore.circles = centerOpeningCircles + priorityCircles
+        hotspotStore.rects = newRects
     }
 }
 
