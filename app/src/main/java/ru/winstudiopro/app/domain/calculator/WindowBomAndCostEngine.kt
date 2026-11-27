@@ -837,17 +837,22 @@ object WindowBomAndCostEngine {
                     val repLeafH = leafSpecs.first().outerHMm.roundToInt()
                     val falzW = (repLeafW - 16).coerceAtLeast(250)
                     val falzH = (repLeafH - 16).coerceAtLeast(250)
-                    val baseSetPrice = when {
-                        props.isDoorSash -> profile.priceDoorHardware
-                        props.openingType == SashOpeningType.BLIND_SASH -> 0.0
-                        props.openingType == SashOpeningType.TURN_LEFT || props.openingType == SashOpeningType.TURN_RIGHT -> profile.priceMechanicTurn
-                        props.openingType == SashOpeningType.TILT_TURN_LEFT || props.openingType == SashOpeningType.TILT_TURN_RIGHT -> profile.priceMechanicTiltTurn
-                        props.openingType == SashOpeningType.TRANSOM_BOTTOM || props.openingType == SashOpeningType.TRANSOM_TOP -> profile.priceMechanicTransom
-                        isDoubleShtulp -> profile.priceMechanicShtulp
-                        props.openingType == SashOpeningType.SLIDING_LEFT || props.openingType == SashOpeningType.SLIDING_RIGHT || isVertDouble -> profile.priceMechanicSliding
-                        else -> 0.0
+                    val isHardwareExcluded = window.hardwareBrandId == "hw_none" || hwBrand?.id == "hw_none"
+                    val baseSetPrice = if (isHardwareExcluded) {
+                        0.0
+                    } else {
+                        when {
+                            props.isDoorSash -> profile.priceDoorHardware
+                            props.openingType == SashOpeningType.BLIND_SASH -> 0.0
+                            props.openingType == SashOpeningType.TURN_LEFT || props.openingType == SashOpeningType.TURN_RIGHT -> profile.priceMechanicTurn
+                            props.openingType == SashOpeningType.TILT_TURN_LEFT || props.openingType == SashOpeningType.TILT_TURN_RIGHT -> profile.priceMechanicTiltTurn
+                            props.openingType == SashOpeningType.TRANSOM_BOTTOM || props.openingType == SashOpeningType.TRANSOM_TOP -> profile.priceMechanicTransom
+                            isDoubleShtulp -> profile.priceMechanicShtulp
+                            props.openingType == SashOpeningType.SLIDING_LEFT || props.openingType == SashOpeningType.SLIDING_RIGHT || isVertDouble -> profile.priceMechanicSliding
+                            else -> 0.0
+                        }
                     }
-                    val brandAddon = if (hwBrand != null && hwBrand.id != "hw_none") hwBrand.priceMultiplierOrAddon else 0.0
+                    val brandAddon = if (!isHardwareExcluded && hwBrand != null) hwBrand.priceMultiplierOrAddon else 0.0
                     val setPrice = baseSetPrice + brandAddon
                     val rangeGroup = "FFB ${((falzW / 200) * 200)}..${((falzW / 200) + 1) * 200} / FFH ${((falzH / 200) * 200)}..${((falzH / 200) + 1) * 200}"
                     hardwareSpecs.add(

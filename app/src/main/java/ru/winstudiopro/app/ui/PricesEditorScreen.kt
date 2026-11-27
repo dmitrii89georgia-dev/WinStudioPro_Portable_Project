@@ -615,10 +615,9 @@ internal fun PricesEditorScreen(
                                         singleLine = true
                                     )
                                 }
-                                Row(
+                                Column(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         UnitRateType.entries.forEach { rt ->
@@ -656,7 +655,8 @@ internal fun PricesEditorScreen(
                                             }
                                         },
                                         shape = RoundedCornerShape(12.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue)
+                                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                                        modifier = Modifier.align(Alignment.End)
                                     ) {
                                         Text("+ Добавить", color = Color.White, fontWeight = FontWeight.SemiBold)
                                     }
@@ -674,6 +674,11 @@ internal fun PricesEditorScreen(
                             onSavePrice = { newP ->
                                 onSaveExtras(extraAccessories.map { if (it.id == item.id) it.copy(price = newP) else it })
                                 savedToast = "Обновлена цена «${item.name}»"
+                            },
+                            selectedRateType = item.rateType,
+                            onSelectRateType = { newRt ->
+                                onSaveExtras(extraAccessories.map { if (it.id == item.id) it.copy(rateType = newRt) else it })
+                                savedToast = "Единица расчёта «${item.name}»: за ${newRt.labelRu}"
                             },
                             onDelete = { onSaveExtras(extraAccessories.filterNot { it.id == item.id }) }
                         )
@@ -724,10 +729,9 @@ internal fun PricesEditorScreen(
                                         singleLine = true
                                     )
                                 }
-                                Row(
+                                Column(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         UnitRateType.entries.forEach { rt ->
@@ -765,7 +769,8 @@ internal fun PricesEditorScreen(
                                             }
                                         },
                                         shape = RoundedCornerShape(12.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue)
+                                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                                        modifier = Modifier.align(Alignment.End)
                                     ) {
                                         Text("+ Добавить", color = Color.White, fontWeight = FontWeight.SemiBold)
                                     }
@@ -783,6 +788,11 @@ internal fun PricesEditorScreen(
                             onSavePrice = { newP ->
                                 onSaveWorks(workServices.map { if (it.id == item.id) it.copy(price = newP) else it })
                                 savedToast = "Обновлена расценка монтажа «${item.name}»"
+                            },
+                            selectedRateType = item.rateType,
+                            onSelectRateType = { newRt ->
+                                onSaveWorks(workServices.map { if (it.id == item.id) it.copy(rateType = newRt) else it })
+                                savedToast = "Единица расчёта «${item.name}»: за ${newRt.labelRu}"
                             },
                             onDelete = { onSaveWorks(workServices.filterNot { it.id == item.id }) }
                         )
@@ -1307,6 +1317,8 @@ private fun EditablePriceRowCard(
     initialPrice: Double,
     currencySymbol: String,
     onSavePrice: (Double) -> Unit,
+    selectedRateType: UnitRateType? = null,
+    onSelectRateType: ((UnitRateType) -> Unit)? = null,
     onDelete: (() -> Unit)? = null
 ) {
     val palette = LocalWinStudioPalette.current
@@ -1319,41 +1331,73 @@ private fun EditablePriceRowCard(
         shadowElevation = if (palette.isDark) 0.dp else 1.5.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Column(modifier = Modifier.weight(1.2f)) {
-                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, color = palette.textPrimary)
-                Text(subtitle, fontSize = 11.5.sp, color = palette.textSecondary)
-            }
-            OutlinedTextField(
-                value = priceText,
-                onValueChange = { priceText = it },
-                label = { Text(currencySymbol, fontSize = 10.5.sp) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.weight(0.85f),
-                singleLine = true
-            )
-            Button(
-                onClick = {
-                    val p = priceText.replace(',', '.').toDoubleOrNull() ?: initialPrice
-                    onSavePrice(p)
-                },
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
-                contentPadding = PaddingValues(horizontal = 12.dp),
-                modifier = Modifier.height(44.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(strings.okBtn, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                Column(modifier = Modifier.weight(1.2f)) {
+                    Text(title, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp, color = palette.textPrimary)
+                    Text(subtitle, fontSize = 11.5.sp, color = palette.textSecondary)
+                }
+                OutlinedTextField(
+                    value = priceText,
+                    onValueChange = { priceText = it },
+                    label = { Text(currencySymbol, fontSize = 10.5.sp) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.weight(0.85f),
+                    singleLine = true
+                )
+                Button(
+                    onClick = {
+                        val p = priceText.replace(',', '.').toDoubleOrNull() ?: initialPrice
+                        onSavePrice(p)
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    modifier = Modifier.height(44.dp)
+                ) {
+                    Text(strings.okBtn, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                }
+                if (onDelete != null) {
+                    IconButton(onClick = onDelete, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Rounded.DeleteOutline, contentDescription = strings.deleteWindowDesc, tint = palette.accentRed)
+                    }
+                }
             }
-            if (onDelete != null) {
-                IconButton(onClick = onDelete, modifier = Modifier.size(40.dp)) {
-                    Icon(Icons.Rounded.DeleteOutline, contentDescription = strings.deleteWindowDesc, tint = palette.accentRed)
+            if (selectedRateType != null && onSelectRateType != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    UnitRateType.entries.forEach { rt ->
+                        val sel = selectedRateType == rt
+                        FilterChip(
+                            selected = sel,
+                            onClick = { if (!sel) onSelectRateType(rt) },
+                            label = {
+                                Text(
+                                    "за ${rt.labelRu}",
+                                    fontSize = 11.sp,
+                                    color = if (sel) Color.White else palette.textPrimary
+                                )
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = palette.accentBlue,
+                                containerColor = palette.secondaryBackground
+                            )
+                        )
+                    }
                 }
             }
         }

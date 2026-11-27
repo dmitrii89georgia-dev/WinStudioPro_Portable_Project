@@ -183,4 +183,53 @@ class WindowBomAndCostEngineTest {
         assertFalse(allocations.any { it.colorName.equals(whiteColor.name, ignoreCase = true) })
         assertTrue(allocations.any { it.isFromRemnantStock && it.colorName.equals(anthraciteColor.name, ignoreCase = true) })
     }
+
+    @Test
+    fun `hardwareBrandId hw_none zeroes out costHardware while preserving hardwareSpecs`() {
+        val profiles = DefaultCatalogs.defaultProfileSystems()
+        val profile = profiles.first()
+        val glazing = DefaultCatalogs.defaultGlazingItems()
+        val colors = DefaultCatalogs.defaultColors()
+        val sills = DefaultCatalogs.defaultSills()
+        val hwBrands = DefaultCatalogs.defaultHardwareBrands()
+
+        val topo = WindowCadOperations.updateOpeningProperties(
+            WindowCadOperations.single1500Topology(),
+            "op1",
+            OpeningProperties(openingType = SashOpeningType.TILT_TURN_RIGHT)
+        )
+        val baseWin = WindowItem(
+            id = "w_hw_test",
+            name = "Окно фурнитура",
+            quantity = 1,
+            topology = topo,
+            profileSystemId = profile.id,
+            glazingId = "sp_24",
+            colorId = profile.colors.first().id,
+            hardwareBrandId = "hw_none"
+        )
+
+        val resExcluded = WindowBomAndCostEngine.calculateWindow(
+            window = baseWin,
+            profileSystems = profiles,
+            glazingCatalog = glazing,
+            colorCatalog = colors,
+            sillsCatalog = sills,
+            hardwareBrandsCatalog = hwBrands
+        )
+        assertEquals(0.0, resExcluded.costHardware, 0.001)
+        assertEquals(1, resExcluded.hardwareSpecs.size)
+        assertEquals(0.0, resExcluded.hardwareSpecs.first().costPerSet, 0.001)
+
+        val brand = hwBrands.first { it.id != "hw_none" }
+        val resIncluded = WindowBomAndCostEngine.calculateWindow(
+            window = baseWin.copy(hardwareBrandId = brand.id),
+            profileSystems = profiles,
+            glazingCatalog = glazing,
+            colorCatalog = colors,
+            sillsCatalog = sills,
+            hardwareBrandsCatalog = hwBrands
+        )
+        assertEquals(profile.priceMechanicTiltTurn + brand.priceMultiplierOrAddon, resIncluded.costHardware, 0.001)
+    }
 }
