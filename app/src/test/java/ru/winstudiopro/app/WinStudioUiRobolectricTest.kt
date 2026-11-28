@@ -143,7 +143,7 @@ class WinStudioUiRobolectricTest {
         // Открываем первый существующий заказ из базы и заходим в 2D-конструктор
         composeRule.onNodeWithTag("dashboard_orders_card").performClick()
         composeRule.waitForIdle()
-        composeRule.onAllNodesWithText("Окон:", substring = true)[0].performClick()
+        composeRule.onAllNodesWithText("Констр.:", substring = true)[0].performClick()
         composeRule.waitForIdle()
 
         // Открываем "Заказ стеклопакетов"
@@ -237,7 +237,7 @@ class WinStudioUiRobolectricTest {
         // 2. Открываем заказ в 2D-конструкторе и проверяем нижнюю расчётную панель и правую шторку
         composeRule.onNodeWithTag("dashboard_orders_card").performClick()
         composeRule.waitForIdle()
-        composeRule.onAllNodesWithText("Окон:", substring = true)[0].performClick()
+        composeRule.onAllNodesWithText("Констр.:", substring = true)[0].performClick()
         composeRule.waitForIdle()
 
         composeRule.onNodeWithTag("cad_cost_bar").assertIsDisplayed()
@@ -262,5 +262,46 @@ class WinStudioUiRobolectricTest {
         composeRule.onNodeWithTag("drawer_done_button").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("cad_cost_bar").assertIsDisplayed()
+    }
+
+    @Test
+    fun `prices mosquito nets tab adds custom plisse net with dealer and client prices and cad displays mosquito controls`() {
+        composeRule.waitForIdle()
+
+        // 1. Открываем "Прайсы" -> вкладка "Москитные сетки"
+        composeRule.onNodeWithTag("dashboard_prices_card").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("price_tab_MOSQUITO_NETS").performScrollTo().performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("msq_add_name_input").performTextReplacement("Сетка плиссе Pro")
+        composeRule.onNodeWithTag("msq_add_type_PLISSE").performClick()
+        composeRule.onNodeWithTag("msq_add_dealer_price_input").performTextReplacement("35")
+        composeRule.onNodeWithTag("msq_add_client_price_input").performTextReplacement("60")
+        composeRule.onNodeWithTag("msq_add_button").performClick()
+        composeRule.waitForIdle()
+
+        assert(composeRule.onAllNodesWithText("Сетка плиссе Pro", substring = true).fetchSemanticsNodes().isNotEmpty())
+
+        composeRule.onNodeWithTag("top_bar_back_button").performClick()
+        composeRule.waitForIdle()
+
+        // 2. Открываем заказ в 2D-конструкторе -> проверяем колонку моск.сет. и шторку сеток + К/Д/П
+        composeRule.onNodeWithTag("dashboard_orders_card").performClick()
+        composeRule.waitForIdle()
+        composeRule.onAllNodesWithText("Констр.:", substring = true)[0].performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("cad_cost_col_mosquitos").performScrollTo().assertIsDisplayed()
+
+        composeRule.onNodeWithTag("cad_menu_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("mosquito_mode_DEALER").performScrollTo().performClick()
+        composeRule.onNodeWithTag("cad_menu_mosquito_order").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("mosquito_select_all_btn").assertIsDisplayed()
+        composeRule.onNodeWithTag("mosquito_generate_pdf_btn").assertIsDisplayed()
     }
 }

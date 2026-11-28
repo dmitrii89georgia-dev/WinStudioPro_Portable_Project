@@ -64,7 +64,8 @@ internal fun rememberOrderLedgerSnapshots(
     orderExtraServicesCatalog: List<OrderExtraServiceItem>,
     finSchemeSettings: FinSchemeSettings,
     cashAccounts: List<CashAccount>,
-    cashTransactions: List<CashTransaction>
+    cashTransactions: List<CashTransaction>,
+    mosquitoSystemsCatalog: List<MosquitoSystemItem> = DefaultCatalogs.defaultMosquitoSystems()
 ): List<OrderLedgerSnapshot> {
     return remember(
         orders,
@@ -79,7 +80,8 @@ internal fun rememberOrderLedgerSnapshots(
         orderExtraServicesCatalog,
         finSchemeSettings,
         cashAccounts,
-        cashTransactions
+        cashTransactions,
+        mosquitoSystemsCatalog
     ) {
         orders.filterNot { it.isLegacyImport }.map { order ->
             val winResults = order.windows.mapIndexed { idx, win ->
@@ -94,7 +96,9 @@ internal fun rememberOrderLedgerSnapshots(
                     hardwareBrandsCatalog = hardwareBrandsCatalog,
                     financialSchemesCatalog = finSchemeSettings.financialSchemes,
                     assemblyPricingCatalog = assemblyPricingCatalog,
-                    windowIndexInOrder = idx + 1
+                    windowIndexInOrder = idx + 1,
+                    mosquitoSystemsCatalog = mosquitoSystemsCatalog,
+                    mosquitoPricingMode = order.mosquitoPricingMode
                 )
             }
             val summary = WindowBomAndCostEngine.calculateOrderFinancialSummary(

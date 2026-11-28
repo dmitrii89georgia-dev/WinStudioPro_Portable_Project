@@ -1,10 +1,14 @@
 package ru.winstudiopro.app.ui
 
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -57,6 +61,7 @@ private enum class OrdersListTab {
 // =========================================================================================
 // ЭКРАН СПИСКА ЗАКАЗОВ (НОВЫЕ СВЕРХУ, ФИЛЬТР ПО СТАТУСАМ, СМАЙЛИКИ СРОКОВ, МИНИАТЮРЫ)
 // =========================================================================================
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun OrdersListScreen(
     orders: List<CustomerOrder>,
@@ -64,6 +69,9 @@ internal fun OrdersListScreen(
     onNewOrder: () -> Unit,
     onOpenOrder: (String) -> Unit,
     onUpdateOrders: (List<CustomerOrder>) -> Unit,
+    onBulkDeleteOrders: (Set<String>) -> Unit = { idsToDelete ->
+        onUpdateOrders(orders.filterNot { it.id in idsToDelete })
+    },
     onExportOrder: (CustomerOrder) -> Unit = {},
     onImportOrder: () -> Unit = {}
 ) {
@@ -80,6 +88,21 @@ internal fun OrdersListScreen(
     var deleteDraftTarget by remember { mutableStateOf<CustomerOrder?>(null) }
     var archiveOrderTarget by remember { mutableStateOf<CustomerOrder?>(null) }
     var deleteForeverTarget by remember { mutableStateOf<CustomerOrder?>(null) }
+    var selectedOrderIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showBulkDeleteConfirm by remember { mutableStateOf(false) }
+    val isSelectionMode = selectedOrderIds.isNotEmpty()
+
+    fun isOrderEligibleForBulkDelete(order: CustomerOrder): Boolean =
+        order.status.ordinal < OrderStatus.CONTRACT.ordinal
+
+    LaunchedEffect(orders) {
+        val eligibleIds = orders.filter(::isOrderEligibleForBulkDelete).map { it.id }.toSet()
+        selectedOrderIds = selectedOrderIds.intersect(eligibleIds)
+    }
+
+    BackHandler(enabled = isSelectionMode) {
+        selectedOrderIds = emptySet()
+    }
 
     val activeOrdersCount = remember(orders) { orders.count { !it.isArchived } }
     val archiveOrdersCount = remember(orders) { orders.count { it.isArchived } }
@@ -152,6 +175,89 @@ internal fun OrdersListScreen(
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(Icons.Rounded.Add, contentDescription = strings.newOrderTitle, tint = Color.White, modifier = Modifier.size(20.dp))
+                }
+            }
+        }
+
+        // Панель множественного выбора (при долгом нажатии на незащищённый заказ)
+        val selectableVisibleIds = remember(filtered) {
+            filtered.filter(::isOrderEligibleForBulkDelete).map { it.id }.toSet()
+        }
+        val allSelectableVisibleChosen = selectableVisibleIds.isNotEmpty() &&
+            selectableVisibleIds.all { it in selectedOrderIds }
+
+        if (isSelectionMode) {
+            Surface(
+                color = palette.accentBlue.copy(alpha = 0.12f),
+                border = BorderStroke(1.dp, palette.accentBlue.copy(alpha = 0.45f)),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .testTag("orders_bulk_action_bar")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "Выбрано: ${selectedOrderIds.size}",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = palette.accentBlue,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        onClick = {
+                            selectedOrderIds = if (allSelectableVisibleChosen) {
+                                selectedOrderIds - selectableVisibleIds
+                            } else {
+                                selectedOrderIds + selectableVisibleIds
+                            }
+                        },
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .testTag("orders_bulk_select_all_btn")
+                    ) {
+                        Text(
+                            text = if (allSelectableVisibleChosen) "Снять все" else "Выделить все",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1
+                        )
+                    }
+                    Button(
+                        enabled = selectedOrderIds.isNotEmpty(),
+                        onClick = { showBulkDeleteConfirm = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.accentRed),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .testTag("orders_bulk_delete_btn")
+                    ) {
+                        Text(
+                            text = "Удалить",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    TextButton(
+                        onClick = { selectedOrderIds = emptySet() },
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .testTag("orders_bulk_cancel_btn")
+                    ) {
+                        Text(
+                            text = "Отмена",
+                            fontSize = 12.sp,
+                            color = palette.textSecondary
+                        )
+                    }
                 }
             }
         }
@@ -287,15 +393,53 @@ internal fun OrdersListScreen(
                     }
                     var statusDropdownExpanded by remember { mutableStateOf(false) }
 
+                    val canSelectForBulk = isOrderEligibleForBulkDelete(ord)
+                    val isSelectedForBulk = ord.id in selectedOrderIds
+
                     Surface(
-                        color = palette.cardSurface,
+                        color = if (isSelectedForBulk) palette.accentBlue.copy(alpha = 0.08f) else palette.cardSurface,
                         shape = RoundedCornerShape(18.dp),
-                        border = BorderStroke(1.5.dp, statusColor.copy(alpha = 0.85f)),
+                        border = BorderStroke(
+                            width = if (isSelectedForBulk) 2.2.dp else 1.5.dp,
+                            color = if (isSelectedForBulk) palette.accentBlue else statusColor.copy(alpha = 0.85f)
+                        ),
                         shadowElevation = if (palette.isDark) 0.dp else 2.dp,
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(18.dp))
-                            .clickable { onOpenOrder(ord.id) }
+                            .combinedClickable(
+                                onClick = {
+                                    if (isSelectionMode) {
+                                        if (canSelectForBulk) {
+                                            selectedOrderIds = if (isSelectedForBulk) {
+                                                selectedOrderIds - ord.id
+                                            } else {
+                                                selectedOrderIds + ord.id
+                                            }
+                                        } else {
+                                            Toast.makeText(
+                                                context,
+                                                "Заказы со статусом «Договор» и выше защищены от массового удаления",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    } else {
+                                        onOpenOrder(ord.id)
+                                    }
+                                },
+                                onLongClick = {
+                                    if (canSelectForBulk) {
+                                        selectedOrderIds = selectedOrderIds + ord.id
+                                    } else {
+                                        Toast.makeText(
+                                            context,
+                                            "Заказы со статусом «Договор» и выше защищены от массового удаления",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                }
+                            )
+                            .testTag("order_card_${ord.id}")
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
                             // Строка 1: Название заказа слева + Раскрывающаяся цветная кнопка статуса справа
@@ -304,6 +448,25 @@ internal fun OrdersListScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                if (isSelectionMode) {
+                                    Icon(
+                                        imageVector = when {
+                                            !canSelectForBulk -> Icons.Rounded.Lock
+                                            isSelectedForBulk -> Icons.Rounded.CheckCircle
+                                            else -> Icons.Rounded.RadioButtonUnchecked
+                                        },
+                                        contentDescription = if (isSelectedForBulk) "Выбран" else "Не выбран",
+                                        tint = when {
+                                            !canSelectForBulk -> palette.textSecondary
+                                            isSelectedForBulk -> palette.accentBlue
+                                            else -> palette.textSecondary
+                                        },
+                                        modifier = Modifier
+                                            .padding(end = 8.dp)
+                                            .size(20.dp)
+                                            .testTag("order_bulk_indicator_${ord.id}")
+                                    )
+                                }
                                 Text(
                                     text = ord.orderNumber,
                                     fontWeight = FontWeight.Bold,
@@ -758,6 +921,40 @@ internal fun OrdersListScreen(
             dismissButton = {
                 TextButton(onClick = { deleteForeverTarget = null }) {
                     Text(strings.cancelBtn)
+                }
+            }
+        )
+    }
+
+    if (showBulkDeleteConfirm && selectedOrderIds.isNotEmpty()) {
+        val eligibleToDelete = orders
+            .filter { it.id in selectedOrderIds && isOrderEligibleForBulkDelete(it) }
+            .map { it.id }
+            .toSet()
+        AlertDialog(
+            onDismissRequest = { showBulkDeleteConfirm = false },
+            title = { Text("Удаление проектов", fontWeight = FontWeight.Bold, color = palette.accentRed) },
+            text = { Text("Действительно удалить ${eligibleToDelete.size} проект(ов)?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showBulkDeleteConfirm = false
+                        selectedOrderIds = emptySet()
+                        if (eligibleToDelete.isNotEmpty()) {
+                            onBulkDeleteOrders(eligibleToDelete)
+                        }
+                    },
+                    modifier = Modifier.testTag("orders_bulk_confirm_yes_btn")
+                ) {
+                    Text("Да", color = palette.accentRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showBulkDeleteConfirm = false },
+                    modifier = Modifier.testTag("orders_bulk_confirm_no_btn")
+                ) {
+                    Text("Нет")
                 }
             }
         )

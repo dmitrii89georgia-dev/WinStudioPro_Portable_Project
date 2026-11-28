@@ -63,6 +63,7 @@ internal fun CashManagerScreen(
     cashAccounts: List<CashAccount>,
     cashTransactions: List<CashTransaction>,
     cashExpenseCategories: List<CashExpenseCategory>,
+    mosquitoSystemsCatalog: List<MosquitoSystemItem> = DefaultCatalogs.defaultMosquitoSystems(),
     onSaveFinSchemeSettings: (FinSchemeSettings) -> Unit,
     onSaveCashAccounts: (List<CashAccount>) -> Unit,
     onSaveCashTransactions: (List<CashTransaction>) -> Unit,
@@ -90,7 +91,8 @@ internal fun CashManagerScreen(
         orderExtraServicesCatalog = orderExtraServicesCatalog,
         finSchemeSettings = finSchemeSettings,
         cashAccounts = cashAccounts,
-        cashTransactions = cashTransactions
+        cashTransactions = cashTransactions,
+        mosquitoSystemsCatalog = mosquitoSystemsCatalog
     )
 
     val accountBalances = remember(cashAccounts, cashTransactions) {

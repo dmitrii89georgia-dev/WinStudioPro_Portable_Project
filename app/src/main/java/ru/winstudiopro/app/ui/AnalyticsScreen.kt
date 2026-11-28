@@ -74,6 +74,7 @@ internal fun AnalyticsScreen(
     finSchemeSettings: FinSchemeSettings,
     cashAccounts: List<CashAccount>,
     cashTransactions: List<CashTransaction>,
+    mosquitoSystemsCatalog: List<MosquitoSystemItem> = DefaultCatalogs.defaultMosquitoSystems(),
     onOpenOrdersList: () -> Unit,
     onOpenCash: () -> Unit,
     onBack: () -> Unit
@@ -94,7 +95,8 @@ internal fun AnalyticsScreen(
         orderExtraServicesCatalog,
         finSchemeSettings,
         cashAccounts,
-        cashTransactions
+        cashTransactions,
+        mosquitoSystemsCatalog
     ) {
         ProductionAnalyticsCalculator.calculate(
             orders = orders,
@@ -109,7 +111,8 @@ internal fun AnalyticsScreen(
             orderExtraServicesCatalog = orderExtraServicesCatalog,
             finSchemeSettings = finSchemeSettings,
             cashAccounts = cashAccounts,
-            cashTransactions = cashTransactions
+            cashTransactions = cashTransactions,
+            mosquitoSystemsCatalog = mosquitoSystemsCatalog
         )
     }
 

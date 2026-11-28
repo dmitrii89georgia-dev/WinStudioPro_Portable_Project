@@ -262,7 +262,7 @@ fun ImpostsAndOpeningModalDialog(
         newOpeningType: SashOpeningType,
         sashImpostMode: SashImpostMode,
         paneSandwichFlags: List<Boolean>,
-        hasMosquito: Boolean,
+        mosquitoNetType: MosquitoNetType?,
         isDoor: Boolean,
         isReverseDoor: Boolean
     ) -> Unit
@@ -274,7 +274,7 @@ fun ImpostsAndOpeningModalDialog(
     var paneFlags by remember {
         mutableStateOf(List(3) { idx -> props.isPaneSandwich(idx) })
     }
-    var hasMosquito by remember { mutableStateOf(props.hasMosquitoNet) }
+    var mosquitoNetType by remember { mutableStateOf(props.effectiveMosquitoNetType()) }
     var isDoor by remember { mutableStateOf(props.isDoorSash) }
     var isReverseDoor by remember { mutableStateOf(props.isReverseDoorSash) }
 
@@ -467,7 +467,6 @@ fun ImpostsAndOpeningModalDialog(
                                                     selectedSashImpostMode = SashImpostMode.NONE
                                                     isDoor = false
                                                     isReverseDoor = false
-                                                    hasMosquito = false
                                                 } else {
                                                     selectedSplit = SplitOperation.NONE
                                                 }
@@ -603,27 +602,62 @@ fun ImpostsAndOpeningModalDialog(
                         }
                     }
 
-                    Row(
+                    // Москитная сетка: выбор типа О (Оконная), Д (Дверная), П (Плиссе)
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 44.dp)
-                            .clickable(enabled = selectedOpening.hasSashProfile) {
-                                hasMosquito = !hasMosquito
-                            }
-                            .testTag("checkbox_mosquito"),
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(top = 2.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Checkbox(
-                            checked = hasMosquito && selectedOpening.hasSashProfile,
-                            onCheckedChange = { hasMosquito = it },
-                            enabled = selectedOpening.hasSashProfile,
-                            colors = CheckboxDefaults.colors(checkedColor = p.accentBlue)
-                        )
                         Text(
-                            s.mosquitoCheckbox,
-                            fontSize = 12.5.sp,
-                            color = if (selectedOpening.hasSashProfile) p.textPrimary else p.textSecondary.copy(alpha = 0.45f)
+                            text = "${s.mosquitoCheckbox}:",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = p.textSecondary
                         )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            MosquitoNetType.entries.forEach { typeOpt ->
+                                val isChecked = mosquitoNetType == typeOpt
+                                Row(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .heightIn(min = 48.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (isChecked) p.accentBlue.copy(alpha = 0.14f) else p.background)
+                                        .border(
+                                            width = if (isChecked) 1.5.dp else 0.8.dp,
+                                            color = if (isChecked) p.accentBlue else p.divider,
+                                            shape = RoundedCornerShape(10.dp)
+                                        )
+                                        .clickable {
+                                            mosquitoNetType = if (isChecked) null else typeOpt
+                                        }
+                                        .padding(horizontal = 4.dp)
+                                        .testTag("checkbox_mosquito_${typeOpt.name}"),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Checkbox(
+                                        checked = isChecked,
+                                        onCheckedChange = { checked ->
+                                            mosquitoNetType = if (checked) typeOpt else null
+                                        },
+                                        colors = CheckboxDefaults.colors(checkedColor = p.accentBlue)
+                                    )
+                                    Text(
+                                        text = "${typeOpt.shortBadge} (${typeOpt.titleRu.take(4)}.)",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = if (isChecked) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isChecked) p.accentBlue else p.textPrimary,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -659,7 +693,7 @@ fun ImpostsAndOpeningModalDialog(
                                 selectedOpening,
                                 effectiveMode,
                                 finalFlags,
-                                hasMosquito && selectedOpening.hasSashProfile,
+                                mosquitoNetType,
                                 isDoor && selectedOpening.hasSashProfile,
                                 isReverseDoor && selectedOpening.hasSashProfile
                             )

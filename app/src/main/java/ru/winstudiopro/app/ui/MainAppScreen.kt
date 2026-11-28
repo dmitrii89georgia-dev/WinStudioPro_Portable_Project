@@ -50,6 +50,7 @@ import ru.winstudiopro.app.domain.model.ExtraAccessoryItem
 import ru.winstudiopro.app.domain.model.FinSchemeSettings
 import ru.winstudiopro.app.domain.model.GlazingCatalogItem
 import ru.winstudiopro.app.domain.model.HardwareBrandItem
+import ru.winstudiopro.app.domain.model.MosquitoSystemItem
 import ru.winstudiopro.app.domain.model.OrderExtraServiceItem
 import ru.winstudiopro.app.domain.model.OrderStatus
 import ru.winstudiopro.app.domain.model.ProfileSystemSpec
@@ -74,19 +75,20 @@ import java.util.UUID
 import kotlin.math.roundToInt
 
 enum class AppScreenMode {
-    METRO_HOME,          // Плиточный стартовый экран
-    CAD_WORKSPACE,       // 2D-редактор конструкций заказа
-    ORDERS_LIST,         // Список всех заказов (от нового к старому, с поиском и миниатюрами)
-    PROFILE_CONSTRUCTOR, // Конструктор профильных систем (геометрия в мм, допуски, формулы)
-    PRICES_SCREEN,       // Прайсы на системы, сухари, стеклопакеты, фурнитуру, разное, работы и фин. схему
-    WAREHOUSE_STOCK,     // Склад: папки по профильным системам (целые хлысты + деловые остатки)
-    CASH_MANAGER,        // Касса и счета (мультивалюта, история, категории расходов, зарплаты)
-    ANALYTICS_PULSE,     // Аналитика: пульс производства, графики выручки и маржи, KPI
-    UI_SETTINGS,         // Настройки интерфейса и реквизитов компании для PDF
-    USER_GUIDE,          // Обучение и краткая пошаговая инструкция по программе
-    WORKSHOP_CUTTING,    // Модуль задания в цех и линейного 1D-раскроя профилей
-    GLAZING_ORDER_EDITOR,// Редактор «Заказ стеклопакетов» перед генерацией PDF
-    HARDWARE_ORDER_EDITOR// Редактор «Заказ фурнитуры» перед генерацией PDF
+    METRO_HOME,            // Плиточный стартовый экран
+    CAD_WORKSPACE,         // 2D-редактор конструкций заказа
+    ORDERS_LIST,           // Список всех заказов (от нового к старому, с поиском и миниатюрами)
+    PROFILE_CONSTRUCTOR,   // Конструктор профильных систем (геометрия в мм, допуски, формулы)
+    PRICES_SCREEN,         // Прайсы на системы, сухари, стеклопакеты, фурнитуру, разное, работы и фин. схему
+    WAREHOUSE_STOCK,       // Склад: папки по профильным системам (целые хлысты + деловые остатки)
+    CASH_MANAGER,          // Касса и счета (мультивалюта, история, категории расходов, зарплаты)
+    ANALYTICS_PULSE,       // Аналитика: пульс производства, графики выручки и маржи, KPI
+    UI_SETTINGS,           // Настройки интерфейса и реквизитов компании для PDF
+    USER_GUIDE,            // Обучение и краткая пошаговая инструкция по программе
+    WORKSHOP_CUTTING,      // Модуль задания в цех и линейного 1D-раскроя профилей
+    GLAZING_ORDER_EDITOR,  // Редактор «Заказ стеклопакетов» перед генерацией PDF
+    HARDWARE_ORDER_EDITOR, // Редактор «Заказ фурнитуры» перед генерацией PDF
+    MOSQUITO_ORDER_EDITOR  // Редактор «Заказ москитных сеток» перед генерацией PDF
 }
 
 // Состояние вызова цифрового калькулятора размеров
@@ -159,6 +161,7 @@ fun WinStudioProMainApp(
     var glazingCatalog by remember { mutableStateOf(initialPersisted.glazingCatalog) }
     var colorCatalog by remember { mutableStateOf(initialPersisted.colorCatalog) }
     var hardwareBrands by remember { mutableStateOf(initialPersisted.hardwareBrands) }
+    var mosquitoSystems by remember { mutableStateOf(initialPersisted.mosquitoSystems) }
     var extraAccessories by remember { mutableStateOf(initialPersisted.extraAccessories) }
     var workServices by remember { mutableStateOf(initialPersisted.workServices) }
     var assemblyPricing by remember { mutableStateOf(initialPersisted.assemblyPricing) }
@@ -191,6 +194,7 @@ fun WinStudioProMainApp(
         newGlazing: List<GlazingCatalogItem> = glazingCatalog,
         newColors: List<ColorCatalogItem> = colorCatalog,
         newHardwareBrands: List<HardwareBrandItem> = hardwareBrands,
+        newMosquitoSystems: List<MosquitoSystemItem> = mosquitoSystems,
         newExtras: List<ExtraAccessoryItem> = extraAccessories,
         newWorks: List<WorkServiceItem> = workServices,
         newAssemblyPricing: AssemblyPricingCatalog = assemblyPricing,
@@ -208,6 +212,7 @@ fun WinStudioProMainApp(
         glazingCatalog = newGlazing,
         colorCatalog = newColors,
         hardwareBrands = newHardwareBrands,
+        mosquitoSystems = newMosquitoSystems,
         extraAccessories = newExtras,
         workServices = newWorks,
         assemblyPricing = newAssemblyPricing,
@@ -332,6 +337,7 @@ fun WinStudioProMainApp(
                     glazingCatalog = newState.glazingCatalog
                     colorCatalog = newState.colorCatalog
                     hardwareBrands = newState.hardwareBrands
+                    mosquitoSystems = newState.mosquitoSystems
                     extraAccessories = newState.extraAccessories
                     workServices = newState.workServices
                     assemblyPricing = newState.assemblyPricing
@@ -361,6 +367,7 @@ fun WinStudioProMainApp(
         newGlazing: List<GlazingCatalogItem> = glazingCatalog,
         newColors: List<ColorCatalogItem> = colorCatalog,
         newHardwareBrands: List<HardwareBrandItem> = hardwareBrands,
+        newMosquitoSystems: List<MosquitoSystemItem> = mosquitoSystems,
         newExtras: List<ExtraAccessoryItem> = extraAccessories,
         newWorks: List<WorkServiceItem> = workServices,
         newAssemblyPricing: AssemblyPricingCatalog = assemblyPricing,
@@ -377,6 +384,7 @@ fun WinStudioProMainApp(
         glazingCatalog = newGlazing
         colorCatalog = newColors
         hardwareBrands = newHardwareBrands
+        mosquitoSystems = newMosquitoSystems
         extraAccessories = newExtras
         workServices = newWorks
         assemblyPricing = newAssemblyPricing
@@ -393,6 +401,7 @@ fun WinStudioProMainApp(
             newGlazing = newGlazing,
             newColors = newColors,
             newHardwareBrands = newHardwareBrands,
+            newMosquitoSystems = newMosquitoSystems,
             newExtras = newExtras,
             newWorks = newWorks,
             newAssemblyPricing = newAssemblyPricing,
@@ -512,7 +521,7 @@ fun WinStudioProMainApp(
 
         val rawFirstWindow = WindowItem(
             id = UUID.randomUUID().toString(),
-            name = "Окно 1",
+            name = "Конструкция 1",
             quantity = 1,
             topology = WindowCadOperations.single1500Topology(),
             profileSystemId = defaultSys.id,
@@ -560,7 +569,8 @@ fun WinStudioProMainApp(
         screenMode = when (screenMode) {
             AppScreenMode.WORKSHOP_CUTTING,
             AppScreenMode.GLAZING_ORDER_EDITOR,
-            AppScreenMode.HARDWARE_ORDER_EDITOR -> AppScreenMode.CAD_WORKSPACE
+            AppScreenMode.HARDWARE_ORDER_EDITOR,
+            AppScreenMode.MOSQUITO_ORDER_EDITOR -> AppScreenMode.CAD_WORKSPACE
             AppScreenMode.USER_GUIDE -> AppScreenMode.UI_SETTINGS
             else -> AppScreenMode.METRO_HOME
         }
@@ -620,7 +630,8 @@ fun WinStudioProMainApp(
                                     orderExtraServicesCatalog = orderExtraServices,
                                     finSchemeSettings = finSchemeSettings,
                                     cashAccounts = cashAccounts,
-                                    cashTransactions = cashTransactions
+                                    cashTransactions = cashTransactions,
+                                    mosquitoSystemsCatalog = mosquitoSystems
                                 )
                                 QuickIncomeDialog(
                                     cashAccounts = cashAccounts,
@@ -684,6 +695,7 @@ fun WinStudioProMainApp(
                                 orderExtraServicesCatalog = orderExtraServices,
                                 finSchemeSettings = finSchemeSettings,
                                 stockRemnants = stockRemnants,
+                                mosquitoSystemsCatalog = mosquitoSystems,
                                 uiSettings = uiSettings,
                                 onSelectWindowIndex = { idx -> activeWindowIndex = idx },
                                 onUpdateOrder = { updatedOrder ->
@@ -717,6 +729,10 @@ fun WinStudioProMainApp(
                                     flushPendingOrderSaves()
                                     screenMode = AppScreenMode.HARDWARE_ORDER_EDITOR
                                 },
+                                onOpenMosquitoOrder = {
+                                    flushPendingOrderSaves()
+                                    screenMode = AppScreenMode.MOSQUITO_ORDER_EDITOR
+                                },
                                 onOpenPdfFile = onOpenPdfFile,
                                 onSharePdfFile = onSharePdfFile
                             )
@@ -734,6 +750,26 @@ fun WinStudioProMainApp(
                                 screenMode = AppScreenMode.CAD_WORKSPACE
                             },
                             onUpdateOrders = { updated -> handleOrdersUpdateWithStockDeduction(updated) },
+                            onBulkDeleteOrders = { selectedIds ->
+                                flushPendingOrderSaves()
+                                val deletedIds = orders
+                                    .filter { it.id in selectedIds && it.status.ordinal < OrderStatus.CONTRACT.ordinal }
+                                    .map { it.id }
+                                    .toSet()
+                                orders = orders.filterNot { it.id in deletedIds }
+                                ioScope.launch {
+                                    synchronized(dbWriteLock) {
+                                        deletedIds.forEach { delId ->
+                                            AppStateStorage.deleteOrderFromDb(context, delId)
+                                        }
+                                    }
+                                }
+                                Toast.makeText(
+                                    context,
+                                    "Удалено проектов: ${deletedIds.size}",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            },
                             onExportOrder = { ord ->
                                 val file = AppStateStorage.createOrderJsonExportFile(context, ord)
                                 onShareExportFile(file, "Заказ ${ord.orderNumber}")
@@ -767,11 +803,13 @@ fun WinStudioProMainApp(
                             assemblyPricing = assemblyPricing,
                             orderExtraServices = orderExtraServices,
                             finSchemeSettings = finSchemeSettings,
+                            mosquitoSystems = mosquitoSystems,
                             currencySymbol = normalizeCurrencyDisplay(uiSettings.currencySymbol),
                             onBack = { screenMode = AppScreenMode.METRO_HOME },
                             onSaveProfiles = { updated -> persistNonOrderState(newProfiles = updated) },
                             onSaveGlazing = { updated -> persistNonOrderState(newGlazing = updated) },
                             onSaveHardware = { updated -> persistNonOrderState(newHardwareBrands = updated) },
+                            onSaveMosquitoSystems = { updated -> persistNonOrderState(newMosquitoSystems = updated) },
                             onSaveExtras = { updated ->
                                 val removedIds = extraAccessories.map { it.id }.toSet() - updated.map { it.id }.toSet()
                                 if (removedIds.isNotEmpty()) {
@@ -885,6 +923,7 @@ fun WinStudioProMainApp(
                             cashAccounts = cashAccounts,
                             cashTransactions = cashTransactions,
                             cashExpenseCategories = cashExpenseCategories,
+                            mosquitoSystemsCatalog = mosquitoSystems,
                             onSaveFinSchemeSettings = { updated -> persistNonOrderState(newFinSchemeSettings = updated) },
                             onSaveCashAccounts = { updated -> persistNonOrderState(newCashAccounts = updated) },
                             onSaveCashTransactions = { updated -> persistNonOrderState(newCashTransactions = updated) },
@@ -908,6 +947,7 @@ fun WinStudioProMainApp(
                             finSchemeSettings = finSchemeSettings,
                             cashAccounts = cashAccounts,
                             cashTransactions = cashTransactions,
+                            mosquitoSystemsCatalog = mosquitoSystems,
                             onOpenOrdersList = { screenMode = AppScreenMode.ORDERS_LIST },
                             onOpenCash = { screenMode = AppScreenMode.CASH_MANAGER },
                             onBack = { screenMode = AppScreenMode.METRO_HOME }
@@ -1004,6 +1044,26 @@ fun WinStudioProMainApp(
                                 extraAccessoriesCatalog = extraAccessories,
                                 workServicesCatalog = workServices,
                                 hardwareBrandsCatalog = hardwareBrands,
+                                onBackToCad = { screenMode = AppScreenMode.CAD_WORKSPACE },
+                                onOpenPdfFile = onOpenPdfFile
+                            )
+                        } else {
+                            screenMode = AppScreenMode.METRO_HOME
+                        }
+                    }
+
+                    AppScreenMode.MOSQUITO_ORDER_EDITOR -> {
+                        if (currentOrder != null) {
+                            MosquitoOrderScreen(
+                                order = currentOrder,
+                                profileSystems = profileSystems,
+                                glazingCatalog = glazingCatalog,
+                                colorCatalog = colorCatalog,
+                                sillsCatalog = sillsCatalog,
+                                extraAccessoriesCatalog = extraAccessories,
+                                workServicesCatalog = workServices,
+                                hardwareBrandsCatalog = hardwareBrands,
+                                mosquitoSystemsCatalog = mosquitoSystems,
                                 onBackToCad = { screenMode = AppScreenMode.CAD_WORKSPACE },
                                 onOpenPdfFile = onOpenPdfFile
                             )

@@ -79,6 +79,7 @@ internal fun CadEditorWorkspaceScreen(
     orderExtraServicesCatalog: List<OrderExtraServiceItem> = DefaultCatalogs.defaultOrderExtraServices(),
     finSchemeSettings: FinSchemeSettings = FinSchemeSettings(),
     stockRemnants: List<StockRemnantBar> = emptyList(),
+    mosquitoSystemsCatalog: List<MosquitoSystemItem> = DefaultCatalogs.defaultMosquitoSystems(),
     uiSettings: AppUiSettings,
     onSelectWindowIndex: (Int) -> Unit,
     onUpdateOrder: (CustomerOrder) -> Unit,
@@ -86,6 +87,7 @@ internal fun CadEditorWorkspaceScreen(
     onOpenWorkshopCutting: () -> Unit,
     onOpenGlazingOrder: () -> Unit = {},
     onOpenHardwareOrder: () -> Unit = {},
+    onOpenMosquitoOrder: () -> Unit = {},
     onOpenPdfFile: (File, String) -> Unit,
     onSharePdfFile: (File, String) -> Unit
 ) {
@@ -129,7 +131,8 @@ internal fun CadEditorWorkspaceScreen(
         workServicesCatalog,
         hardwareBrandsCatalog,
         assemblyPricingCatalog,
-        finSchemeSettings
+        finSchemeSettings,
+        mosquitoSystemsCatalog
     ) {
         order.windows.mapIndexed { idx, win ->
             WindowBomAndCostEngine.calculateWindow(
@@ -146,7 +149,9 @@ internal fun CadEditorWorkspaceScreen(
                 windowIndexInOrder = idx + 1,
                 orderLegacySystemName = order.legacySystemName,
                 orderLegacyGlazingName = order.legacyGlazingName,
-                orderLegacyColorName = order.legacyColorName
+                orderLegacyColorName = order.legacyColorName,
+                mosquitoSystemsCatalog = mosquitoSystemsCatalog,
+                mosquitoPricingMode = order.mosquitoPricingMode
             )
         }
     }
@@ -253,7 +258,8 @@ internal fun CadEditorWorkspaceScreen(
         applyHardware: Boolean = true,
         applyFinancials: Boolean = true,
         applyExtrasAndWorks: Boolean = true,
-        applyAssemblyScheme: Boolean = false
+        applyAssemblyScheme: Boolean = false,
+        applyMosquito: Boolean = false
     ) {
         val filteredExtrasForAll = currentWindow.selectedExtraIds.filterNot { it == "ext_corner" }
         val updatedWindows = windows.map { win ->
@@ -272,7 +278,10 @@ internal fun CadEditorWorkspaceScreen(
                 doorHardwareId = if (applyHardware) currentWindow.doorHardwareId else win.doorHardwareId,
                 sashHardwareId = if (applyHardware) currentWindow.sashHardwareId else win.sashHardwareId,
                 transomHardwareId = if (applyHardware) currentWindow.transomHardwareId else win.transomHardwareId,
-                mosquitoSystemId = if (applyHardware) currentWindow.mosquitoSystemId else win.mosquitoSystemId,
+                mosquitoSystemId = if (applyMosquito) currentWindow.mosquitoSystemId else win.mosquitoSystemId,
+                mosquitoWindowId = if (applyMosquito) currentWindow.mosquitoWindowId else win.mosquitoWindowId,
+                mosquitoDoorId = if (applyMosquito) currentWindow.mosquitoDoorId else win.mosquitoDoorId,
+                mosquitoPlisseId = if (applyMosquito) currentWindow.mosquitoPlisseId else win.mosquitoPlisseId,
                 financialSchemeId = if (applyFinancials) currentWindow.financialSchemeId else win.financialSchemeId,
                 selectedExtraIds = if (applyExtrasAndWorks) filteredExtrasForAll else win.selectedExtraIds,
                 selectedWorkIds = if (applyExtrasAndWorks) currentWindow.selectedWorkIds else win.selectedWorkIds,
@@ -289,7 +298,7 @@ internal fun CadEditorWorkspaceScreen(
         val newWin = WindowBomAndCostEngine.applyDefaultHardwareIfMissing(
             currentWindow.copy(
                 id = UUID.randomUUID().toString(),
-                name = "Окно $nextNum",
+                name = "Конструкция $nextNum",
                 quantity = 1,
                 manualUnitPriceOverride = null,
                 selectedExtraIds = currentWindow.selectedExtraIds.filterNot { it == "ext_corner" },
@@ -303,12 +312,12 @@ internal fun CadEditorWorkspaceScreen(
         onSelectWindowIndex(updated.lastIndex)
     }
 
-    // Полное копирование текущего окна (включая чертёж и все настройки)
+    // Полное копирование текущей конструкции (включая чертёж и все настройки)
     fun duplicateCurrentWindow() {
         val nextNum = windows.size + 1
         val copyWin = currentWindow.copy(
             id = UUID.randomUUID().toString(),
-            name = "Окно $nextNum (копия)"
+            name = "Конструкция $nextNum"
         )
         val updated = windows + copyWin
         onUpdateOrder(order.copy(windows = updated, customCuttingAllocations = null))
@@ -1018,6 +1027,60 @@ internal fun CadEditorWorkspaceScreen(
                             onOpenHardwareOrder()
                         }
                         LeftMenuButton(
+                            title = strings.pdfMosquitoItem,
+                            icon = Icons.Rounded.BorderAll,
+                            accentTint = palette.accentTeal,
+                            modifier = Modifier.testTag("cad_menu_mosquito_order")
+                        ) {
+                            showLeftBlueMenu = false
+                            onOpenMosquitoOrder()
+                        }
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "Москитные сетки: режим цены",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = palette.textSecondary
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                MosquitoPricingMode.entries.forEach { mode ->
+                                    val isSel = order.mosquitoPricingMode == mode
+                                    Surface(
+                                        color = if (isSel) palette.accentTeal else palette.secondaryBackground,
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(
+                                            0.8.dp,
+                                            if (isSel) palette.accentTeal else palette.floatingBorder
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 48.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .clickable { onUpdateOrder(order.copy(mosquitoPricingMode = mode)) }
+                                            .testTag("mosquito_mode_${mode.name}")
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = "${mode.shortBadge} (${mode.titleRu.take(4)})",
+                                                color = if (isSel) Color.White else palette.textPrimary,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        LeftMenuButton(
                             title = strings.workshopTaskItem,
                             icon = Icons.Rounded.Assignment,
                             accentTint = palette.accentGreen,
@@ -1094,14 +1157,19 @@ internal fun CadEditorWorkspaceScreen(
                         assemblyPricingCatalog = assemblyPricingCatalog,
                         orderExtraServicesCatalog = orderExtraServicesCatalog,
                         finSchemeSettings = finSchemeSettings,
+                        mosquitoSystemsCatalog = mosquitoSystemsCatalog,
                         orderFinancialSummary = orderFinancialSummary,
                         onUpdateWindow = { updatedWin -> updateCurrentWindow { updatedWin } },
                         onUpdateOrder = { updatedOrder -> onUpdateOrder(updatedOrder) },
                         onOpenManualPriceNumpad = { showManualPriceNumpad = true },
+                        onOpenMosquitoOrder = {
+                            showRightSettingsDrawer = false
+                            onOpenMosquitoOrder()
+                        },
                         onUpdateOrderDiscount = { newDiscount, newVat ->
                             onUpdateOrder(order.copy(discountPercent = newDiscount, taxVatPercent = newVat))
                         },
-                        onApplyToAllWindows = { applyProf, applyGlz, applyClr, applyHw, applyFin, applyExtWrk, applyAsm ->
+                        onApplyToAllWindows = { applyProf, applyGlz, applyClr, applyHw, applyFin, applyExtWrk, applyAsm, applyMsq ->
                             applySettingsToAllWindowsInOrder(
                                 applyProfile = applyProf,
                                 applyGlazing = applyGlz,
@@ -1109,7 +1177,8 @@ internal fun CadEditorWorkspaceScreen(
                                 applyHardware = applyHw,
                                 applyFinancials = applyFin,
                                 applyExtrasAndWorks = applyExtWrk,
-                                applyAssemblyScheme = applyAsm
+                                applyAssemblyScheme = applyAsm,
+                                applyMosquito = applyMsq
                             )
                         },
                         onClose = { showRightSettingsDrawer = false }
@@ -1139,7 +1208,7 @@ internal fun CadEditorWorkspaceScreen(
         ImpostsAndOpeningModalDialog(
             cell = targetCell,
             onDismiss = { activeCellForModal = null },
-            onApply = { splitOp, newOpeningType, sashImpostMode, paneSandwichFlags, hasMosquito, isDoor, isReverseDoor ->
+            onApply = { splitOp, newOpeningType, sashImpostMode, paneSandwichFlags, mosquitoNetType, isDoor, isReverseDoor ->
                 updateCurrentWindow { win ->
                     var topo = win.topology
                     val neighborHeightMm = WindowCadOperations.findNeighborHorizontalImpostHeightFromBottom(
@@ -1161,7 +1230,8 @@ internal fun CadEditorWorkspaceScreen(
                         isDoorSash = isDoor,
                         isReverseDoorSash = isReverseDoor,
                         isSandwichFilling = normalizedFlags.all { it },
-                        hasMosquitoNet = hasMosquito,
+                        hasMosquitoNet = mosquitoNetType != null,
+                        mosquitoNetType = mosquitoNetType,
                         sashImpostMode = effectiveMode,
                         paneSandwichFlags = normalizedFlags,
                         hasHorizontalSashImpost = (effectiveMode == SashImpostMode.H1),
@@ -1194,6 +1264,27 @@ internal fun CadEditorWorkspaceScreen(
                                 HardwareGroup.DOOR -> updatedWin.copy(doorHardwareId = defaultForGroup)
                                 HardwareGroup.SASH -> updatedWin.copy(sashHardwareId = defaultForGroup)
                                 HardwareGroup.TRANSOM -> updatedWin.copy(transomHardwareId = defaultForGroup)
+                            }
+                        }
+                    }
+                    if (mosquitoNetType != null) {
+                        val currentMsqId = when (mosquitoNetType) {
+                            MosquitoNetType.WINDOW -> updatedWin.mosquitoWindowId
+                            MosquitoNetType.DOOR -> updatedWin.mosquitoDoorId
+                            MosquitoNetType.PLISSE -> updatedWin.mosquitoPlisseId
+                        }
+                        if (currentMsqId == null) {
+                            val defaultMsqId = mosquitoSystemsCatalog.firstOrNull {
+                                it.id != "msq_none" && it.netType == mosquitoNetType && it.isDefault
+                            }?.id ?: mosquitoSystemsCatalog.firstOrNull {
+                                it.id != "msq_none" && it.netType == mosquitoNetType
+                            }?.id
+                            if (defaultMsqId != null) {
+                                updatedWin = when (mosquitoNetType) {
+                                    MosquitoNetType.WINDOW -> updatedWin.copy(mosquitoWindowId = defaultMsqId)
+                                    MosquitoNetType.DOOR -> updatedWin.copy(mosquitoDoorId = defaultMsqId)
+                                    MosquitoNetType.PLISSE -> updatedWin.copy(mosquitoPlisseId = defaultMsqId)
+                                }
                             }
                         }
                     }
@@ -1468,6 +1559,11 @@ private fun DynamicBottomCostScrollBar(
         val winHwCost = currentResult.costHardware * curQty
         val allHwCost = allResults.sumOf { it.costHardware * it.windowItem.quantity }
 
+        val winMsqArea = currentResult.mosquitoAreaM2 * curQty
+        val winMsqCost = currentResult.costMosquitoClient * curQty
+        val allMsqArea = allResults.sumOf { it.mosquitoAreaM2 * it.windowItem.quantity }
+        val allMsqCost = allResults.sumOf { it.costMosquitoClient * it.windowItem.quantity }
+
         val winExtCost = currentResult.costExtrasOnly * curQty
         val allExtCost = allResults.sumOf { it.costExtrasOnly * it.windowItem.quantity }
 
@@ -1497,6 +1593,7 @@ private fun DynamicBottomCostScrollBar(
             add(CostColumnData("glass", strings.colGlass, "${fmt2(winGlzM2)} m2", "${fmt2(winGlzCost)} $cur", "${fmt2(allGlzM2)} m2", "${fmt2(allGlzCost)} $cur"))
             add(CostColumnData("sandwich", strings.colSandwich, "${fmt2(winSandM2)} m2", "${fmt2(winSandCost)} $cur", "${fmt2(allSandM2)} m2", "${fmt2(allSandCost)} $cur"))
             add(CostColumnData("hardware", strings.colHardware, "${fmt2(winHwCost)} $cur", "", "${fmt2(allHwCost)} $cur", ""))
+            add(CostColumnData("mosquitos", strings.colMosquitos, "${fmt2(winMsqArea)} m2", "${fmt2(winMsqCost)} $cur", "${fmt2(allMsqArea)} m2", "${fmt2(allMsqCost)} $cur"))
             add(CostColumnData("extras", strings.colExtras, "${fmt2(winExtCost)} $cur", "", "${fmt2(allExtCost)} $cur", ""))
             add(CostColumnData("works", strings.colWorks, "${fmt2(winInstallCost)} $cur", "", "${fmt2(allInstallCost)} $cur", ""))
             add(CostColumnData("assembly", strings.colAssembly, "${fmt2(winAssemblyCost)} $cur", "", "${fmt2(allAssemblyCost)} $cur", ""))
@@ -1749,10 +1846,12 @@ private fun RightWindowSettingsDrawerContent(
     assemblyPricingCatalog: AssemblyPricingCatalog,
     orderExtraServicesCatalog: List<OrderExtraServiceItem>,
     finSchemeSettings: FinSchemeSettings = FinSchemeSettings(),
+    mosquitoSystemsCatalog: List<MosquitoSystemItem> = DefaultCatalogs.defaultMosquitoSystems(),
     orderFinancialSummary: OrderFinancialSummary,
     onUpdateWindow: (WindowItem) -> Unit,
     onUpdateOrder: (CustomerOrder) -> Unit,
     onOpenManualPriceNumpad: () -> Unit,
+    onOpenMosquitoOrder: () -> Unit = {},
     onUpdateOrderDiscount: (Double, Double) -> Unit,
     onApplyToAllWindows: (
         applyProfile: Boolean,
@@ -1761,7 +1860,8 @@ private fun RightWindowSettingsDrawerContent(
         applyHardware: Boolean,
         applyFinancials: Boolean,
         applyExtrasAndWorks: Boolean,
-        applyAssemblyScheme: Boolean
+        applyAssemblyScheme: Boolean,
+        applyMosquito: Boolean
     ) -> Unit,
     onClose: () -> Unit
 ) {
@@ -1929,7 +2029,7 @@ private fun RightWindowSettingsDrawerContent(
             if (totalWindowsCount > 1) {
                 Button(
                     onClick = {
-                        onApplyToAllWindows(true, true, true, true, true, true, true)
+                        onApplyToAllWindows(true, true, true, true, true, true, true, true)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = palette.accentBlue),
                     shape = RoundedCornerShape(14.dp),
@@ -1950,7 +2050,7 @@ private fun RightWindowSettingsDrawerContent(
             DrawerGrayHeader(
                 title = strings.finSchemeLabel,
                 actionText = if (totalWindowsCount > 1) strings.applyShort else null,
-                onAction = { onApplyToAllWindows(false, false, false, false, true, false, false) }
+                onAction = { onApplyToAllWindows(false, false, false, false, true, false, false, false) }
             )
             financialSchemes.forEach { fin ->
                 val selected = windowItem.financialSchemeId == fin.id
@@ -1965,7 +2065,7 @@ private fun RightWindowSettingsDrawerContent(
             DrawerGrayHeader(
                 title = strings.windowSystemLabel,
                 actionText = if (totalWindowsCount > 1) strings.applyShort else null,
-                onAction = { onApplyToAllWindows(true, false, false, false, false, false, false) }
+                onAction = { onApplyToAllWindows(true, false, false, false, false, false, false, false) }
             )
             DrawerRadioOptionRow(
                 label = strings.notAccounted,
@@ -2002,7 +2102,7 @@ private fun RightWindowSettingsDrawerContent(
                 DrawerGrayHeader(
                     title = String.format(strings.shtapikLabelFormat, currentSysForShtapik.name),
                     actionText = if (totalWindowsCount > 1) strings.applyShort else null,
-                    onAction = { onApplyToAllWindows(true, false, false, false, false, false, false) }
+                    onAction = { onApplyToAllWindows(true, false, false, false, false, false, false, false) }
                 )
                 val activeGlzThickness = glazingCatalog.find { it.id == windowItem.glazingId }?.thicknessMm ?: 24
                 val effectiveShtId = windowItem.selectedShtapikId.takeIf { id ->
@@ -2034,7 +2134,7 @@ private fun RightWindowSettingsDrawerContent(
             DrawerGrayHeader(
                 title = strings.colorLabel,
                 actionText = if (totalWindowsCount > 1) strings.applyShort else null,
-                onAction = { onApplyToAllWindows(false, false, true, false, false, false, false) }
+                onAction = { onApplyToAllWindows(false, false, true, false, false, false, false, false) }
             )
             if (windowItem.profileSystemId == "none" || activeSysForColors == null) {
                 Text(
@@ -2197,7 +2297,7 @@ private fun RightWindowSettingsDrawerContent(
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.clickable {
-                                    onApplyToAllWindows(false, true, false, false, false, false, false)
+                                    onApplyToAllWindows(false, true, false, false, false, false, false, false)
                                 }
                             )
                         }
@@ -2246,7 +2346,7 @@ private fun RightWindowSettingsDrawerContent(
             DrawerGrayHeader(
                 title = strings.hardwareLabel,
                 actionText = if (totalWindowsCount > 1) strings.applyShort else null,
-                onAction = { onApplyToAllWindows(false, false, false, true, false, false, false) }
+                onAction = { onApplyToAllWindows(false, false, false, true, false, false, false, false) }
             )
             if (presentGroups.isEmpty()) {
                 Text(
@@ -2306,6 +2406,112 @@ private fun RightWindowSettingsDrawerContent(
                 }
             }
 
+            // 9.1. МОСКИТНЫЕ СЕТКИ (О / Д / П + переключатель К / Д / П + заказ PDF)
+            val presentMosquitoTypes = windowItem.topology.frames
+                .flatMap { it.openings }
+                .mapNotNull { it.properties.effectiveMosquitoNetType() }
+                .toSet()
+            DrawerGrayHeader(
+                title = "Москитные сетки",
+                actionText = if (totalWindowsCount > 1) strings.applyShort else null,
+                onAction = { onApplyToAllWindows(false, false, false, false, false, false, false, true) }
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                MosquitoPricingMode.entries.forEach { mode ->
+                    val isSel = order.mosquitoPricingMode == mode
+                    Surface(
+                        color = if (isSel) palette.accentTeal else palette.secondaryBackground,
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(0.8.dp, if (isSel) palette.accentTeal else palette.floatingBorder),
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { onUpdateOrder(order.copy(mosquitoPricingMode = mode)) }
+                            .testTag("drawer_mosquito_mode_${mode.name}")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "${mode.shortBadge} (${mode.titleRu})",
+                                color = if (isSel) Color.White else palette.textPrimary,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+            fun updateMosquitoByType(nt: MosquitoNetType, selectedMsqId: String): WindowItem {
+                return when (nt) {
+                    MosquitoNetType.WINDOW -> windowItem.copy(mosquitoWindowId = selectedMsqId, mosquitoSystemId = selectedMsqId)
+                    MosquitoNetType.DOOR -> windowItem.copy(mosquitoDoorId = selectedMsqId)
+                    MosquitoNetType.PLISSE -> windowItem.copy(mosquitoPlisseId = selectedMsqId)
+                }
+            }
+            MosquitoNetType.entries.forEach { nt ->
+                val isActiveInWindow = nt in presentMosquitoTypes
+                if (isActiveInWindow || presentMosquitoTypes.isEmpty()) {
+                    val itemsForType = mosquitoSystemsCatalog.filter { it.id != "msq_none" && it.netType == nt }
+                    val explicitId = when (nt) {
+                        MosquitoNetType.WINDOW -> windowItem.mosquitoWindowId
+                        MosquitoNetType.DOOR -> windowItem.mosquitoDoorId
+                        MosquitoNetType.PLISSE -> windowItem.mosquitoPlisseId
+                    }
+                    val resolvedMsq = WindowBomAndCostEngine.resolveMosquitoSystemForType(
+                        window = windowItem,
+                        netType = nt,
+                        mosquitoSystemsCatalog = mosquitoSystemsCatalog
+                    )
+                    val isNoneSelected = explicitId == "msq_none"
+                    Surface(
+                        color = palette.secondaryBackground.copy(alpha = 0.7f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "${nt.shortBadge} — ${nt.titleRu}" + if (isActiveInWindow) " (в конструкции)" else "",
+                            color = palette.accentTeal,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
+                    DrawerRadioOptionRow(
+                        label = strings.notAccounted,
+                        selected = isNoneSelected,
+                        modifier = Modifier.testTag("drawer_msq_${nt.name}_none"),
+                        onClick = { onUpdateWindow(updateMosquitoByType(nt, "msq_none")) }
+                    )
+                    itemsForType.forEach { ms ->
+                        val selected = !isNoneSelected && resolvedMsq?.id == ms.id
+                        DrawerRadioOptionRow(
+                            label = ms.name,
+                            subtitle = "Дил. ${ms.dealerPricePerM2} • Клиент ${ms.clientPricePerM2} $displayCurrency/м²" + if (ms.isDefault) " • по умолчанию" else "",
+                            selected = selected,
+                            modifier = Modifier.testTag("drawer_msq_${nt.name}_${ms.id}"),
+                            onClick = { onUpdateWindow(updateMosquitoByType(nt, ms.id)) }
+                        )
+                    }
+                }
+            }
+            Button(
+                onClick = onOpenMosquitoOrder,
+                colors = ButtonDefaults.buttonColors(containerColor = palette.accentTeal),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .testTag("right_drawer_mosquito_order_btn")
+            ) {
+                Icon(Icons.Rounded.BorderAll, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Заказ москитных сеток (PDF)", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp)
+            }
+
             // 10. РАЗНОЕ (Угловик и Доборный профиль 90° — только для активной конструкции + прочие аксессуары)
             val cornerPriceM = activeSysForColors?.priceCornerProfilePerM ?: 0.0
             val framePriceM = activeSysForColors?.priceFramePerM ?: 0.0
@@ -2313,7 +2519,7 @@ private fun RightWindowSettingsDrawerContent(
             DrawerGrayHeader(
                 title = strings.extrasLabel,
                 actionText = if (totalWindowsCount > 1) strings.applyShort else null,
-                onAction = { onApplyToAllWindows(false, false, false, false, false, true, false) }
+                onAction = { onApplyToAllWindows(false, false, false, false, false, true, false, false) }
             )
             DrawerCheckboxOptionRow(
                 label = "Угловик (1 шт. по высоте)",
@@ -2362,7 +2568,7 @@ private fun RightWindowSettingsDrawerContent(
             DrawerGrayHeader(
                 title = strings.worksLabel,
                 actionText = if (totalWindowsCount > 1) strings.applyShort else null,
-                onAction = { onApplyToAllWindows(false, false, false, false, false, true, false) }
+                onAction = { onApplyToAllWindows(false, false, false, false, false, true, false, false) }
             )
             workServices.forEach { item ->
                 val checked = windowItem.selectedWorkIds.contains(item.id)
@@ -2387,7 +2593,7 @@ private fun RightWindowSettingsDrawerContent(
                 DrawerGrayHeader(
                     title = strings.assemblyLabel,
                     actionText = if (totalWindowsCount > 1) strings.applyShort else null,
-                    onAction = { onApplyToAllWindows(false, false, false, false, false, false, true) }
+                    onAction = { onApplyToAllWindows(false, false, false, false, false, false, true, false) }
                 )
                 DrawerRadioOptionRow(
                     label = "По умолчанию (${assemblyPricingCatalog.defaultScheme.titleRu})",

@@ -255,7 +255,7 @@ fun InteractiveWindowCadCanvas(
             gBottom: Float,
             isSandwich: Boolean,
             glazingBars: GlazingBarsPattern,
-            hasMosquito: Boolean
+            mosquitoType: MosquitoNetType?
         ) {
             if (gRight <= gLeft + 2f || gBottom <= gTop + 2f) return
             val fillCol = if (isSandwich) sandwichColor else glassColor
@@ -313,8 +313,8 @@ fun InteractiveWindowCadCanvas(
                 }
             }
 
-            // Москитная сетка (точки, как на 01:36 в видео)
-            if (hasMosquito) {
+            // Москитная сетка (точки + маркер О / Д / П)
+            if (mosquitoType != null) {
                 val step = 15f
                 var my = gTop + 12f
                 while (my < gBottom - 6f) {
@@ -324,6 +324,27 @@ fun InteractiveWindowCadCanvas(
                         mx += step
                     }
                     my += step
+                }
+                if ((gRight - gLeft) > 36f && (gBottom - gTop) > 36f) {
+                    val badgeW = 24f
+                    val badgeH = 20f
+                    val bx = (gRight - badgeW - 6f).coerceAtLeast(gLeft + 4f)
+                    val by = gTop + 6f
+                    drawRoundRect(
+                        color = Color(0xCC00796B),
+                        topLeft = Offset(bx, by),
+                        size = Size(badgeW, badgeH),
+                        cornerRadius = CornerRadius(5f, 5f)
+                    )
+                    drawIntoCanvas { nc ->
+                        val pBadge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = android.graphics.Color.WHITE
+                            textSize = 14f
+                            textAlign = Paint.Align.CENTER
+                            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                        }
+                        nc.nativeCanvas.drawText(mosquitoType.shortBadge, bx + badgeW / 2f, by + 15f, pBadge)
+                    }
                 }
             }
         }
@@ -446,7 +467,7 @@ fun InteractiveWindowCadCanvas(
                     gBottom = glassBottom,
                     isSandwich = props.isSandwichFilling,
                     glazingBars = props.glazingBars,
-                    hasMosquito = props.hasMosquitoNet
+                    mosquitoType = props.effectiveMosquitoNetType()
                 )
 
                 val cx = (glassLeft + glassRight) / 2f
@@ -550,7 +571,7 @@ fun InteractiveWindowCadCanvas(
                             gBottom = innerB - shtapikPx,
                             isSandwich = props.isPaneSandwich(0),
                             glazingBars = props.glazingBars,
-                            hasMosquito = props.hasMosquitoNet
+                            mosquitoType = props.effectiveMosquitoNetType()
                         )
                     }
                     SashImpostMode.V1 -> {
@@ -558,9 +579,9 @@ fun InteractiveWindowCadCanvas(
                         val lRight = (mx - halfImpPx).coerceAtLeast(innerL + 8f)
                         val rLeft = (mx + halfImpPx).coerceAtMost(innerR - 8f)
                         drawRect(borderDark, Offset(innerL, innerT), Size(lRight - innerL, innerB - innerT), style = Stroke(1.5f))
-                        drawGlassOrSandwichPane(innerL + shtapikPx, innerT + shtapikPx, lRight - shtapikPx, innerB - shtapikPx, props.isPaneSandwich(0), props.glazingBars, props.hasMosquitoNet)
+                        drawGlassOrSandwichPane(innerL + shtapikPx, innerT + shtapikPx, lRight - shtapikPx, innerB - shtapikPx, props.isPaneSandwich(0), props.glazingBars, props.effectiveMosquitoNetType())
                         drawRect(borderDark, Offset(rLeft, innerT), Size(innerR - rLeft, innerB - innerT), style = Stroke(1.5f))
-                        drawGlassOrSandwichPane(rLeft + shtapikPx, innerT + shtapikPx, innerR - shtapikPx, innerB - shtapikPx, props.isPaneSandwich(1), props.glazingBars, props.hasMosquitoNet)
+                        drawGlassOrSandwichPane(rLeft + shtapikPx, innerT + shtapikPx, innerR - shtapikPx, innerB - shtapikPx, props.isPaneSandwich(1), props.glazingBars, props.effectiveMosquitoNetType())
                         drawRect(frameFillColor, Offset(lRight, innerT), Size(rLeft - lRight, innerB - innerT))
                         drawRect(borderDark, Offset(lRight, innerT), Size(rLeft - lRight, innerB - innerT), style = Stroke(1.5f))
                     }
@@ -575,9 +596,9 @@ fun InteractiveWindowCadCanvas(
                         val topSubBottom = impCenterY - halfImpPx
                         val botSubTop = impCenterY + halfImpPx
                         drawRect(borderDark, Offset(innerL, innerT), Size(innerR - innerL, topSubBottom - innerT), style = Stroke(1.5f))
-                        drawGlassOrSandwichPane(innerL + shtapikPx, innerT + shtapikPx, innerR - shtapikPx, topSubBottom - shtapikPx, props.isPaneSandwich(0), props.glazingBars, props.hasMosquitoNet)
+                        drawGlassOrSandwichPane(innerL + shtapikPx, innerT + shtapikPx, innerR - shtapikPx, topSubBottom - shtapikPx, props.isPaneSandwich(0), props.glazingBars, props.effectiveMosquitoNetType())
                         drawRect(borderDark, Offset(innerL, botSubTop), Size(innerR - innerL, innerB - botSubTop), style = Stroke(1.5f))
-                        drawGlassOrSandwichPane(innerL + shtapikPx, botSubTop + shtapikPx, innerR - shtapikPx, innerB - shtapikPx, props.isPaneSandwich(1), GlazingBarsPattern.NONE, props.hasMosquitoNet)
+                        drawGlassOrSandwichPane(innerL + shtapikPx, botSubTop + shtapikPx, innerR - shtapikPx, innerB - shtapikPx, props.isPaneSandwich(1), GlazingBarsPattern.NONE, props.effectiveMosquitoNetType())
                         drawRect(frameFillColor, Offset(innerL, topSubBottom), Size(innerR - innerL, botSubTop - topSubBottom))
                         drawRect(borderDark, Offset(innerL, topSubBottom), Size(innerR - innerL, botSubTop - topSubBottom), style = Stroke(1.5f))
                         primaryPaneCenter = Offset((innerL + innerR) / 2f, (innerT + topSubBottom) / 2f)
@@ -613,7 +634,7 @@ fun InteractiveWindowCadCanvas(
                         val b2 = Offset(l2, innerT) to Size((innerR - l2).coerceAtLeast(6f), innerB - innerT)
                         listOf(b0, b1, b2).forEachIndexed { idx, (tl, sz) ->
                             drawRect(borderDark, tl, sz, style = Stroke(1.5f))
-                            drawGlassOrSandwichPane(tl.x + shtapikPx, tl.y + shtapikPx, tl.x + sz.width - shtapikPx, tl.y + sz.height - shtapikPx, props.isPaneSandwich(idx), props.glazingBars, props.hasMosquitoNet)
+                            drawGlassOrSandwichPane(tl.x + shtapikPx, tl.y + shtapikPx, tl.x + sz.width - shtapikPx, tl.y + sz.height - shtapikPx, props.isPaneSandwich(idx), props.glazingBars, props.effectiveMosquitoNetType())
                         }
                         listOf(x1, x2).forEach { ix ->
                             drawRect(frameFillColor, Offset(ix - halfImpPx, innerT), Size(halfImpPx * 2f, innerB - innerT))
@@ -631,7 +652,7 @@ fun InteractiveWindowCadCanvas(
                         val b2 = Offset(innerL, t2) to Size(innerR - innerL, (innerB - t2).coerceAtLeast(6f))
                         listOf(b0, b1, b2).forEachIndexed { idx, (tl, sz) ->
                             drawRect(borderDark, tl, sz, style = Stroke(1.5f))
-                            drawGlassOrSandwichPane(tl.x + shtapikPx, tl.y + shtapikPx, tl.x + sz.width - shtapikPx, tl.y + sz.height - shtapikPx, props.isPaneSandwich(idx), props.glazingBars, props.hasMosquitoNet)
+                            drawGlassOrSandwichPane(tl.x + shtapikPx, tl.y + shtapikPx, tl.x + sz.width - shtapikPx, tl.y + sz.height - shtapikPx, props.isPaneSandwich(idx), props.glazingBars, props.effectiveMosquitoNetType())
                         }
                         listOf(y1, y2).forEach { iy ->
                             drawRect(frameFillColor, Offset(innerL, iy - halfImpPx), Size(innerR - innerL, halfImpPx * 2f))

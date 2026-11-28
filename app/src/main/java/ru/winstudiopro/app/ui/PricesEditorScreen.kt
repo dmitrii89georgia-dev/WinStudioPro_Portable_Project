@@ -51,6 +51,7 @@ private enum class PriceCatalogTab(val titleRu: String) {
     PROFILES_AND_CLEATS("Профили и сухари"),
     GLAZING("Стеклопакеты"),
     HARDWARE("Фурнитура"),
+    MOSQUITO_NETS("Москитные сетки"),
     EXTRAS("Разное"),
     WORKS("Монтаж"),
     ASSEMBLY("Сборка"),
@@ -68,6 +69,7 @@ internal fun PricesEditorScreen(
     assemblyPricing: AssemblyPricingCatalog = DefaultCatalogs.defaultAssemblyPricingCatalog(),
     orderExtraServices: List<OrderExtraServiceItem> = DefaultCatalogs.defaultOrderExtraServices(),
     finSchemeSettings: FinSchemeSettings = FinSchemeSettings(),
+    mosquitoSystems: List<MosquitoSystemItem> = DefaultCatalogs.defaultMosquitoSystems(),
     currencySymbol: String,
     onBack: () -> Unit,
     onSaveProfiles: (List<ProfileSystemSpec>) -> Unit,
@@ -77,7 +79,8 @@ internal fun PricesEditorScreen(
     onSaveWorks: (List<WorkServiceItem>) -> Unit,
     onSaveAssemblyPricing: (AssemblyPricingCatalog) -> Unit = {},
     onSaveOrderExtraServices: (List<OrderExtraServiceItem>) -> Unit = {},
-    onSaveFinSchemeSettings: (FinSchemeSettings) -> Unit = {}
+    onSaveFinSchemeSettings: (FinSchemeSettings) -> Unit = {},
+    onSaveMosquitoSystems: (List<MosquitoSystemItem>) -> Unit = {}
 ) {
     val palette = LocalWinStudioPalette.current
     val strings = LocalAppStrings.current
@@ -649,6 +652,220 @@ internal fun PricesEditorScreen(
                                         }
                                         onSaveHardware(finalHw)
                                         savedToast = "Удалена фурнитура «${item.name}»"
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            PriceCatalogTab.MOSQUITO_NETS -> {
+                var newMsqName by remember { mutableStateOf("") }
+                var newMsqType by remember { mutableStateOf(MosquitoNetType.WINDOW) }
+                var newMsqDealerPrice by remember { mutableStateOf("18") }
+                var newMsqClientPrice by remember { mutableStateOf("28") }
+
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    item {
+                        Surface(
+                            color = palette.cardSurface,
+                            shape = RoundedCornerShape(20.dp),
+                            border = BorderStroke(0.8.dp, palette.floatingBorder),
+                            shadowElevation = if (palette.isDark) 0.dp else 2.dp
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(
+                                    text = "Добавить москитную сетку в прайс",
+                                    fontWeight = FontWeight.Bold,
+                                    color = palette.accentTeal
+                                )
+                                OutlinedTextField(
+                                    value = newMsqName,
+                                    onValueChange = { newMsqName = it },
+                                    label = { Text("Название (напр. Сетка плиссе Lux)") },
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("msq_add_name_input"),
+                                    singleLine = true
+                                )
+                                Text(
+                                    text = "Вид москитной сетки",
+                                    fontSize = 11.5.sp,
+                                    color = palette.textSecondary,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    MosquitoNetType.entries.forEach { nt ->
+                                        val sel = newMsqType == nt
+                                        FilterChip(
+                                            selected = sel,
+                                            onClick = { newMsqType = nt },
+                                            label = {
+                                                Text(
+                                                    text = "${nt.shortBadge} — ${nt.titleRu}",
+                                                    fontSize = 11.5.sp,
+                                                    color = if (sel) Color.White else palette.textPrimary
+                                                )
+                                            },
+                                            shape = RoundedCornerShape(10.dp),
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = palette.accentTeal,
+                                                containerColor = palette.secondaryBackground
+                                            ),
+                                            modifier = Modifier.testTag("msq_add_type_${nt.name}")
+                                        )
+                                    }
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = newMsqDealerPrice,
+                                        onValueChange = { newMsqDealerPrice = it },
+                                        label = { Text("Дилерская ($currencySymbol/м²)") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("msq_add_dealer_price_input"),
+                                        singleLine = true
+                                    )
+                                    OutlinedTextField(
+                                        value = newMsqClientPrice,
+                                        onValueChange = { newMsqClientPrice = it },
+                                        label = { Text("Клиентская ($currencySymbol/м²)") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("msq_add_client_price_input"),
+                                        singleLine = true
+                                    )
+                                }
+                                Text(
+                                    text = "Расчёт любой сетки ведётся от минимальной площади 1.0 м².",
+                                    fontSize = 11.sp,
+                                    color = palette.textSecondary
+                                )
+                                Button(
+                                    onClick = {
+                                        if (newMsqName.isNotBlank()) {
+                                            val dp = newMsqDealerPrice.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
+                                            val cp = newMsqClientPrice.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0) ?: dp
+                                            val hasDefaultInGroup = mosquitoSystems.any {
+                                                it.id != "msq_none" && it.netType == newMsqType && it.isDefault
+                                            }
+                                            val item = MosquitoSystemItem(
+                                                id = "msq_${UUID.randomUUID().toString().take(6)}",
+                                                name = newMsqName.trim(),
+                                                netType = newMsqType,
+                                                dealerPricePerM2 = dp,
+                                                clientPricePerM2 = cp,
+                                                isDefault = !hasDefaultInGroup
+                                            )
+                                            onSaveMosquitoSystems(mosquitoSystems + item)
+                                            savedToast = "Добавлена сетка «${item.name}» (${newMsqType.shortBadge} — ${newMsqType.titleRu})"
+                                            newMsqName = ""
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = palette.accentTeal),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 48.dp)
+                                        .testTag("msq_add_button")
+                                ) {
+                                    Icon(Icons.Rounded.Add, contentDescription = strings.saveBtn, tint = Color.White)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Добавить (${newMsqType.shortBadge} — ${newMsqType.titleRu})",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    MosquitoNetType.entries.forEach { nt ->
+                        val groupItems = mosquitoSystems.filter { it.id != "msq_none" && it.netType == nt }
+                        item(key = "msq_hdr_${nt.name}") {
+                            Surface(
+                                color = palette.secondaryBackground,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                    Text(
+                                        text = "${nt.shortBadge} — ${nt.titleRu} (${groupItems.size})",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = palette.accentTeal
+                                    )
+                                    Text(
+                                        text = "Минимум 1.0 м² за сетку • дилерская и клиентская цены за 1 м²",
+                                        fontSize = 11.sp,
+                                        color = palette.textSecondary
+                                    )
+                                }
+                            }
+                        }
+                        if (groupItems.isEmpty()) {
+                            item(key = "msq_empty_${nt.name}") {
+                                Text(
+                                    text = "Нет позиций для «${nt.titleRu}» — добавьте строку выше.",
+                                    fontSize = 12.sp,
+                                    color = palette.textSecondary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        } else {
+                            items(groupItems, key = { it.id }) { item ->
+                                MosquitoPriceRowCard(
+                                    item = item,
+                                    currencySymbol = currencySymbol,
+                                    onToggleDefault = {
+                                        val updated = mosquitoSystems.map { ms ->
+                                            when {
+                                                ms.id == item.id -> ms.copy(isDefault = true)
+                                                ms.netType == nt -> ms.copy(isDefault = false)
+                                                else -> ms
+                                            }
+                                        }
+                                        onSaveMosquitoSystems(updated)
+                                        savedToast = "«${item.name}» выбрана по умолчанию для «${nt.titleRu}»"
+                                    },
+                                    onSavePrices = { newDealer, newClient ->
+                                        onSaveMosquitoSystems(
+                                            mosquitoSystems.map { ms ->
+                                                if (ms.id == item.id) {
+                                                    ms.copy(dealerPricePerM2 = newDealer, clientPricePerM2 = newClient)
+                                                } else ms
+                                            }
+                                        )
+                                        savedToast = "Обновлены цены сетки «${item.name}»"
+                                    },
+                                    onDelete = {
+                                        val filtered = mosquitoSystems.filterNot { it.id == item.id }
+                                        val finalList = if (item.isDefault) {
+                                            val replacementId = filtered.firstOrNull { it.id != "msq_none" && it.netType == nt }?.id
+                                            filtered.map { if (it.id == replacementId) it.copy(isDefault = true) else it }
+                                        } else {
+                                            filtered
+                                        }
+                                        onSaveMosquitoSystems(finalList)
+                                        savedToast = "Удалена сетка «${item.name}»"
                                     }
                                 )
                             }
@@ -1551,6 +1768,134 @@ private fun EditablePriceRowCard(
                             )
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MosquitoPriceRowCard(
+    item: MosquitoSystemItem,
+    currencySymbol: String,
+    onToggleDefault: () -> Unit,
+    onSavePrices: (dealerPrice: Double, clientPrice: Double) -> Unit,
+    onDelete: () -> Unit
+) {
+    val palette = LocalWinStudioPalette.current
+    val strings = LocalAppStrings.current
+    var dealerText by remember(item.id, item.dealerPricePerM2) { mutableStateOf(item.dealerPricePerM2.toString()) }
+    var clientText by remember(item.id, item.clientPricePerM2) { mutableStateOf(item.clientPricePerM2.toString()) }
+
+    Surface(
+        color = palette.cardSurface,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(
+            width = if (item.isDefault) 1.2.dp else 0.8.dp,
+            color = if (item.isDefault) palette.accentTeal else palette.floatingBorder
+        ),
+        shadowElevation = if (palette.isDark) 0.dp else 1.5.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("msq_row_card_${item.id}")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Surface(
+                    color = palette.accentTeal.copy(alpha = 0.16f),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = item.netType.shortBadge,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = palette.accentTeal,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(item.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = palette.textPrimary)
+                    Text(
+                        text = if (item.isDefault) {
+                            "По умолчанию (${item.netType.titleRu}) • от 1.0 м²"
+                        } else {
+                            "${item.netType.titleRu} • от 1.0 м²"
+                        },
+                        fontSize = 11.sp,
+                        color = if (item.isDefault) palette.accentTeal else palette.textSecondary
+                    )
+                }
+                IconButton(
+                    onClick = onToggleDefault,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("msq_default_btn_${item.id}")
+                ) {
+                    Icon(
+                        imageVector = if (item.isDefault) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+                        contentDescription = "По умолчанию",
+                        tint = if (item.isDefault) palette.accentOrange else palette.textSecondary
+                    )
+                }
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("msq_delete_btn_${item.id}")
+                ) {
+                    Icon(Icons.Rounded.DeleteOutline, contentDescription = strings.deleteWindowDesc, tint = palette.accentRed)
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = dealerText,
+                    onValueChange = { dealerText = it },
+                    label = { Text("Дилер ($currencySymbol/м²)", fontSize = 10.5.sp) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("msq_dealer_price_${item.id}"),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = clientText,
+                    onValueChange = { clientText = it },
+                    label = { Text("Клиент ($currencySymbol/м²)", fontSize = 10.5.sp) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("msq_client_price_${item.id}"),
+                    singleLine = true
+                )
+                Button(
+                    onClick = {
+                        val dp = dealerText.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0) ?: item.dealerPricePerM2
+                        val cp = clientText.replace(',', '.').toDoubleOrNull()?.coerceAtLeast(0.0) ?: item.clientPricePerM2
+                        onSavePrices(dp, cp)
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.accentTeal),
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .testTag("msq_save_btn_${item.id}")
+                ) {
+                    Text(strings.okBtn, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
                 }
             }
         }

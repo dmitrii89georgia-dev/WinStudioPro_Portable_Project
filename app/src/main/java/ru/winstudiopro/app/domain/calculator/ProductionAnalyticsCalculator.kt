@@ -70,7 +70,8 @@ object ProductionAnalyticsCalculator {
         finSchemeSettings: FinSchemeSettings,
         cashAccounts: List<CashAccount>,
         cashTransactions: List<CashTransaction>,
-        nowMillis: Long = System.currentTimeMillis()
+        nowMillis: Long = System.currentTimeMillis(),
+        mosquitoSystemsCatalog: List<MosquitoSystemItem> = DefaultCatalogs.defaultMosquitoSystems()
     ): ProductionAnalyticsSnapshot {
         // Исторические импортированные заказы (isLegacyImport = true) полностью исключаются
         // из оперативной кассы и графиков текущего года
@@ -92,7 +93,9 @@ object ProductionAnalyticsCalculator {
                     windowIndexInOrder = idx + 1,
                     orderLegacySystemName = order.legacySystemName,
                     orderLegacyGlazingName = order.legacyGlazingName,
-                    orderLegacyColorName = order.legacyColorName
+                    orderLegacyColorName = order.legacyColorName,
+                    mosquitoSystemsCatalog = mosquitoSystemsCatalog,
+                    mosquitoPricingMode = order.mosquitoPricingMode
                 )
             }
             val summary = WindowBomAndCostEngine.calculateOrderFinancialSummary(

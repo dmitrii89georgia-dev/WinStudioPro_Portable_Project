@@ -6,6 +6,7 @@ import android.graphics.pdf.PdfDocument
 import ru.winstudiopro.app.domain.calculator.CornerConnectorOrderItem
 import ru.winstudiopro.app.domain.calculator.GlazingOrderItem
 import ru.winstudiopro.app.domain.calculator.HardwareOrderItem
+import ru.winstudiopro.app.domain.calculator.MosquitoOrderItem
 import ru.winstudiopro.app.domain.calculator.OrderProcurementHelper
 import ru.winstudiopro.app.domain.calculator.ProfileSupplierOrderLine
 import ru.winstudiopro.app.domain.calculator.RubberOrderItem
@@ -599,7 +600,7 @@ object PdfReportGenerator {
             for (i in 1 until colX.lastIndex) {
                 canvas.drawLine(colX[i], y, colX[i], y + hdrH, borderPaint)
             }
-            val headers = listOf("№", "Окно", "Проём", "Формула", "Ширина × Высота", "Кол.", "S, м²")
+            val headers = listOf("№", "Конструкция", "Проём", "Формула", "Ширина × Высота", "Кол.", "S, м²")
             headers.forEachIndexed { idx, h ->
                 canvas.drawText(h, colX[idx] + 4f, y + 14.5f, headerPaint)
             }
@@ -644,7 +645,7 @@ object PdfReportGenerator {
                 canvas.drawLine(colX[i], y, colX[i], y + rowH, borderPaint)
             }
             canvas.drawText("${idx + 1}", colX[0] + 4f, y + 13.5f, rowPaint)
-            canvas.drawText("№${item.windowIndex} ${item.windowName}".take(18), colX[1] + 4f, y + 13.5f, rowPaint)
+            canvas.drawText("Конструкция №${item.windowIndex}".take(18), colX[1] + 4f, y + 13.5f, rowPaint)
             canvas.drawText(item.openingNumber.take(8), colX[2] + 4f, y + 13.5f, rowPaint)
             canvas.drawText(item.formula.take(26), colX[3] + 4f, y + 13.5f, rowPaint)
             canvas.drawText("${item.widthMm} × ${item.heightMm} мм", colX[4] + 4f, y + 13.5f, boldPaint)
@@ -813,6 +814,157 @@ object PdfReportGenerator {
 
         doc.finishPage(page)
         val outFile = createFreshReportFile(context, "Hardware", order.orderNumber)
+        FileOutputStream(outFile).use { doc.writeTo(it) }
+        doc.close()
+        return outFile
+    }
+
+    /**
+     * 3б. Заказ москитных сеток (PDF-таблица выбранных позиций: О / Д / П, размеры, цвет, площадь от 1.0 м²).
+     */
+    fun generateMosquitoOrderPdf(
+        context: Context,
+        order: CustomerOrder,
+        windowResults: List<WindowCalculationResult>,
+        selectedItems: List<MosquitoOrderItem>? = null,
+        mosquitoSystemsCatalog: List<MosquitoSystemItem> = DefaultCatalogs.defaultMosquitoSystems()
+    ): File {
+        val doc = PdfDocument()
+        val generatedDateStr = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date())
+        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(18, 42, 76)
+            textSize = 12.2f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        val headerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = 8.0f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        val rowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(33, 37, 41)
+            textSize = 8.0f
+        }
+        val boldPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(18, 42, 76)
+            textSize = 8.4f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        val headerBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(0, 121, 107)
+            style = Paint.Style.FILL
+        }
+        val zebraPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(240, 249, 248)
+            style = Paint.Style.FILL
+        }
+        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(160, 175, 173)
+            style = Paint.Style.STROKE
+            strokeWidth = 0.65f
+        }
+
+        val items = (selectedItems ?: OrderProcurementHelper.buildMosquitoOrderItems(windowResults, mosquitoSystemsCatalog))
+            .filter { it.isSelected }
+
+        val tableRight = PAGE_W - MARGIN
+        val colX = floatArrayOf(
+            MARGIN,          // 0: №
+            MARGIN + 22f,    // 1: Констр.
+            MARGIN + 84f,    // 2: Тип (О/Д/П)
+            MARGIN + 136f,   // 3: Модель
+            MARGIN + 244f,   // 4: Цвет
+            MARGIN + 324f,   // 5: Размер (мм)
+            MARGIN + 418f,   // 6: Кол-во
+            MARGIN + 452f,   // 7: S расч. (м²) / Прим.
+            tableRight       // 8
+        )
+
+        var pageNum = 1
+        var page = doc.startPage(PdfDocument.PageInfo.Builder(PAGE_W, PAGE_H, pageNum).create())
+        var canvas = page.canvas
+        var y = MARGIN
+
+        fun drawTableHeader() {
+            val hdrH = 22f
+            canvas.drawRect(MARGIN, y, tableRight, y + hdrH, headerBgPaint)
+            canvas.drawRect(MARGIN, y, tableRight, y + hdrH, borderPaint)
+            for (i in 1 until colX.lastIndex) {
+                canvas.drawLine(colX[i], y, colX[i], y + hdrH, borderPaint)
+            }
+            val headers = listOf("№", "Констр.", "Тип", "Модель", "Цвет", "Ш × В (мм)", "Кол.", "S расч., м²")
+            headers.forEachIndexed { idx, h ->
+                canvas.drawText(h, colX[idx] + 3f, y + 14.5f, headerPaint)
+            }
+            y += hdrH
+        }
+
+        canvas.drawText(
+            "Заказ москитных сеток для заказа № ${order.orderNumber} от $generatedDateStr",
+            MARGIN,
+            y + 13f,
+            titlePaint
+        )
+        y += 21f
+        val subInfo = listOfNotNull(
+            order.customerName.takeIf { it.isNotBlank() }?.let { "Клиент: $it" },
+            order.address.takeIf { it.isNotBlank() }?.let { "Адрес: $it" }
+        ).joinToString("   |   ")
+        if (subInfo.isNotBlank()) {
+            canvas.drawText(subInfo.take(96), MARGIN, y, rowPaint)
+            y += 14f
+        } else {
+            y += 4f
+        }
+
+        drawTableHeader()
+
+        items.forEachIndexed { idx, item ->
+            val rowH = 20f
+            if (y + rowH > PAGE_H - 52f) {
+                doc.finishPage(page)
+                pageNum++
+                page = doc.startPage(PdfDocument.PageInfo.Builder(PAGE_W, PAGE_H, pageNum).create())
+                canvas = page.canvas
+                y = MARGIN
+                drawTableHeader()
+            }
+            if (idx % 2 == 1) {
+                canvas.drawRect(MARGIN, y, tableRight, y + rowH, zebraPaint)
+            }
+            canvas.drawRect(MARGIN, y, tableRight, y + rowH, borderPaint)
+            for (i in 1 until colX.lastIndex) {
+                canvas.drawLine(colX[i], y, colX[i], y + rowH, borderPaint)
+            }
+            val totalBillArea = item.billableAreaM2 * item.quantity.coerceAtLeast(1)
+            val areaStr = if (item.note.isNotBlank()) {
+                "${fmt(totalBillArea)} (${item.note.take(10)})"
+            } else {
+                fmt(totalBillArea)
+            }
+            canvas.drawText("${idx + 1}", colX[0] + 3f, y + 13.5f, rowPaint)
+            canvas.drawText("№${item.windowIndex} (${item.cellLabel})".take(12), colX[1] + 3f, y + 13.5f, rowPaint)
+            canvas.drawText("${item.netType.shortBadge} (${item.netType.titleRu})".take(11), colX[2] + 3f, y + 13.5f, boldPaint)
+            canvas.drawText(item.systemName.take(20), colX[3] + 3f, y + 13.5f, rowPaint)
+            canvas.drawText(item.colorName.take(15), colX[4] + 3f, y + 13.5f, rowPaint)
+            canvas.drawText(item.sizeText, colX[5] + 3f, y + 13.5f, boldPaint)
+            canvas.drawText("${item.quantity} шт", colX[6] + 3f, y + 13.5f, rowPaint)
+            canvas.drawText(areaStr, colX[7] + 3f, y + 13.5f, rowPaint)
+            y += rowH
+        }
+
+        y += 14f
+        val totalCount = items.sumOf { it.quantity }
+        val totalBillableM2 = items.sumOf { it.billableAreaM2 * it.quantity }
+        canvas.drawText(
+            "ИТОГО МОСКИТНЫХ СЕТОК: $totalCount шт. (${items.size} поз.)   |   РАСЧЁТНАЯ ПЛОЩАДЬ (мин. 1 м²): ${fmt(totalBillableM2)} м²",
+            MARGIN,
+            y + 10f,
+            boldPaint
+        )
+
+        doc.finishPage(page)
+        val outFile = createFreshReportFile(context, "Mosquito_Nets", order.orderNumber)
         FileOutputStream(outFile).use { doc.writeTo(it) }
         doc.close()
         return outFile
@@ -1293,7 +1445,7 @@ object PdfReportGenerator {
                 canvas.drawRect(RectF(cellLeft, rowTop, cellRight, rowTop + hdrH), headerBgPaint)
                 canvas.drawLine(cellLeft, rowTop + hdrH, cellRight, rowTop + hdrH, gridBorderPaint)
                 canvas.drawText(
-                    "Конструкция №$winNum: ${res.windowItem.name} (${res.windowItem.quantity} шт.)",
+                    "Конструкция №$winNum (${res.windowItem.quantity} шт.)",
                     cellLeft + 5f,
                     rowTop + 9.5f,
                     boldSmallPaint
@@ -1325,11 +1477,12 @@ object PdfReportGenerator {
                     }
                 }
 
-                val drawW = colW * 0.54f
+                // Пропорция карточки: ~68% под чертёж конструкции, ~32% под характеристики
+                val drawW = colW * 0.68f
                 val drawRect = RectF(
-                    cellLeft + 3f,
+                    cellLeft + 2f,
                     rowTop + hdrH + 2f,
-                    cellLeft + 3f + drawW,
+                    cellLeft + 2f + drawW,
                     bodyBottom - 3f
                 )
                 drawWindowTopologyVector(
@@ -1341,9 +1494,9 @@ object PdfReportGenerator {
                     showClearOpeningSizes = true
                 )
 
-                // Правая колонка: Профиль, Штапик, Цвет, Заполнение (без Габарита и Фурнитуры)
-                val specX = cellLeft + drawW + 6f
-                val specMaxW = cellRight - specX - 4f
+                // Правая колонка (~30%): Профиль, Штапик, Цвет, Заполнение
+                val specX = cellLeft + drawW + 5f
+                val specMaxW = (cellRight - specX - 3f).coerceAtLeast(36f)
                 var sy = rowTop + hdrH + 10f
 
                 fun drawSpecLine(txt: String, isBold: Boolean = false) {
@@ -1517,13 +1670,14 @@ object PdfReportGenerator {
                     canvas.drawRect(RectF(cellLeft, rowTop, cellRight, rowTop + hdrH), cardHeaderBgPaint)
                     canvas.drawLine(cellLeft, rowTop + hdrH, cellRight, rowTop + hdrH, gridBorderPaint)
                     canvas.drawText(
-                        "Конструкция №$winNum: ${res.windowItem.name} (${res.windowItem.quantity} шт.)",
+                        "Конструкция №$winNum (${res.windowItem.quantity} шт.)",
                         cellLeft + 5f,
                         rowTop + 9.5f,
                         boldSmallPaint
                     )
 
-                    val drawW = colW * 0.51f
+                    // Пропорция карточки: ~68% под чертёж конструкции, ~32% под характеристики
+                    val drawW = colW * 0.68f
                     val drawRect = RectF(
                         cellLeft + 2f,
                         rowTop + hdrH + 2f,
@@ -1539,20 +1693,23 @@ object PdfReportGenerator {
                         showClearOpeningSizes = true
                     )
 
-                    // Правая колонка: Профиль, Штапик, Цвет, Размеры (Р, И, С, Д, Д.обр.), Фурнитура
+                    // Правая колонка (~30%): Профиль, Штапик, Цвет, Размеры (Р, И, С, Д, Д.обр.), Фурнитура
                     val specX = cellLeft + drawW + 5f
-                    val specMaxW = cellRight - specX - 4f
+                    val specMaxW = (cellRight - specX - 3f).coerceAtLeast(36f)
                     var sy = rowTop + hdrH + 9.5f
 
                     val cutRows = buildWorkshopCutSizesRows(res)
                     val hwLines = buildWorkshopHardwareLines(res)
                     val approxTotalLines = 3 + 1 + cutRows.sumOf { it.second.size } +
                         if (hwLines.isNotEmpty()) (1 + hwLines.size) else 0
-                    val lineStep = if (approxTotalLines > 17) 7.6f else 8.4f
+                    val lineStep = if (approxTotalLines > 17) 7.4f else 8.2f
 
                     fun drawSpecText(txt: String, isBold: Boolean = false, indentX: Float = 0f) {
-                        val p = if (isBold) boldSmallPaint else smallPaint
+                        val basePaint = if (isBold) boldSmallPaint else smallPaint
                         val maxW = (specMaxW - indentX).coerceAtLeast(30f)
+                        val p = Paint(basePaint).apply {
+                            textSize = if (maxW < 85f) basePaint.textSize * 0.92f else basePaint.textSize
+                        }
                         val words = txt.split(" ")
                         var curLine = ""
                         for (w in words) {
@@ -1585,14 +1742,22 @@ object PdfReportGenerator {
                     if (cutRows.isNotEmpty() && sy < cellBot - 4f) {
                         sy += 2f
                         drawSpecText("Размеры:", isBold = true)
-                        val valueOffsetX = 27f
+                        val valueOffsetX = 21f
+                        val valueMaxW = (specMaxW - valueOffsetX).coerceAtLeast(24f)
+                        val dimPrefixPaint = Paint(boldSmallPaint).apply { textSize = 6.2f }
                         cutRows.forEach { (prefix, dimLines) ->
                             dimLines.forEachIndexed { dIdx, dimTxt ->
                                 if (sy < cellBot - 3f) {
                                     if (dIdx == 0) {
-                                        canvas.drawText(prefix, specX, sy, boldSmallPaint)
+                                        canvas.drawText(prefix, specX, sy, dimPrefixPaint)
                                     }
-                                    canvas.drawText(dimTxt, specX + valueOffsetX, sy, smallPaint)
+                                    val dimValPaint = Paint(smallPaint).apply {
+                                        textSize = 6.2f
+                                        while (measureText(dimTxt) > valueMaxW && textSize > 4.6f) {
+                                            textSize -= 0.4f
+                                        }
+                                    }
+                                    canvas.drawText(dimTxt, specX + valueOffsetX, sy, dimValPaint)
                                     sy += lineStep
                                 }
                             }
@@ -1829,6 +1994,7 @@ object PdfReportGenerator {
 
         fun drawClearOpeningTextPdf(rect: RectF, frame: FrameBlockNode, op: OpeningCellNode) {
             if (!showClearOpeningSizes) return
+            if (rect.width() < 10f || rect.height() < 7.5f) return
             val leftDed = if (abs(op.leftMm - frame.leftMm) <= 2f) profile.frameWidthMm else profile.impostWidthMm / 2f
             val rightDed = if (abs(op.rightMm - frame.rightMm) <= 2f) profile.frameWidthMm else profile.impostWidthMm / 2f
             val topDed = if (abs(op.topMm - frame.topMm) <= 2f) profile.frameWidthMm else profile.impostWidthMm / 2f
@@ -1837,14 +2003,27 @@ object PdfReportGenerator {
             val clearW = (op.widthMm - leftDed - rightDed).coerceAtLeast(10f).roundToInt()
             val clearH = (op.heightMm - topDed - botDed).coerceAtLeast(10f).roundToInt()
             val label = "${clearW}×${clearH}"
-            val tw = openingSizeTextPaint.measureText(label)
-            if (rect.width() >= tw + 4f && rect.height() >= 14f) {
-                val tx = rect.centerX()
-                val ty = (rect.bottom - 3.5f).coerceAtLeast(rect.centerY() + 2f)
-                val bgRect = RectF(tx - tw / 2f - 1.5f, ty - 6f, tx + tw / 2f + 1.5f, ty + 1.5f)
-                canvas.drawRoundRect(bgRect, 1.5f, 1.5f, openingSizeBgPaint)
-                canvas.drawText(label, tx, ty, openingSizeTextPaint)
+
+            // Адаптивный размер шрифта, чтобы внутренний размер проёма отображался даже в узких/низких проёмах для сборщиков
+            val paint = Paint(openingSizeTextPaint)
+            val maxAllowedW = (rect.width() - 3f).coerceAtLeast(6f)
+            val maxAllowedH = (rect.height() * 0.55f).coerceAtLeast(3.5f)
+            paint.textSize = min(6.2f, maxAllowedH)
+            while (paint.measureText(label) > maxAllowedW && paint.textSize > 3.5f) {
+                paint.textSize = (paint.textSize - 0.35f).coerceAtLeast(3.5f)
             }
+            val tw = paint.measureText(label)
+            val tx = rect.centerX()
+            val padB = if (rect.height() < 14f) 1.5f else 3.0f
+            val ty = (rect.bottom - padB).coerceAtLeast(rect.centerY() + paint.textSize * 0.35f)
+            val bgRect = RectF(
+                (tx - tw / 2f - 1.2f).coerceAtLeast(rect.left + 0.5f),
+                (ty - paint.textSize).coerceAtLeast(rect.top + 0.5f),
+                (tx + tw / 2f + 1.2f).coerceAtMost(rect.right - 0.5f),
+                (ty + 1.2f).coerceAtMost(rect.bottom - 0.5f)
+            )
+            canvas.drawRoundRect(bgRect, 1.2f, 1.2f, openingSizeBgPaint)
+            canvas.drawText(label, tx, ty, paint)
         }
 
         fun drawHandleVector(x: Float, y: Float, isDoor: Boolean, isLeftHanded: Boolean) {

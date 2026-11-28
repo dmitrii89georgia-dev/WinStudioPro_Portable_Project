@@ -215,7 +215,7 @@ internal fun GlazingOrderScreen(
                                         )
                                     }
                                     Text(
-                                        text = "Окно №${item.windowIndex} • ${item.openingNumber}",
+                                        text = "Конструкция №${item.windowIndex} • ${item.openingNumber}",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
                                         color = palette.textPrimary,
@@ -364,7 +364,7 @@ private fun EditGlazingItemDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = "Тип заполнения (Окно №${item.windowIndex} • ${item.openingNumber})",
+                    text = "Тип заполнения (Конструкция №${item.windowIndex} • ${item.openingNumber})",
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp,
                     color = palette.textPrimary

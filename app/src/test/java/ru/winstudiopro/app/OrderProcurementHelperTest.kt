@@ -212,4 +212,87 @@ class OrderProcurementHelperTest {
         assertEquals(1, available[0].quantity)
         assertFalse(available.any { it.isFullStockBar })
     }
+
+    @Test
+    fun `buildMosquitoOrderItems builds distinct O D P rows with 1 m2 minimum and excludes msq_none`() {
+        val msqCatalog = DefaultCatalogs.defaultMosquitoSystems()
+        val topo = WindowCadOperations.splitOpening(
+            WindowCadOperations.resizeTotalDimensions(WindowCadOperations.single1500Topology(), 2400f, 1500f),
+            "op1",
+            ImpostDirection.VERTICAL,
+            3
+        ).let { t1 ->
+            val ops = t1.allOpenings.sortedBy { it.leftMm }
+            var cur = WindowCadOperations.updateOpeningProperties(
+                t1,
+                ops[0].id,
+                OpeningProperties(
+                    openingType = SashOpeningType.TILT_TURN_LEFT,
+                    mosquitoNetType = ru.winstudiopro.app.domain.model.MosquitoNetType.WINDOW
+                )
+            )
+            cur = WindowCadOperations.updateOpeningProperties(
+                cur,
+                ops[1].id,
+                OpeningProperties(
+                    openingType = SashOpeningType.TURN_RIGHT,
+                    isDoorSash = true,
+                    mosquitoNetType = ru.winstudiopro.app.domain.model.MosquitoNetType.DOOR
+                )
+            )
+            WindowCadOperations.updateOpeningProperties(
+                cur,
+                ops[2].id,
+                OpeningProperties(
+                    openingType = SashOpeningType.SLIDING_LEFT,
+                    mosquitoNetType = ru.winstudiopro.app.domain.model.MosquitoNetType.PLISSE
+                )
+            )
+        }
+
+        val win = WindowItem(
+            id = "w_msq_all",
+            name = "Конструкция 1",
+            quantity = 2,
+            topology = topo,
+            profileSystemId = alProfile.id,
+            glazingId = "sp_24",
+            colorId = alProfile.colors.first().id
+        )
+        val res = WindowBomAndCostEngine.calculateWindow(
+            window = win,
+            profileSystems = profiles,
+            glazingCatalog = glazing,
+            colorCatalog = colors,
+            sillsCatalog = sills,
+            hardwareBrandsCatalog = hardwareBrands,
+            mosquitoSystemsCatalog = msqCatalog
+        )
+        val rows = OrderProcurementHelper.buildMosquitoOrderItems(listOf(res), msqCatalog)
+        assertEquals(3, rows.size)
+        assertEquals(
+            listOf(
+                ru.winstudiopro.app.domain.model.MosquitoNetType.WINDOW,
+                ru.winstudiopro.app.domain.model.MosquitoNetType.DOOR,
+                ru.winstudiopro.app.domain.model.MosquitoNetType.PLISSE
+            ),
+            rows.map { it.netType }
+        )
+        assertTrue(rows.all { it.widthMm > 0 && it.heightMm > 0 && it.billableAreaM2 >= 1.0 })
+        assertTrue(rows.all { it.quantity == 2 && it.colorName.isNotBlank() && it.isSelected })
+
+        val winNoDoor = win.copy(mosquitoDoorId = "msq_none")
+        val resNoDoor = WindowBomAndCostEngine.calculateWindow(
+            window = winNoDoor,
+            profileSystems = profiles,
+            glazingCatalog = glazing,
+            colorCatalog = colors,
+            sillsCatalog = sills,
+            hardwareBrandsCatalog = hardwareBrands,
+            mosquitoSystemsCatalog = msqCatalog
+        )
+        val rowsNoDoor = OrderProcurementHelper.buildMosquitoOrderItems(listOf(resNoDoor), msqCatalog)
+        assertEquals(2, rowsNoDoor.size)
+        assertFalse(rowsNoDoor.any { it.netType == ru.winstudiopro.app.domain.model.MosquitoNetType.DOOR })
+    }
 }
